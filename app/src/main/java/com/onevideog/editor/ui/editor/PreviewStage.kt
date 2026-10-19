@@ -5,24 +5,11 @@ import android.graphics.Paint
 import android.view.TextureView
 import android.view.View
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -37,10 +24,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.onevideog.editor.R
@@ -52,26 +38,30 @@ import com.onevideog.editor.editor.EditorViewModel
 import com.onevideog.editor.editor.OverlayLayout
 import com.onevideog.editor.editor.ProjectMath
 import com.onevideog.editor.editor.TimelineLogic
-import com.onevideog.editor.ui.home.formatDuration
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.withContext
 
 /**
  * Real-time composition preview: the project model is rendered here with the
  * same pure math the export pipeline uses ([ProjectMath], [OverlayLayout],
  * [KeyframeEvaluator], [AudioTimeline]).
  *
- * - Video: ExoPlayer on the active clip (item timelines are 0-based after
- *   clipping — the same time base the export overlay windows use).
- * - Overlays: drawn by [OverlayLayer] on a canvas clipped to the content
- *   rect, so letterboxing behaves exactly like the exported frame.
- * - Audio: [AudioPreviewController] plays independent audio clips with the
- *   export's segment plan.
- * - Colours: a hardware-layer ColorMatrixColorFilter built by the same
- *   [ColorMatrixMath] as the export RgbMatrix (sRGB vs linear-RGB pipeline
- *   difference documented in docs/PREVIEW_EXPORT_PARITY.md).
+ * Playback contract:
+ * - The ViewModel owns ONE authoritative playhead (`state.playheadMs`).
+ * - `state.isPlaying` is mirrored to the ExoPlayer in its own effect, so the
+ *   Play/Pause button always starts/stops the player (v0.2.0 only set
+ *   `playWhenReady` inside the media-load effect, so the button did nothing).
+ * - Scrubbing: while `state.isScrubbing`, the user's pointer owns the
+ *   playhead and the periodic publisher is disabled; the player is only
+ *   seeked when the drag ends (or by a transport seek). The publisher also
+ *   refuses to publish while the player is not actually `isPlaying`, so an
+ *   async seek can never drag the playhead back to the old position.
+ * - Same-clip seeks call `player.seekTo` (fast, keeps the decoder); the media
+ *   item is only rebuilt when the active clip changes.
+ * - Audio: [AudioPreviewController] is driven from one main-thread loop and
+ *   reports decoder failures via [EditorViewModel.audioPreviewError].
+ * - The transport row lives in [EditorScreen] BELOW the canvas — the preview
+ *   area itself stays free for overlay manipulation.
  */
 @Composable
 fun PreviewStage(viewModel: EditorViewModel) {
@@ -91,7 +81,11 @@ fun PreviewStage(viewModel: EditorViewModel) {
     }
 
     // ------------------------------ audio preview -----------------------------
-    val audioController = remember { AudioPreviewController(context) }
+    val audioController = remember {
+        AudioPreviewController(context).apply {
+            onClipError = { _, code -> viewModel.audioPreviewError.value = code }
+        }
+    }
 
     // ------------------------------ video player ------------------------------
     val player = remember {
@@ -102,6 +96,23 @@ fun PreviewStage(viewModel: EditorViewModel) {
             player.release()
             audioController.release()
         }
+    }
+
+    // Keep the icon/state and the player in lock-step: STATE_ENDED and decode
+    // errors flip `isPlaying` off so the UI never shows a phantom "playing".
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_ENDED) viewModel.setPlaying(false)
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                viewModel.setPlaying(false)
+                viewModel.playbackError.value = error.errorCodeName
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
     }
 
     var loadedClipId by remember { mutableStateOf<String?>(null) }
@@ -117,33 +128,54 @@ fun PreviewStage(viewModel: EditorViewModel) {
             currentClip,
             (state.playheadMs - clipStart).coerceAtLeast(0),
         )
-        val item = MediaItem.Builder()
-            .setUri(android.net.Uri.parse(currentClip.uri))
-            .setClippingConfiguration(
-                MediaItem.ClippingConfiguration.Builder()
-                    .setStartPositionMs(currentClip.trimStartMs)
-                    .setEndPositionMs(currentClip.trimEndMs)
-                    .build(),
-            )
-            .build()
-        player.setMediaItem(item, localMs.coerceAtMost(currentClip.effectiveDurationMs))
-        player.setPlaybackSpeed(currentClip.speed)
-        player.prepare()
+        if (loadedClipId == currentClip.id) {
+            // Same clip: a seek is enough — never tear the decoder down
+            // (the v0.2.0 full reload made every seek slow and let the old
+            // position leak back into the playhead).
+            player.setPlaybackSpeed(currentClip.speed)
+            player.seekTo(localMs.coerceAtMost(currentClip.effectiveDurationMs))
+            player.playWhenReady = state.isPlaying
+        } else {
+            val item = MediaItem.Builder()
+                .setUri(android.net.Uri.parse(currentClip.uri))
+                .setClippingConfiguration(
+                    MediaItem.ClippingConfiguration.Builder()
+                        .setStartPositionMs(currentClip.trimStartMs)
+                        .setEndPositionMs(currentClip.trimEndMs)
+                        .build(),
+                )
+                .build()
+            player.setMediaItem(item, localMs.coerceAtMost(currentClip.effectiveDurationMs))
+            player.setPlaybackSpeed(currentClip.speed)
+            player.prepare()
+            player.playWhenReady = state.isPlaying
+            loadedClipId = currentClip.id
+        }
+    }
+
+    // Play/Pause MUST reach the player even when nothing else changed —
+    // this dedicated effect is the actual button → player wiring.
+    LaunchedEffect(state.isPlaying) {
         player.playWhenReady = state.isPlaying
-        loadedClipId = currentClip.id
     }
 
     // Frame-driven playhead updates while playing (smooth keyframe animation,
-    // throttled to ~30fps to stay light on 4 GB devices).
+    // throttled to ~30fps to stay light on 4 GB devices). Guards:
+    // - `state.isScrubbing`: the finger owns the playhead;
+    // - `!player.isPlaying`: seeking/buffering/ended — publishing the stale
+    //   player position here is exactly the "scrub reverts" bug.
     LaunchedEffect(state.isPlaying, loadedClipId) {
         var lastPublish = 0L
-        while (isActive && state.isPlaying && currentClip != null) {
+        while (isActive && state.isPlaying) {
             val now = withFrameNanos { it }
+            if (state.isScrubbing) continue
+            val clip = currentClip ?: break
+            if (!player.isPlaying) continue
             val pos = player.currentPosition
-            val windowDur = currentClip.effectiveDurationMs
+            val windowDur = clip.effectiveDurationMs
             if (pos >= windowDur - 40) {
                 if (clipIndex < project.clips.lastIndex) {
-                    viewModel.seekTo(clipStart + currentClip.effectiveDurationMs)
+                    viewModel.seekTo(clipStart + windowDur)
                 } else {
                     viewModel.setPlaying(false)
                     viewModel.seekTo(durationMs)
@@ -152,26 +184,21 @@ fun PreviewStage(viewModel: EditorViewModel) {
             } else if (now - lastPublish >= 33_000_000L) {
                 lastPublish = now
                 viewModel.setPlayhead(
-                    clipStart + ProjectMath.itemLocalToProjectMs(currentClip, pos),
+                    clipStart + ProjectMath.itemLocalToProjectMs(clip, pos),
                 )
             }
         }
     }
 
-    // ------------------------------ audio preview sync ------------------------
+    // ------------------------ audio preview sync (main) -----------------------
     val audioClips = project.audioClips
-    LaunchedEffect(viewModel.seekToken.collectAsState().value, audioClips) {
-        withContext(Dispatchers.Default) {
-            audioController.sync(audioClips, state.playheadMs, state.isPlaying, ProjectMath.videoDurationMs(project.clips))
-        }
-    }
-    LaunchedEffect(state.isPlaying, audioClips) {
+    val videoDurationMs = ProjectMath.videoDurationMs(project.clips)
+    LaunchedEffect(state.isPlaying, audioClips, viewModel.seekToken.collectAsState().value) {
         while (isActive) {
             audioController.sync(
-                audioClips, state.playheadMs, state.isPlaying,
-                ProjectMath.videoDurationMs(project.clips),
+                audioClips, state.playheadMs, state.isPlaying, videoDurationMs,
             )
-            delay(120)
+            delay(100)
         }
     }
 
@@ -181,8 +208,6 @@ fun PreviewStage(viewModel: EditorViewModel) {
     // ------------------------------ viewport ----------------------------------
     BoxWithConstraints(
         modifier = Modifier
-            .fillMaxWidth()
-            .fillMaxHeight()
             .background(Color.Black),
         contentAlignment = Alignment.Center,
     ) {
@@ -248,38 +273,6 @@ fun PreviewStage(viewModel: EditorViewModel) {
                         it.copy(transform = transform.withClampedValues())
                     }
                 },
-            )
-        }
-    }
-
-    // ------------------------------ transport ---------------------------------
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        IconButton(onClick = { viewModel.setPlaying(!state.isPlaying) }) {
-            Icon(
-                if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                contentDescription = stringResource(
-                    if (state.isPlaying) R.string.a11y_pause else R.string.a11y_play,
-                ),
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(34.dp),
-            )
-        }
-        Text(
-            formatDuration(state.playheadMs) + " / " + formatDuration(durationMs),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onBackground,
-        )
-        if (project.audioClips.isNotEmpty()) {
-            Text(
-                stringResource(R.string.preview_audio_active, project.audioClips.size),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }

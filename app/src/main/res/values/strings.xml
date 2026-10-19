@@ -222,4 +222,28 @@
     <string name="a11y_settings">Settings</string>
     <string name="a11y_new_project">New project</string>
     <string name="a11y_export">Export</string>
+    <!-- v0.2.1: transport bar, scrubbing, layers, keyframes, errors -->
+    <string name="a11y_back_10s">Back 10 seconds</string>
+    <string name="a11y_forward_10s">Forward 10 seconds</string>
+    <string name="scrubbing_label">Scrubbing…</string>
+    <string name="tools_layers">Layers</string>
+    <string name="layer_add_video">Video</string>
+    <string name="layer_add_audio">Audio</string>
+    <string name="layer_add_text">Text</string>
+    <string name="layer_add_image">Image</string>
+    <string name="layer_group_video">Video clips (%1$d)</string>
+    <string name="layer_group_audio">Audio tracks (%1$d)</string>
+    <string name="layer_group_overlays">Text &amp; image layers (%1$d)</string>
+    <string name="layer_move_earlier">Move earlier</string>
+    <string name="layer_move_later">Move later</string>
+    <string name="layer_delete">Delete layer</string>
+    <string name="layer_open_keyframes">Edit keyframes</string>
+    <string name="overlays_none">No text or image layers yet.</string>
+    <string name="keyframes_select_layer">Select a text or image layer first (Layers button, or tap the overlay in the preview).</string>
+    <string name="keyframes_for">Keyframes — %1$s</string>
+    <string name="keyframe_values_at">Values at %1$s</string>
+    <string name="keyframe_edit_values">Edit keyframe at playhead</string>
+    <string name="keyframe_no_kf_at_playhead">No keyframe at the playhead. Move the playhead (timeline ruler) or add a keyframe to edit values here.</string>
+    <string name="error_audio_preview">This audio file could not be played in the preview. The file may be missing, in an unsupported format, or the device lacks the decoder. The import was kept — try removing and re-importing it.</string>
+    <string name="error_playback">The video could not be played here. The file may be missing or in a format this device cannot decode.</string>
 </resources>

@@ -82,3 +82,19 @@ class ProjectMathTest {
         assertEquals(0L, ProjectMath.projectDurationMs(project()))
     }
 }
+// v0.2.1 regression: the single clamp used by every playhead writer
+// (scrub taps/drags, transport ±10 s seeks, end-of-playback).
+class ClampPlayheadTest {
+    @Test
+    fun `clamps negative and past-end requests`() {
+        assertEquals(0L, ProjectMath.clampPlayheadMs(-5_000, 10_000))
+        assertEquals(10_000L, ProjectMath.clampPlayheadMs(99_999, 10_000))
+        assertEquals(4_999L, ProjectMath.clampPlayheadMs(4_999, 10_000))
+    }
+
+    @Test
+    fun `empty project clamps everything to zero`() {
+        assertEquals(0L, ProjectMath.clampPlayheadMs(1_000, 0))
+        assertEquals(0L, ProjectMath.clampPlayheadMs(-1, -10))
+    }
+}

@@ -51,4 +51,30 @@ object AudioTimeline {
      */
     fun activeSegmentAt(clip: AudioClipItem, timeMs: Long): Segment? =
         segmentsFor(clip, null).firstOrNull { timeMs >= it.timelineStartMs && timeMs < it.timelineEndMs }
+
+    /**
+     * The source position (ms inside the original audio document) the preview
+     * player must be at for project time [playheadMs], or null when the clip
+     * is silent there. Looping clips wrap across the trimmed range. Pure —
+     * shared by the preview scheduler and covered by unit tests.
+     */
+    fun sourcePositionAt(
+        clip: AudioClipItem,
+        playheadMs: Long,
+        videoDurationMs: Long,
+    ): Long? {
+        val duration = clip.trimmedDurationMs
+        if (duration <= 0 || clip.sourceDurationMs <= 0) return null
+        val local = playheadMs - clip.startMs
+        if (local < 0) return null
+        val sourceOffset: Long = if (clip.loop) {
+            val fillEnd = if (videoDurationMs > 0) videoDurationMs else clip.endMs
+            if (playheadMs >= fillEnd) return null
+            clip.trimStartMs + (local % duration)
+        } else {
+            if (local >= duration) return null
+            clip.trimStartMs + local
+        }
+        return sourceOffset.coerceIn(clip.trimStartMs, clip.sourceDurationMs)
+    }
 }

@@ -222,4 +222,28 @@
     <string name="a11y_settings">Definições</string>
     <string name="a11y_new_project">Novo projeto</string>
     <string name="a11y_export">Exportar</string>
+    <!-- v0.2.1: transport bar, scrubbing, layers, keyframes, errors -->
+    <string name="a11y_back_10s">Recuar 10 segundos</string>
+    <string name="a11y_forward_10s">Avançar 10 segundos</string>
+    <string name="scrubbing_label">A arrastar…</string>
+    <string name="tools_layers">Camadas</string>
+    <string name="layer_add_video">Vídeo</string>
+    <string name="layer_add_audio">Áudio</string>
+    <string name="layer_add_text">Texto</string>
+    <string name="layer_add_image">Imagem</string>
+    <string name="layer_group_video">Clipes de vídeo (%1$d)</string>
+    <string name="layer_group_audio">Pistas de áudio (%1$d)</string>
+    <string name="layer_group_overlays">Camadas de texto e imagem (%1$d)</string>
+    <string name="layer_move_earlier">Mover para antes</string>
+    <string name="layer_move_later">Mover para depois</string>
+    <string name="layer_delete">Eliminar camada</string>
+    <string name="layer_open_keyframes">Editar fotogramas-chave</string>
+    <string name="overlays_none">Ainda não há camadas de texto ou imagem.</string>
+    <string name="keyframes_select_layer">Selecione primeiro uma camada de texto ou imagem (botão Camadas, ou toque na sobreposição na pré-visualização).</string>
+    <string name="keyframes_for">Fotogramas-chave — %1$s</string>
+    <string name="keyframe_values_at">Valores em %1$s</string>
+    <string name="keyframe_edit_values">Editar fotograma-chave na cabeça de leitura</string>
+    <string name="keyframe_no_kf_at_playhead">Não há fotograma-chave na cabeça de leitura. Mova a cabeça de leitura (régua da linha temporal) ou adicione um fotograma-chave para editar os valores aqui.</string>
+    <string name="error_audio_preview">Não foi possível reproduzir este ficheiro de áudio na pré-visualização. O ficheiro pode estar em falta, num formato não suportado, ou o aparelho não tem o descodificador. A importação foi mantida — tente remover e importar novamente.</string>
+    <string name="error_playback">Não foi possível reproduzir o vídeo aqui. O ficheiro pode estar em falta ou num formato que este aparelho não consegue descodificar.</string>
 </resources>

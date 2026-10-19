@@ -33,6 +33,7 @@ import com.onevideog.editor.ui.home.formatDuration
 
 /** Bottom tool sheets. Each tool edits the selected (or containing) clip. */
 enum class Tool(val labelRes: Int) {
+    LAYERS(R.string.tools_layers),
     TRIM(R.string.tools_trim),
     SPLIT(R.string.tools_split),
     VOLUME(R.string.tools_volume),
@@ -42,6 +43,7 @@ enum class Tool(val labelRes: Int) {
     TEXT(R.string.tools_text),
     IMAGE(R.string.tools_image),
     AUDIO(R.string.tools_audio),
+    KEYFRAMES(R.string.keyframes_title),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -50,6 +52,7 @@ fun ToolSheet(
     tool: Tool,
     viewModel: EditorViewModel,
     onDismiss: () -> Unit,
+    onOpenTool: (Tool) -> Unit = {},
 ) {
     val state by viewModel.ui.collectAsState()
     val project = state.project ?: return
@@ -69,6 +72,8 @@ fun ToolSheet(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             when (tool) {
+                Tool.LAYERS -> LayersPanel(viewModel, onOpenTool)
+                Tool.KEYFRAMES -> KeyframePanel(viewModel)
                 Tool.TRIM -> if (clip != null) TrimPanel(viewModel, clip) else InfoLine(stringResource(R.string.split_no_clip))
                 Tool.SPLIT -> SplitPanel(viewModel, clip != null)
                 Tool.VOLUME -> if (clip != null) VolumePanel(viewModel, clip) else InfoLine(stringResource(R.string.split_no_clip))

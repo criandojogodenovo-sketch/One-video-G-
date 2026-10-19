@@ -51,4 +51,12 @@ object ProjectMath {
     /** Inverse of [projectToItemLocalMs]. */
     fun itemLocalToProjectMs(clip: Clip, itemLocalMs: Long): Long =
         (itemLocalMs.coerceAtLeast(0) / clip.speed).roundToLong()
+
+    /**
+     * Clamps a playhead request (scrub tap/drag, transport seek) into the
+     * valid project range. The single clamp every writer of the playhead
+     * uses, so positions are always valid project times.
+     */
+    fun clampPlayheadMs(ms: Long, durationMs: Long): Long =
+        ms.coerceIn(0L, durationMs.coerceAtLeast(0L))
 }

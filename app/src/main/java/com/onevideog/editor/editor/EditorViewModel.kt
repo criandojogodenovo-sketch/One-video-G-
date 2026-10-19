@@ -47,6 +47,13 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val selectedAudioClipId: String? = null,
         val playheadMs: Long = 0L,
         val isPlaying: Boolean = false,
+        /**
+         * True between [beginScrub] and [endScrub]. While set, the periodic
+         * player-position publisher must NOT write the playhead — the user's
+         * finger owns it. This is the single guard against the classic
+         * "scrub reverts to the old position" feedback loop.
+         */
+        val isScrubbing: Boolean = false,
         val zoom: Float = 1f,
         val missingClipIds: Set<String> = emptySet(),
         val canUndo: Boolean = false,
@@ -370,9 +377,22 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     // region audio clips ------------------------------------------------------
 
+    /**
+     * Imports an audio document onto an independent audio track.
+     *
+     * Crash-hardened: any failure (SAF read, metadata probe, persistence)
+     * maps to a localized import error — an audio import can never take the
+     * editor down. Sanitized diagnostics (no file names, no user content)
+     * go to logcat only.
+     */
     fun addAudioClip(uri: Uri, displayName: String) {
+        val projectId = _ui.value.project?.id ?: return
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                if (!importer.isReadable(uri)) {
+                    importError.value = MediaImporter.ImportException.Kind.UNREADABLE
+                    return@launch
+                }
                 importer.persistReadPermission(uri)
                 val meta = importer.probeAudio(uri)
                 commitProject {
@@ -388,10 +408,34 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         ),
                     )
                 }
-            } catch (e: Exception) {
+            } catch (e: MediaImporter.ImportException) {
+                android.util.Log.w(
+                    "OvgAudioImport",
+                    "audio import failed kind=${e.kind} cause=${e.cause?.javaClass?.simpleName}",
+                )
+                importError.value = e.kind
+            } catch (t: Throwable) {
+                android.util.Log.w(
+                    "OvgAudioImport",
+                    "audio import failed unexpected=${t.javaClass.simpleName}",
+                )
                 importError.value = MediaImporter.ImportException.Kind.UNREADABLE
             }
         }
+    }
+
+    /** Preview-side audio decoder failures, surfaced once per clip. */
+    val audioPreviewError = MutableStateFlow<String?>(null)
+
+    fun consumeAudioPreviewError() {
+        audioPreviewError.value = null
+    }
+
+    /** Video preview decoder failure (sanitized Media3 error code name). */
+    val playbackError = MutableStateFlow<String?>(null)
+
+    fun consumePlaybackError() {
+        playbackError.value = null
     }
 
     fun moveAudioClip(clipId: String, newStartMs: Long) {
@@ -444,21 +488,63 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     // region playback state ---------------------------------------------------
 
+    /** One authoritative playhead. Writers: scrub gesture, transport seeks,
+     *  and the periodic frame publisher (only while playing and NOT scrubbing). */
     fun setPlayhead(ms: Long) {
-        _ui.value = _ui.value.copy(playheadMs = ms.coerceAtLeast(0))
+        _ui.value = _ui.value.copy(playheadMs = clampPlayhead(ms))
     }
 
     fun setPlaying(playing: Boolean) {
         _ui.value = _ui.value.copy(isPlaying = playing)
     }
 
+    /** Clamps to the valid project range [0, durationMs]. */
+    fun clampPlayhead(ms: Long): Long = ProjectMath.clampPlayheadMs(ms, durationMs)
+
+    /**
+     * Seeks the composition to [ms]: moves the authoritative playhead and
+     * bumps the seek token so the preview player follows. Safe to call from
+     * anywhere; clamped to the project duration.
+     */
     fun seekTo(ms: Long) {
-        setPlayhead(ms.coerceIn(0, durationMs))
+        setPlayhead(ms)
         _seekToken.value++
     }
 
     private val _seekToken = MutableStateFlow(0)
     val seekToken: StateFlow<Int> get() = _seekToken
+
+    private var wasPlayingBeforeScrub = false
+
+    /**
+     * Start of a timeline scrub: the playhead now belongs to the user's
+     * pointer. Playback pauses so the player cannot fight the drag; the
+     * previous playing state is restored on [endScrub].
+     */
+    fun beginScrub() {
+        if (_ui.value.isScrubbing) return
+        wasPlayingBeforeScrub = _ui.value.isPlaying
+        _ui.value = _ui.value.copy(isScrubbing = true, isPlaying = false)
+    }
+
+    /**
+     * End of a scrub: seek the player to the final playhead (async seek —
+     * the UI playhead stays where the user left it) and resume playback if
+     * it was running when the drag started.
+     */
+    fun endScrub() {
+        if (!_ui.value.isScrubbing) return
+        _ui.value = _ui.value.copy(isScrubbing = false)
+        seekTo(_ui.value.playheadMs)
+        if (wasPlayingBeforeScrub) setPlaying(true)
+        wasPlayingBeforeScrub = false
+    }
+
+    /** Scrub update from the timeline pointer: clamp + write, no seek yet. */
+    fun scrubTo(ms: Long) {
+        if (!_ui.value.isScrubbing) return
+        setPlayhead(ms)
+    }
 
     fun selectClip(id: String?) {
         _ui.value = _ui.value.copy(selectedClipId = id)
