@@ -204,6 +204,25 @@ internal fun OverlayTrackRow(
                     maxLines = 1,
                     modifier = Modifier.padding(start = 17.dp, end = 3.dp),
                 )
+                // Keyframe markers: one dot per keyframe, positioned at its
+                // time inside the block (same ms/px scale as the timeline).
+                if (overlay.keyframes.isNotEmpty()) {
+                    Row {
+                        overlay.keyframes.sortedBy { it.timeMs }.forEach { keyframe ->
+                            val dx = ((keyframe.timeMs - overlay.startMs)
+                                .coerceAtLeast(0)) * pxPerMs
+                            Box(
+                                modifier = Modifier
+                                    .offset { IntOffset(dx.roundToLong().toInt(), 0) }
+                                    .padding(start = 2.dp)
+                                    .width(6.dp)
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .background(MaterialTheme.colorScheme.secondary),
+                            )
+                        }
+                    }
+                }
             }
         }
     }

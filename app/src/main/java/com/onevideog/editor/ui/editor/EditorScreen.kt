@@ -19,9 +19,14 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.IosShare
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Photo
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.VolumeUp
@@ -48,6 +53,7 @@ import com.onevideog.editor.R
 import com.onevideog.editor.editor.EditorViewModel
 import com.onevideog.editor.editor.TimelineLogic
 import com.onevideog.editor.ui.common.EmptyState
+import com.onevideog.editor.ui.home.formatDuration
 
 /**
  * Editing screen: composition preview ([PreviewStage]), multi-track timeline
@@ -104,6 +110,20 @@ fun EditorScreen(
     LaunchedEffect(state.loadError) {
         if (state.loadError) errorText = context.getString(R.string.error_project_load)
     }
+    val audioPreviewError by viewModel.audioPreviewError.collectAsState()
+    LaunchedEffect(audioPreviewError) {
+        if (audioPreviewError != null) {
+            errorText = context.getString(R.string.error_audio_preview)
+            viewModel.consumeAudioPreviewError()
+        }
+    }
+    val playbackError by viewModel.playbackError.collectAsState()
+    LaunchedEffect(playbackError) {
+        if (playbackError != null) {
+            errorText = context.getString(R.string.error_playback)
+            viewModel.consumePlaybackError()
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -149,6 +169,10 @@ fun EditorScreen(
             }
         }
 
+        // Transport bar: play/pause + seek + project time, BELOW the canvas.
+        // The preview area stays free for selecting/manipulating overlays.
+        TransportBar(viewModel = viewModel)
+
         TimelineStrip(
             viewModel = viewModel,
             onAddAudio = { audioLauncher.launch(arrayOf("audio/*")) },
@@ -160,7 +184,7 @@ fun EditorScreen(
                 importLauncher.launch(arrayOf("video/*"))
             },
             onTool = { activeTool = it },
-            hasClips = project.clips.isNotEmpty(),
+            hasContent = com.onevideog.editor.editor.ProjectMath.projectDurationMs(project) > 0,
         )
     }
 
@@ -169,6 +193,7 @@ fun EditorScreen(
             tool = tool,
             viewModel = viewModel,
             onDismiss = { activeTool = null },
+            onOpenTool = { activeTool = it },
         )
     }
 
@@ -237,14 +262,75 @@ private fun EditorTopBar(
     }
 }
 
+/**
+ * Compact transport row placed directly below the preview canvas: play/pause,
+ * ±10 s seek and the authoritative project time. Buttons keep ≥ 48 dp touch
+ * targets for small phones.
+ */
+@Composable
+private fun TransportBar(viewModel: EditorViewModel) {
+    val state by viewModel.ui.collectAsState()
+    val durationMs = state.project?.let { com.onevideog.editor.editor.ProjectMath.projectDurationMs(it) } ?: 0L
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        IconButton(onClick = { viewModel.seekTo(state.playheadMs - 10_000) }, modifier = Modifier.size(46.dp)) {
+            Icon(
+                Icons.Filled.Replay10,
+                contentDescription = stringResource(R.string.a11y_back_10s),
+                tint = MaterialTheme.colorScheme.onBackground,
+            )
+        }
+        IconButton(
+            onClick = { viewModel.setPlaying(!state.isPlaying) },
+            modifier = Modifier.size(46.dp),
+        ) {
+            Icon(
+                if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                contentDescription = stringResource(
+                    if (state.isPlaying) R.string.a11y_pause else R.string.a11y_play,
+                ),
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(34.dp),
+            )
+        }
+        IconButton(onClick = { viewModel.seekTo(state.playheadMs + 10_000) }, modifier = Modifier.size(46.dp)) {
+            Icon(
+                Icons.Filled.Forward10,
+                contentDescription = stringResource(R.string.a11y_forward_10s),
+                tint = MaterialTheme.colorScheme.onBackground,
+            )
+        }
+        Spacer(Modifier.width(4.dp))
+        Text(
+            formatDuration(state.playheadMs) + " / " + formatDuration(durationMs),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onBackground,
+        )
+        if (state.isScrubbing) {
+            Text(
+                stringResource(R.string.scrubbing_label),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
 @Composable
 private fun ToolBarRow(
     onImport: () -> Unit,
     onTool: (Tool) -> Unit,
-    hasClips: Boolean,
+    hasContent: Boolean,
 ) {
     val tools = remember {
         listOf(
+            Tool.LAYERS to Icons.Filled.Layers,
             Tool.TRIM to Icons.Filled.ContentCut,
             Tool.SPLIT to Icons.Filled.Add,
             Tool.VOLUME to Icons.Filled.VolumeUp,
@@ -273,7 +359,10 @@ private fun ToolBarRow(
         tools.forEach { (tool, icon) ->
             IconButton(
                 onClick = { onTool(tool) },
-                enabled = hasClips || tool == Tool.AUDIO || tool == Tool.ASPECT,
+                // Layers/aspect are always available; editing tools need a
+                // non-empty timeline (overlays/audio can exist without clips).
+                enabled = hasContent || tool == Tool.AUDIO || tool == Tool.ASPECT ||
+                    tool == Tool.LAYERS,
                 modifier = Modifier.size(44.dp),
             ) {
                 Icon(

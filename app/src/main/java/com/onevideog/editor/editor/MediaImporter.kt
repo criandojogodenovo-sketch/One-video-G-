@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.util.Log
 import com.onevideog.editor.data.Clip
 import java.io.File
 import kotlin.math.ceil
@@ -77,7 +78,12 @@ class MediaImporter(private val context: Context) {
         }
     }
 
-    /** Probes an audio document (music import). */
+    /**
+     * Probes an audio document (music import). Crash-hardened: every
+     * failure — unreadable document, retriever runtime failure, unknown
+     * duration — maps to an [ImportException] the UI can localize. Diagnostics
+     * are sanitized (kind + exception class only; never file names or URIs).
+     */
     fun probeAudio(uri: Uri): AudioMeta {
         val retriever = MediaMetadataRetriever()
         try {
@@ -85,10 +91,20 @@ class MediaImporter(private val context: Context) {
             val durationMs =
                 retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
                     ?.toLongOrNull() ?: 0L
-            if (durationMs <= 0) throw ImportException(ImportException.Kind.UNSUPPORTED)
+            if (durationMs <= 0) {
+                // Metadata present but unusable (e.g. a document with an audio
+                // extension that contains no decodable media).
+                throw ImportException(ImportException.Kind.UNSUPPORTED)
+            }
             return AudioMeta(durationMs)
-        } catch (e: Exception) {
-            throw ImportException(ImportException.Kind.UNREADABLE, e)
+        } catch (e: ImportException) {
+            Log.w(DIAG_TAG, "audio probe unsupported (no decodable media)")
+            throw e
+        } catch (t: Throwable) {
+            // Includes RuntimeException from setDataSource and any OEM
+            // retriever quirk — surfaced as a localized error, never a crash.
+            Log.w(DIAG_TAG, "audio probe failed: ${t.javaClass.simpleName}")
+            throw ImportException(ImportException.Kind.UNREADABLE, t)
         } finally {
             runCatching { retriever.release() }
         }
@@ -163,6 +179,7 @@ class MediaImporter(private val context: Context) {
     companion object {
         const val MAX_THUMBS_PER_CLIP = 8
         const val THUMB_WIDTH = 160
+        private const val DIAG_TAG = "OvgMediaImport"
     }
 }
 
