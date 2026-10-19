@@ -63,7 +63,8 @@ jobs:
           APK="app/build/outputs/apk/release/app-release.apk"
           test -f "$APK"
           "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose --print-certs "$APK" | tee /tmp/apksigner.out
-          grep -q "Verifiable" /tmp/apksigner.out
+          grep -q "^Verifies" /tmp/apksigner.out
+          grep -q "v2 scheme (APK Signature Scheme v2): true" /tmp/apksigner.out
           echo "Signature verified OK"
 
       - name: Rename APK
