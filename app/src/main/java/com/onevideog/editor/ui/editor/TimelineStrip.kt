@@ -44,24 +44,35 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.onevideog.editor.R
 import com.onevideog.editor.data.Clip
 import com.onevideog.editor.editor.EditorViewModel
-import com.onevideog.editor.editor.TimelineLogic
+import com.onevideog.editor.editor.TimelineScale
 import com.onevideog.editor.ui.home.formatDuration
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
-import kotlin.math.roundToLong
 
 /**
- * Multi-track timeline: the video track (thumbnails, selection), independent
- * audio track rows and an overlay marker row share one horizontal scroll
- * space and playhead. Widths are proportional to the authoritative
- * [com.onevideog.editor.editor.ProjectMath] durations at the current zoom.
+ * Multi-track timeline: scrub ruler, video track (proportional thumbnails),
+ * independent audio track rows and deterministic overlay lanes share one
+ * horizontal scroll space and playhead.
+ *
+ * Geometry: ONE [TimelineScale] (density-aware, zoom-aware) drives every
+ * width, offset, pointer mapping and the playhead — the v0.2.1 mix of dp
+ * layout and px pointer math (taps scrubbing to the wrong time at phone
+ * densities, blocks misaligned with the ruler) is fixed by construction.
+ *
+ * Gesture contract:
+ *  - The ruler is the ONLY scrub target (tap + drag), through the ViewModel
+ *    scrub protocol so player updates can never fight the finger.
+ *  - Tapping a clip/bar selects it; bar body drags move; edge handles trim.
+ *  - While playing, the viewport follows the playhead; while scrubbing the
+ *    finger owns the viewport (no auto-scroll).
  */
 @Composable
 fun TimelineStrip(
@@ -71,7 +82,8 @@ fun TimelineStrip(
 ) {
     val state by viewModel.ui.collectAsState()
     val project = state.project ?: return
-    val zoom = state.zoom
+    val density = LocalDensity.current
+    val scale = remember(density.density, state.zoom) { TimelineScale(density.density, state.zoom) }
     val durationMs = com.onevideog.editor.editor.ProjectMath.projectDurationMs(project)
 
     Column(
@@ -86,14 +98,14 @@ fun TimelineStrip(
                 .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = { viewModel.setZoom(zoom / 1.4f) }) {
+            IconButton(onClick = { viewModel.setZoom(TimelineScale.clampZoom(state.zoom / 1.4f)) }) {
                 Icon(
                     Icons.Filled.Remove,
                     contentDescription = stringResource(R.string.a11y_zoom_out),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            IconButton(onClick = { viewModel.setZoom(zoom * 1.4f) }) {
+            IconButton(onClick = { viewModel.setZoom(TimelineScale.clampZoom(state.zoom * 1.4f)) }) {
                 Icon(
                     Icons.Filled.Add,
                     contentDescription = stringResource(R.string.a11y_zoom_in),
@@ -101,7 +113,7 @@ fun TimelineStrip(
                 )
             }
             Text(
-                stringResource(R.string.zoom_label) + " " + String.format("%.1fx", zoom),
+                stringResource(R.string.zoom_label) + " " + String.format("%.1fx", state.zoom),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -119,7 +131,7 @@ fun TimelineStrip(
         // not auto-scroll — the finger owns the viewport while dragging).
         LaunchedEffect(state.playheadMs, state.isPlaying) {
             if (state.isPlaying && !state.isScrubbing) {
-                val targetPx = (state.playheadMs / msPerPx(zoom)).toInt()
+                val targetPx = scale.timeToPx(state.playheadMs).toInt()
                 if (targetPx < scroll.value || targetPx > scroll.value + 600) {
                     scroll.scrollTo(targetPx.coerceAtLeast(0))
                 }
@@ -129,7 +141,7 @@ fun TimelineStrip(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(200.dp),
+                .height(220.dp),
         ) {
             Column(
                 modifier = Modifier
@@ -139,13 +151,9 @@ fun TimelineStrip(
                     .padding(horizontal = 4.dp),
             ) {
                 // Scrub ruler: tap or drag ANYWHERE on it to move the
-                // playhead. This is the one authoritative scrub target and
-                // works paused or playing, at any zoom, over any track.
-                ScrubRuler(
-                    durationMs = durationMs,
-                    zoom = zoom,
-                    viewModel = viewModel,
-                )
+                // playhead. The one authoritative scrub target — works
+                // paused or playing, at any zoom, over any track.
+                ScrubRuler(durationMs = durationMs, scale = scale, viewModel = viewModel)
                 // Video track
                 Row {
                     project.clips.forEachIndexed { index, clip ->
@@ -154,16 +162,13 @@ fun TimelineStrip(
                             index = index,
                             selected = clip.id == state.selectedClipId,
                             missing = clip.id in state.missingClipIds,
-                            zoom = zoom,
+                            scale = scale,
                             projectId = project.id,
                             viewModel = viewModel,
                             onClick = {
                                 viewModel.selectClip(clip.id)
                                 viewModel.selectOverlay(null)
                                 viewModel.selectAudioClip(null)
-                                viewModel.seekTo(
-                                    TimelineLogic.clipStartMs(project.clips, index),
-                                )
                             },
                         )
                     }
@@ -181,7 +186,7 @@ fun TimelineStrip(
                 project.audioClips.take(4).forEach { audioClip ->
                     AudioTrackRow(
                         audioClip = audioClip,
-                        zoom = zoom,
+                        scale = scale,
                         selected = audioClip.id == state.selectedAudioClipId,
                         viewModel = viewModel,
                         onOpenTool = onOpenTool,
@@ -207,23 +212,24 @@ fun TimelineStrip(
                         modifier = Modifier.padding(horizontal = 8.dp),
                     )
                 }
-                // Overlay markers
-                OverlayTrackRow(
-                    zoom = zoom,
+                // Overlay lanes (deterministic lane packing)
+                OverlayTrackLanes(
+                    scale = scale,
                     viewModel = viewModel,
                     onOpenTool = onOpenTool,
                 )
             }
-            // Playhead line — a viewport overlay, so it must track the
-            // horizontal scroll to stay aligned with the ruler's time axis.
-            val density = androidx.compose.ui.platform.LocalDensity.current
+            // Playhead line — a viewport overlay that tracks the horizontal
+            // scroll; the lambda-offset is in px and the scale is px-based,
+            // so it lines up with the ruler at every density and zoom.
             Box(
                 modifier = Modifier
                     .offset {
-                        val px = with(density) {
-                            4.dp.toPx() + (state.playheadMs / msPerPx(zoom)) - scroll.value
-                        }
-                        IntOffset(px.roundToInt(), 0)
+                        IntOffset(
+                            (scale.timeToPx(state.playheadMs) + 4.dp.toPx()).roundToInt() -
+                                scroll.value,
+                            0,
+                        )
                     }
                     .width(2.dp)
                     .fillMaxHeight()
@@ -234,37 +240,38 @@ fun TimelineStrip(
 }
 
 /**
- * The time ruler used for scrubbing. Maps pointer x to project time via the
- * same ms/px scale as the tracks; every write goes through the ViewModel's
- * scrub protocol ([EditorViewModel.beginScrub] / [scrubTo] / [endScrub]) so
- * the playhead can never be dragged back by player updates.
+ * The time ruler used for scrubbing. Pointer x -> time via the SAME
+ * [TimelineScale] as the tracks, clamped to [0, durationMs]. Every write
+ * goes through the ViewModel scrub protocol ([EditorViewModel.beginScrub] /
+ * [scrubTo] / [endScrub]) so the playhead can never be dragged back by
+ * player updates.
  */
 @Composable
 private fun ScrubRuler(
     durationMs: Long,
-    zoom: Float,
+    scale: TimelineScale,
     viewModel: EditorViewModel,
 ) {
-    val msPerPxValue = msPerPx(zoom)
-    val widthDp = (((durationMs + 4000L) * (1f / msPerPxValue)).dp)
-        .coerceIn(360.dp, 24000.dp)
+    val density = LocalDensity.current
+    // Ruler covers the project plus 4 s of trailing space.
+    val widthDp = with(density) { scale.timeToPx(durationMs + 4_000L).toDp() }
     Box(
         modifier = Modifier
             .width(widthDp)
             .height(26.dp)
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
-            .pointerInput(durationMs, zoom) {
+            .pointerInput(durationMs, scale.zoom, density.density) {
                 detectTapGestures(
                     onTap = { offset ->
-                        viewModel.seekTo((offset.x * msPerPxValue).roundToLong())
+                        viewModel.seekTo(scale.pxToTimeClamped(offset.x, durationMs))
                     },
                 )
             }
-            .pointerInput(durationMs, zoom) {
+            .pointerInput(durationMs, scale.zoom, density.density) {
                 detectDragGestures(
                     onDragStart = { offset ->
                         viewModel.beginScrub()
-                        viewModel.scrubTo((offset.x * msPerPxValue).roundToLong())
+                        viewModel.scrubTo(scale.pxToTimeClamped(offset.x, durationMs))
                     },
                     onDragEnd = { viewModel.endScrub() },
                     onDragCancel = { viewModel.endScrub() },
@@ -272,20 +279,19 @@ private fun ScrubRuler(
                     change.consume()
                     // Absolute position (not accumulated deltas) so a fast
                     // fling can never desync from the finger.
-                    viewModel.scrubTo((change.position.x * msPerPxValue).roundToLong())
+                    viewModel.scrubTo(scale.pxToTimeClamped(change.position.x, durationMs))
                 }
             },
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
-            val pxPerMs = 1f / msPerPxValue
-            val pxPerSecond = 1000f * pxPerMs
+            val pxPerSecond = scale.timeToPx(1_000L)
             // Tick every second when zoomed in, every 5 s when zoomed out.
             val stepSeconds = if (pxPerSecond >= 10f) 1 else 5
             val labelStepSeconds = stepSeconds * 5
             val totalSeconds = (durationMs / 1000L).toInt() + 4
             var s = 0
             while (s <= totalSeconds) {
-                val x = s * pxPerSecond * stepSeconds
+                val x = scale.timeToPx(s * 1000L * stepSeconds)
                 if (x > size.width) break
                 val isLabel = s % labelStepSeconds == 0
                 drawLine(
@@ -298,8 +304,9 @@ private fun ScrubRuler(
                 s += stepSeconds
             }
         }
-        // Second labels (only when zoomed in enough to be readable).
-        if (1000f / msPerPxValue >= 12f) {
+        // Second labels (only when zoomed in enough to be readable); each
+        // label's width is the px-consistent span of 5 seconds.
+        if (scale.timeToPx(1_000L) >= 12f) {
             Row(modifier = Modifier.fillMaxHeight()) {
                 val labelCount = ((durationMs / 1000L).toInt() + 4) / 5 + 1
                 repeat(labelCount.coerceAtMost(600)) { i ->
@@ -308,7 +315,7 @@ private fun ScrubRuler(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier
-                            .width((5_000f / msPerPxValue).dp)
+                            .width(with(density) { scale.timeToPx(5_000L).toDp() })
                             .padding(start = 2.dp),
                         maxLines = 1,
                     )
@@ -318,21 +325,24 @@ private fun ScrubRuler(
     }
 }
 
-/** Milliseconds represented by one pixel at the given zoom level. */
-internal fun msPerPx(zoom: Float): Float = 60f / zoom
-
 @Composable
 private fun ClipBlock(
     clip: Clip,
     index: Int,
     selected: Boolean,
     missing: Boolean,
-    zoom: Float,
+    scale: TimelineScale,
     projectId: String,
     viewModel: EditorViewModel,
     onClick: () -> Unit,
 ) {
-    val widthDp = (clip.effectiveDurationMs / msPerPx(zoom)).dp.coerceIn(48.dp, 620.dp)
+    val density = LocalDensity.current
+    // Proportional to the clip's timeline duration (min width keeps tiny
+    // clips touchable; the old 620dp cap that visually compressed long
+    // clips and desynced them from the playhead is gone).
+    val widthDp = with(density) {
+        scale.spanToPx(clip.effectiveDurationMs).toDp().coerceAtLeast(56.dp)
+    }
     Column(
         modifier = Modifier
             .padding(horizontal = 3.dp)

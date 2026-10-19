@@ -1,9 +1,5 @@
 package com.onevideog.editor.ui.editor
 
-import android.graphics.ColorMatrixColorFilter
-import android.graphics.Paint
-import android.view.TextureView
-import android.view.View
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -33,7 +29,7 @@ import com.onevideog.editor.R
 import com.onevideog.editor.data.OverlayTransform
 import com.onevideog.editor.data.ProjectAspect
 import com.onevideog.editor.editor.AudioPreviewController
-import com.onevideog.editor.editor.ColorMatrixMath
+import com.onevideog.editor.editor.ClipEffectsFactory
 import com.onevideog.editor.editor.EditorViewModel
 import com.onevideog.editor.editor.OverlayLayout
 import com.onevideog.editor.editor.ProjectMath
@@ -42,26 +38,33 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
 /**
- * Real-time composition preview: the project model is rendered here with the
- * same pure math the export pipeline uses ([ProjectMath], [OverlayLayout],
- * [KeyframeEvaluator], [AudioTimeline]).
+ * Real-time composition preview.
  *
- * Playback contract:
+ * Rendering pipeline (v0.2.2): the active clip's video AND its overlays and
+ * colour adjustments are rendered by the Media3 GL pipeline through
+ * `ExoPlayer.setVideoEffects(...)` with the SAME effect list the export
+ * composition builds ([ClipEffectsFactory]) — one shared implementation, no
+ * duplicated timeline/effect math. The Compose overlay canvas draws only
+ * editor chrome + live gesture previews, plus a fallback content render when
+ * there is no active video (overlays over black) or the player is not ready.
+ *
+ * Effects lifecycle (verified against Media3 1.4.1 sources):
+ *  - `setVideoEffects` MUST be called before `prepare` for the first item;
+ *  - a changed effect list applies at the NEXT input stream, so after any
+ *    overlay/colour/speed edit the list is rebuilt and the current item is
+ *    re-prepared at the current position (one decoder init per commit).
+ *
+ * Playback contract (unchanged from v0.2.1):
  * - The ViewModel owns ONE authoritative playhead (`state.playheadMs`).
- * - `state.isPlaying` is mirrored to the ExoPlayer in its own effect, so the
- *   Play/Pause button always starts/stops the player (v0.2.0 only set
- *   `playWhenReady` inside the media-load effect, so the button did nothing).
- * - Scrubbing: while `state.isScrubbing`, the user's pointer owns the
- *   playhead and the periodic publisher is disabled; the player is only
- *   seeked when the drag ends (or by a transport seek). The publisher also
- *   refuses to publish while the player is not actually `isPlaying`, so an
- *   async seek can never drag the playhead back to the old position.
- * - Same-clip seeks call `player.seekTo` (fast, keeps the decoder); the media
- *   item is only rebuilt when the active clip changes.
+ * - `state.isPlaying` is mirrored to the player in its own effect.
+ * - While `state.isScrubbing`, the pointer owns the playhead; the periodic
+ *   publisher refuses to publish unless the player is actually playing, so
+ *   an async seek can never drag the playhead back to the old position.
+ * - Same-clip seeks call `player.seekTo` (keeps the decoder); the media item
+ *   is only rebuilt when the active clip (or the effects) change.
  * - Audio: [AudioPreviewController] is driven from one main-thread loop and
  *   reports decoder failures via [EditorViewModel.audioPreviewError].
- * - The transport row lives in [EditorScreen] BELOW the canvas — the preview
- *   area itself stays free for overlay manipulation.
+ * - The transport row lives in [EditorScreen] BELOW the canvas.
  */
 @Composable
 fun PreviewStage(viewModel: EditorViewModel) {
@@ -75,6 +78,8 @@ fun PreviewStage(viewModel: EditorViewModel) {
     val clipStart = TimelineLogic.clipStartMs(project.clips, clipIndex)
 
     // Content aspect: project aspect, or the active clip's source aspect.
+    // The preview effect list ends with the same Presentation the export
+    // applies, so the GL frame geometry matches the exported frame exactly.
     val contentAspect = when (val aspect = project.aspectEnum) {
         ProjectAspect.SOURCE -> currentClip?.sourceAspect ?: 16f / 9f
         else -> aspect.ratio() ?: 16f / 9f
@@ -98,11 +103,15 @@ fun PreviewStage(viewModel: EditorViewModel) {
         }
     }
 
+    // Player readiness drives the canvas fallback (overlays must stay visible
+    // during media switches and for overlay-only projects over black).
+    var playerReady by remember { mutableStateOf(false) }
     // Keep the icon/state and the player in lock-step: STATE_ENDED and decode
     // errors flip `isPlaying` off so the UI never shows a phantom "playing".
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
+                playerReady = playbackState == Player.STATE_READY
                 if (playbackState == Player.STATE_ENDED) viewModel.setPlaying(false)
             }
 
@@ -115,7 +124,59 @@ fun PreviewStage(viewModel: EditorViewModel) {
         onDispose { player.removeListener(listener) }
     }
 
+    // ------------------- shared effect pipeline (preview) ---------------------
+    // Revision key: clip identity + every project input the effect list
+    // depends on. Any overlay add/delete/edit, colour, speed or aspect change
+    // rebuilds the list and forces a new input stream so Media3 applies it.
+    val effectsRevision = remember(currentClip, project.aspect, project.overlays) {
+        listOf(
+            currentClip?.id,
+            currentClip?.trimStartMs,
+            currentClip?.trimEndMs,
+            currentClip?.speed,
+            currentClip?.color,
+            project.aspect,
+            project.overlays.hashCode(),
+        ).hashCode()
+    }
+
+    fun mediaItemFor(clip: com.onevideog.editor.data.Clip): MediaItem =
+        MediaItem.Builder()
+            .setUri(android.net.Uri.parse(clip.uri))
+            .setClippingConfiguration(
+                MediaItem.ClippingConfiguration.Builder()
+                    .setStartPositionMs(clip.trimStartMs)
+                    .setEndPositionMs(clip.trimEndMs)
+                    .build(),
+            )
+            .build()
+
     var loadedClipId by remember { mutableStateOf<String?>(null) }
+
+    // Effect application — MUST run before the media-load effect below so the
+    // first prepare() happens with the effects already set.
+    LaunchedEffect(effectsRevision) {
+        val clip = currentClip ?: return@LaunchedEffect
+        val effects = ClipEffectsFactory.effectsFor(
+            context = context,
+            project = project,
+            clip = clip,
+            clipStartMs = clipStart,
+            forPreview = true,
+        )
+        player.setVideoEffects(effects)
+        // When the same clip is already loaded, force a new input stream so
+        // the pending effects apply immediately; otherwise the media-load
+        // effect will prepare the item with the fresh list.
+        if (loadedClipId == clip.id) {
+            val pos = runCatching { player.currentPosition }.getOrDefault(0L).coerceAtLeast(0)
+            player.setMediaItem(mediaItemFor(clip), pos)
+            player.setPlaybackSpeed(clip.speed)
+            player.prepare()
+            player.playWhenReady = viewModel.ui.value.isPlaying
+        }
+    }
+
     LaunchedEffect(currentClip?.id, viewModel.seekToken.collectAsState().value) {
         if (currentClip == null) {
             player.stop()
@@ -129,23 +190,15 @@ fun PreviewStage(viewModel: EditorViewModel) {
             (state.playheadMs - clipStart).coerceAtLeast(0),
         )
         if (loadedClipId == currentClip.id) {
-            // Same clip: a seek is enough — never tear the decoder down
-            // (the v0.2.0 full reload made every seek slow and let the old
-            // position leak back into the playhead).
+            // Same clip: a seek is enough — never tear the decoder down.
             player.setPlaybackSpeed(currentClip.speed)
             player.seekTo(localMs.coerceAtMost(currentClip.effectiveDurationMs))
             player.playWhenReady = state.isPlaying
         } else {
-            val item = MediaItem.Builder()
-                .setUri(android.net.Uri.parse(currentClip.uri))
-                .setClippingConfiguration(
-                    MediaItem.ClippingConfiguration.Builder()
-                        .setStartPositionMs(currentClip.trimStartMs)
-                        .setEndPositionMs(currentClip.trimEndMs)
-                        .build(),
-                )
-                .build()
-            player.setMediaItem(item, localMs.coerceAtMost(currentClip.effectiveDurationMs))
+            player.setMediaItem(
+                mediaItemFor(currentClip),
+                localMs.coerceAtMost(currentClip.effectiveDurationMs),
+            )
             player.setPlaybackSpeed(currentClip.speed)
             player.prepare()
             player.playWhenReady = state.isPlaying
@@ -202,9 +255,6 @@ fun PreviewStage(viewModel: EditorViewModel) {
         }
     }
 
-    // ------------------------------ colour filter -----------------------------
-    val colorPaint = remember { Paint() }
-
     // ------------------------------ viewport ----------------------------------
     BoxWithConstraints(
         modifier = Modifier
@@ -231,20 +281,6 @@ fun PreviewStage(viewModel: EditorViewModel) {
                 },
                 update = { view ->
                     view.player = player
-                    val color = currentClip?.color
-                    val texture = view.videoSurfaceView as? TextureView
-                    if (color != null && !color.isDefault) {
-                        colorPaint.colorFilter = ColorMatrixColorFilter(
-                            android.graphics.ColorMatrix(
-                                ColorMatrixMath.androidColorMatrix45(
-                                    color.brightness, color.contrast, color.saturation,
-                                ),
-                            ),
-                        )
-                        texture?.setLayerType(View.LAYER_TYPE_HARDWARE, colorPaint)
-                    } else {
-                        texture?.setLayerType(View.LAYER_TYPE_NONE, null)
-                    }
                 },
                 modifier = Modifier.fillMaxSize(),
             )
@@ -260,7 +296,11 @@ fun PreviewStage(viewModel: EditorViewModel) {
                 contentHeightPx = { fitted.height },
                 selectedOverlayId = { state.selectedOverlayId },
                 gestureOverride = { gestureState },
+                renderContentFallback = { currentClip == null || !playerReady },
                 onTap = { overlay ->
+                    // Clear any stale gesture override (a tap ends the
+                    // gesture without committing a transform).
+                    gestureState = null
                     viewModel.selectOverlay(overlay?.id)
                     overlay?.let { viewModel.selectClip(null); viewModel.selectAudioClip(null) }
                 },
@@ -272,6 +312,10 @@ fun PreviewStage(viewModel: EditorViewModel) {
                     viewModel.updateOverlay(overlay.id) {
                         it.copy(transform = transform.withClampedValues())
                     }
+                },
+                onDelete = { overlay ->
+                    viewModel.selectOverlay(null)
+                    viewModel.removeOverlay(overlay.id)
                 },
             )
         }

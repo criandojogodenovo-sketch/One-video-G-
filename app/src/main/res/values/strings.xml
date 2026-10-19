@@ -79,6 +79,7 @@
     <!-- Split -->
     <string name="split_here">Split here</string>
     <string name="split_no_clip">Move the playhead over a clip to split it.</string>
+    <string name="split_too_short">Move the playhead further inside the clip — both parts need at least 0.1 s.</string>
 
     <!-- Volume / speed -->
     <string name="volume_title">Clip volume</string>
@@ -118,6 +119,7 @@
     <string name="overlay_existing">Overlays in this project</string>
     <string name="overlay_remove">Remove</string>
     <string name="overlay_front">Bring to front</string>
+    <string name="overlay_back">Send to back</string>
     <string name="overlay_timing">Timing</string>
 
     <!-- Transform -->
