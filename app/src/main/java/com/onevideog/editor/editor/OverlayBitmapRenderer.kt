@@ -9,9 +9,14 @@ import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.net.Uri
+import android.os.SystemClock
 import android.util.LruCache
 import com.onevideog.editor.data.OverlayItem
 import com.onevideog.editor.data.TextFontFamily
+import com.onevideog.editor.diag.DiagContext
+import com.onevideog.editor.diag.DiagSanitizer
+import com.onevideog.editor.diag.DiagnosticsLogger
+import com.onevideog.editor.diag.ImageImportStages
 
 /**
  * Renders overlay content bitmaps (text blocks, images) used identically by
@@ -106,7 +111,14 @@ object OverlayBitmapRenderer {
     fun imageBitmap(context: Context, overlay: OverlayItem): Bitmap? {
         val key = contentKey(overlay)
         cache.get(key)?.let { return it }
-        val decoded = decodeImage(context, Uri.parse(overlay.uri)) ?: return null
+        // Correlate the decode with the owning operation: the thread-local
+        // op id set by PreviewStage/ExportManager, or the overlay id as a
+        // fallback correlation anchor.
+        val decoded = decodeImage(
+            context,
+            Uri.parse(overlay.uri),
+            opId = DiagContext.currentOpId() ?: "ov-${DiagSanitizer.fingerprint(overlay.id)}",
+        ) ?: return null
         cache.put(key, decoded)
         return decoded
     }
@@ -120,21 +132,111 @@ object OverlayBitmapRenderer {
         cache.remove(contentKey(overlay))
     }
 
-    /** Decodes an image URI sampled to at most [IMAGE_MAX_DIM] on its longest side. */
-    fun decodeImage(context: Context, uri: Uri): Bitmap? = runCatching {
+    /**
+     * Decodes an image URI sampled to at most [IMAGE_MAX_DIM] on its longest
+     * side. v0.2.3: every stage/failure is instrumented (bounds, sample
+     * factor, elapsed, exception incl. OOM) — failures were previously
+     * silently converted to null, which made image overlays disappear
+     * without any evidence. The opId comes from the caller (thread-local
+     * operation context) so decode events correlate with the import or the
+     * preview/export rebuild that triggered them.
+     */
+    fun decodeImage(context: Context, uri: Uri, opId: String? = DiagContext.currentOpId()): Bitmap? {
+        val startedAt = SystemClock.elapsedRealtime()
+        // ---- stage F: bounds pass (no pixels) ----
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        context.contentResolver.openInputStream(uri)?.use {
-            BitmapFactory.decodeStream(it, null, bounds)
-        } ?: return null
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var boundsStreamOpened = false
+        runCatching {
+            context.contentResolver.openInputStream(uri)?.use {
+                // NOTE: with inJustDecodeBounds=true decodeStream returns
+                // null by design; success == the stream opened. The real
+                // validity check is outWidth/outHeight below.
+                boundsStreamOpened = true
+                BitmapFactory.decodeStream(it, null, bounds)
+            }
+        }
+        if (!boundsStreamOpened) {
+            DiagnosticsLogger.e(
+                "import", ImageImportStages.DECODE_FAIL, opId,
+                "image bounds pass failed (stream unreadable or decode error)",
+                meta = listOf("uri" to DiagSanitizer.sanitizeUri(uri.toString())),
+            )
+            return null
+        }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            DiagnosticsLogger.e(
+                "import", ImageImportStages.DECODE_FAIL, opId,
+                "image bounds invalid (not a decodable image)",
+                meta = listOf(
+                    "uri" to DiagSanitizer.sanitizeUri(uri.toString()),
+                    "w" to bounds.outWidth.toString(),
+                    "h" to bounds.outHeight.toString(),
+                ),
+            )
+            return null
+        }
         var sample = 1
         val largest = maxOf(bounds.outWidth, bounds.outHeight)
         while (largest / (sample * 2) >= IMAGE_MAX_DIM) sample *= 2
-        val options = BitmapFactory.Options().apply { inSampleSize = sample }
-        context.contentResolver.openInputStream(uri)?.use {
-            BitmapFactory.decodeStream(it, null, options)
+        DiagnosticsLogger.i(
+            "import", ImageImportStages.DECODE_START, opId,
+            "image decode started",
+            meta = listOf(
+                "uri" to DiagSanitizer.sanitizeUri(uri.toString()),
+                "srcW" to bounds.outWidth.toString(),
+                "srcH" to bounds.outHeight.toString(),
+                "sample" to sample.toString(),
+            ),
+        )
+        // ---- stage F: full decode ----
+        val decoded = runCatching {
+            val options = BitmapFactory.Options().apply { inSampleSize = sample }
+            context.contentResolver.openInputStream(uri)?.use {
+                BitmapFactory.decodeStream(it, null, options)
+            }
         }
-    }.getOrNull()
+        val elapsedMs = SystemClock.elapsedRealtime() - startedAt
+        return when {
+            decoded.isFailure -> {
+                val t = decoded.exceptionOrNull()
+                DiagnosticsLogger.e(
+                    "import", ImageImportStages.DECODE_FAIL, opId,
+                    "image decode threw (oom=${t is OutOfMemoryError})",
+                    t,
+                    listOf(
+                        "uri" to DiagSanitizer.sanitizeUri(uri.toString()),
+                        "elapsedMs" to elapsedMs.toString(),
+                    ),
+                )
+                null
+            }
+            decoded.getOrNull() == null -> {
+                DiagnosticsLogger.e(
+                    "import", ImageImportStages.DECODE_FAIL, opId,
+                    "image decode returned NULL bitmap",
+                    meta = listOf(
+                        "uri" to DiagSanitizer.sanitizeUri(uri.toString()),
+                        "elapsedMs" to elapsedMs.toString(),
+                    ),
+                )
+                null
+            }
+            else -> {
+                val bmp = decoded.getOrNull()!!
+                DiagnosticsLogger.i(
+                    "import", ImageImportStages.DECODE_END, opId,
+                    "image decode succeeded",
+                    meta = listOf(
+                        "w" to bmp.width.toString(),
+                        "h" to bmp.height.toString(),
+                        "elapsedMs" to elapsedMs.toString(),
+                        "thread" to Thread.currentThread().name,
+                    ),
+                )
+                bmp
+            }
+        }
+    }
 
     /**
      * Draws the text block (with optional background pill) on a transparent

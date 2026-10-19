@@ -113,6 +113,20 @@ fun ExportScreen(
         if (uri != null && uri != Uri.EMPTY) {
             val currentProject = viewModel.ui.value.project ?: return@rememberLauncherForActivityResult
             viewModel.saveNow {
+                // Stage A evidence (user export request), before the service
+                // starts. Destination is logged as provider fingerprint only.
+                com.onevideog.editor.diag.DiagnosticsLogger.i(
+                    "export", "REQUEST", null,
+                    "user requested export",
+                    meta = listOf(
+                        "resolution" to resolution.name,
+                        "quality" to quality.name,
+                        "durationMs" to ProjectMath.projectDurationMs(currentProject).toString(),
+                        "clips" to currentProject.clips.size.toString(),
+                        "overlays" to currentProject.overlays.size.toString(),
+                        "audio" to currentProject.audioClips.size.toString(),
+                    ),
+                )
                 if (Build.VERSION.SDK_INT >= 33) {
                     notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                 }

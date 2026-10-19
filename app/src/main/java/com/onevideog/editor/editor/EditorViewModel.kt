@@ -2,6 +2,7 @@ package com.onevideog.editor.editor
 
 import android.app.Application
 import android.net.Uri
+import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.onevideog.editor.data.AudioClipItem
@@ -14,6 +15,10 @@ import com.onevideog.editor.data.OverlayKind
 import com.onevideog.editor.data.OverlayTransform
 import com.onevideog.editor.data.ProjectAspect
 import com.onevideog.editor.data.ProjectRepository
+import com.onevideog.editor.diag.DiagSanitizer
+import com.onevideog.editor.diag.DiagnosticsLogger
+import com.onevideog.editor.diag.ImageImportStages
+import com.onevideog.editor.diag.OpRegistry
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -79,6 +84,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             val loaded = repository.load(projectId)
             if (loaded == null) {
+                DiagnosticsLogger.e("project", "OPEN", null, "project load FAILED (missing or corrupt)")
                 withContext(Dispatchers.Main) { _ui.value = UiState(loadError = true) }
                 return@launch
             }
@@ -88,6 +94,17 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 .filter { !importer.isReadable(Uri.parse(it.uri)) }
                 .map { it.id }
                 .toSet()
+            DiagnosticsLogger.i(
+                "project", "OPEN", null,
+                "project opened",
+                meta = listOf(
+                    "clips" to project.clips.size.toString(),
+                    "overlays" to project.overlays.size.toString(),
+                    "audio" to project.audioClips.size.toString(),
+                    "missing" to missing.size.toString(),
+                    "durationMs" to ProjectMath.projectDurationMs(project).toString(),
+                ),
+            )
             withContext(Dispatchers.Main) {
                 _ui.value = UiState(
                     project = project,
@@ -114,16 +131,41 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun importVideo(uri: Uri, displayName: String) {
         val projectId = _ui.value.project?.id ?: return
+        val opId = OpRegistry.newOpId("vid")
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                importer.persistReadPermission(uri)
+                val persisted = importer.persistReadPermission(uri)
+                DiagnosticsLogger.i(
+                    MediaImporter.SUBSYSTEM, "VIDEO_IMPORT", opId,
+                    "video import started",
+                    meta = listOf(
+                        "uri" to DiagSanitizer.sanitizeUri(uri.toString()),
+                        "persisted" to persisted.toString(),
+                    ),
+                )
                 val thumbsDir = repository.timelineThumbsDir(projectId)
                 val clip = importer.createClip(uri, displayName, projectId, thumbsDir)
                 commitProject { it.copy(clips = it.clips + clip) }
                 refreshHomeThumb()
+                DiagnosticsLogger.i(
+                    MediaImporter.SUBSYSTEM, "VIDEO_IMPORT", opId,
+                    "video import completed",
+                    meta = listOf(
+                        "durationMs" to clip.sourceDurationMs.toString(),
+                        "w" to clip.width.toString(), "h" to clip.height.toString(),
+                    ),
+                )
             } catch (e: MediaImporter.ImportException) {
+                DiagnosticsLogger.e(
+                    MediaImporter.SUBSYSTEM, "VIDEO_IMPORT", opId,
+                    "video import failed kind=${e.kind}", e,
+                )
                 importError.value = e.kind
             } catch (e: Exception) {
+                DiagnosticsLogger.e(
+                    MediaImporter.SUBSYSTEM, "VIDEO_IMPORT", opId,
+                    "video import failed unexpectedly", e,
+                )
                 importError.value = MediaImporter.ImportException.Kind.UNREADABLE
             }
         }
@@ -170,6 +212,14 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun trimClip(clipId: String, startMs: Long, endMs: Long) {
+        DiagnosticsLogger.i(
+            "timeline", "TRIM", null,
+            "video clip trim applied",
+            meta = listOf(
+                "clip" to DiagSanitizer.fingerprint(clipId),
+                "startMs" to startMs.toString(), "endMs" to endMs.toString(),
+            ),
+        )
         commitProject { project ->
             project.copy(
                 clips = TimelineLogic.withClip(project.clips, clipId) {
@@ -186,6 +236,14 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         if (result == null) {
             // Strictly-inside rule: give actionable feedback instead of a
             // silent no-op (spec: show a clear message for invalid ops).
+            DiagnosticsLogger.w(
+                "timeline", "SPLIT_REJECTED", null,
+                "split rejected at playhead",
+                meta = listOf(
+                    "playheadMs" to state.playheadMs.toString(),
+                    "clips" to project.clips.size.toString(),
+                ),
+            )
             editError.value = if (project.clips.isEmpty()) {
                 EditError.NO_CLIP
             } else {
@@ -193,6 +251,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             }
             return
         }
+        DiagnosticsLogger.i(
+            "timeline", "SPLIT", null,
+            "clip split at playhead",
+            meta = listOf("playheadMs" to state.playheadMs.toString()),
+        )
         commitProject { it.copy(clips = result) }
     }
 
@@ -305,23 +368,107 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /**
+     * Image overlay import — fully instrumented (v0.2.3, spec section 3).
+     *
+     * Every stage gets a structured event under one correlation id (`img-*`):
+     * picker result -> persisted permission -> URI/mime/bounds probe ->
+     * validation decode (IO thread; the REAL decode happens later on the
+     * preview thread, its evidence lands under the same op via DiagContext)
+     * -> overlay creation. A validation failure is surfaced to the user as a
+     * localized error AND recorded with the real exception — null bitmaps
+     * are never silently ignored. The editor stays interactive: failures
+     * never throw out of this function.
+     */
     fun addImageOverlay(uri: Uri) {
+        val opId = OpRegistry.newOpId("img")
+        val startedAt = SystemClock.elapsedRealtime()
+        DiagnosticsLogger.i(
+            MediaImporter.SUBSYSTEM, ImageImportStages.PICKER_RESULT, opId,
+            "image picker returned a document",
+            meta = listOf("uri" to DiagSanitizer.sanitizeUri(uri.toString())),
+        )
         val duration = durationMs
-        if (duration <= 0) return
-        importer.persistReadPermission(uri)
-        commitProject { p ->
-            val nextZ = (p.overlays.maxOfOrNull { it.zOrder } ?: 0) + 1
-            p.copy(
-                overlays = p.overlays + OverlayItem(
-                    id = TimelineLogic.newId(),
-                    kind = OverlayKind.IMAGE,
-                    startMs = 0,
-                    endMs = duration,
-                    transform = OverlayTransform(x = 0.5f, y = 0.5f, scale = 0.4f),
-                    zOrder = nextZ,
-                    uri = uri.toString(),
-                ),
+        if (duration <= 0) {
+            DiagnosticsLogger.w(
+                MediaImporter.SUBSYSTEM, ImageImportStages.OVERLAY_CREATE, opId,
+                "image import rejected: project has no video (duration=0)",
             )
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val persisted = importer.persistReadPermission(uri)
+                DiagnosticsLogger.i(
+                    MediaImporter.SUBSYSTEM, ImageImportStages.PERMISSION, opId,
+                    "persistable read permission requested",
+                    meta = listOf("persisted" to persisted.toString()),
+                )
+                // B/E: scheme, authority, mime, size, bounds (no pixel decode).
+                val meta = importer.probeImage(uri)
+                DiagnosticsLogger.i(
+                    MediaImporter.SUBSYSTEM, ImageImportStages.BOUNDS, opId,
+                    "image bounds probed",
+                    meta = listOf(
+                        "mime" to (meta.mimeType ?: "?"),
+                        "srcW" to meta.boundsWidth.toString(),
+                        "srcH" to meta.boundsHeight.toString(),
+                        "sizeBytes" to meta.sizeBytes.toString(),
+                    ),
+                )
+                // G: validation decode on IO — catches unreadable/corrupt
+                // images NOW (with a localized error) instead of failing
+                // silently later on the preview thread. Bitmap released
+                // immediately; never retained for logging.
+                val probe = OverlayBitmapRenderer.decodeImage(getApplication(), uri, opId)
+                if (probe == null) {
+                    // decodeImage already logged the exact failure stage.
+                    importError.value =
+                        MediaImporter.ImportException.Kind.IMAGE_UNREADABLE
+                    DiagnosticsLogger.e(
+                        MediaImporter.SUBSYSTEM, ImageImportStages.DECODE_FAIL, opId,
+                        "image import aborted after failed validation decode",
+                    )
+                    return@launch
+                }
+                probe.recycle()
+                var createdId = ""
+                commitProject { p ->
+                    val nextZ = (p.overlays.maxOfOrNull { it.zOrder } ?: 0) + 1
+                    val overlay = OverlayItem(
+                        id = TimelineLogic.newId(),
+                        kind = OverlayKind.IMAGE,
+                        startMs = 0,
+                        endMs = duration,
+                        transform = OverlayTransform(x = 0.5f, y = 0.5f, scale = 0.4f),
+                        zOrder = nextZ,
+                        uri = uri.toString(),
+                    )
+                    createdId = overlay.id
+                    p.copy(overlays = p.overlays + overlay)
+                }
+                DiagnosticsLogger.i(
+                    MediaImporter.SUBSYSTEM, ImageImportStages.OVERLAY_CREATE, opId,
+                    "image overlay created",
+                    meta = listOf(
+                        "ovId" to DiagSanitizer.fingerprint(createdId),
+                        "durationMs" to duration.toString(),
+                        "elapsedMs" to (SystemClock.elapsedRealtime() - startedAt).toString(),
+                    ),
+                )
+            } catch (e: MediaImporter.ImportException) {
+                DiagnosticsLogger.e(
+                    MediaImporter.SUBSYSTEM, ImageImportStages.DECODE_FAIL, opId,
+                    "image import failed kind=${e.kind}", e,
+                )
+                importError.value = e.kind
+            } catch (t: Throwable) {
+                DiagnosticsLogger.e(
+                    MediaImporter.SUBSYSTEM, ImageImportStages.DECODE_FAIL, opId,
+                    "image import failed unexpectedly", t,
+                )
+                importError.value = MediaImporter.ImportException.Kind.IMAGE_UNREADABLE
+            }
         }
     }
 
@@ -419,6 +566,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun removeOverlay(id: String) {
+        DiagnosticsLogger.i(
+            "timeline", "OVERLAY_REMOVE", null,
+            "overlay removed",
+            meta = listOf("ovId" to DiagSanitizer.fingerprint(id)),
+        )
         commitProject { it.copy(overlays = it.overlays.filterNot { o -> o.id == id }) }
         if (_ui.value.selectedOverlayId == id) {
             _ui.value = _ui.value.copy(selectedOverlayId = null)
@@ -487,17 +639,23 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
      * Crash-hardened: any failure (SAF read, metadata probe, persistence)
      * maps to a localized import error — an audio import can never take the
      * editor down. Sanitized diagnostics (no file names, no user content)
-     * go to logcat only.
+     * go to the diagnostics system (logcat mirror + persistent log).
      */
     fun addAudioClip(uri: Uri, displayName: String) {
         val projectId = _ui.value.project?.id ?: return
+        val opId = OpRegistry.newOpId("aud")
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 if (!importer.isReadable(uri)) {
+                    DiagnosticsLogger.w(
+                        MediaImporter.SUBSYSTEM, "AUDIO_IMPORT", opId,
+                        "audio import rejected: document unreadable",
+                        meta = listOf("uri" to DiagSanitizer.sanitizeUri(uri.toString())),
+                    )
                     importError.value = MediaImporter.ImportException.Kind.UNREADABLE
                     return@launch
                 }
-                importer.persistReadPermission(uri)
+                val persisted = importer.persistReadPermission(uri)
                 val meta = importer.probeAudio(uri)
                 commitProject {
                     it.copy(
@@ -512,16 +670,24 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         ),
                     )
                 }
+                DiagnosticsLogger.i(
+                    MediaImporter.SUBSYSTEM, "AUDIO_IMPORT", opId,
+                    "audio import completed",
+                    meta = listOf(
+                        "durationMs" to meta.durationMs.toString(),
+                        "persisted" to persisted.toString(),
+                    ),
+                )
             } catch (e: MediaImporter.ImportException) {
-                android.util.Log.w(
-                    "OvgAudioImport",
-                    "audio import failed kind=${e.kind} cause=${e.cause?.javaClass?.simpleName}",
+                DiagnosticsLogger.e(
+                    MediaImporter.SUBSYSTEM, "AUDIO_IMPORT", opId,
+                    "audio import failed kind=${e.kind}", e,
                 )
                 importError.value = e.kind
             } catch (t: Throwable) {
-                android.util.Log.w(
-                    "OvgAudioImport",
-                    "audio import failed unexpected=${t.javaClass.simpleName}",
+                DiagnosticsLogger.e(
+                    MediaImporter.SUBSYSTEM, "AUDIO_IMPORT", opId,
+                    "audio import failed unexpectedly", t,
                 )
                 importError.value = MediaImporter.ImportException.Kind.UNREADABLE
             }
@@ -623,12 +789,22 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * Start of a timeline scrub: the playhead now belongs to the user's
      * pointer. Playback pauses so the player cannot fight the drag; the
-     * previous playing state is restored on [endScrub].
+     * previous playing state is restored on [endScrub]. Instrumented (cold:
+     * once per gesture) — gesture-correlation evidence for the timeline
+     * touch-reliability problem.
      */
     fun beginScrub() {
         if (_ui.value.isScrubbing) return
         wasPlayingBeforeScrub = _ui.value.isPlaying
         _ui.value = _ui.value.copy(isScrubbing = true, isPlaying = false)
+        DiagnosticsLogger.d(
+            "timeline", "SCRUB_START", null,
+            "scrub gesture started",
+            meta = listOf(
+                "playheadMs" to _ui.value.playheadMs.toString(),
+                "wasPlaying" to wasPlayingBeforeScrub.toString(),
+            ),
+        )
     }
 
     /**
@@ -639,6 +815,14 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun endScrub() {
         if (!_ui.value.isScrubbing) return
         _ui.value = _ui.value.copy(isScrubbing = false)
+        DiagnosticsLogger.d(
+            "timeline", "SCRUB_END", null,
+            "scrub gesture ended",
+            meta = listOf(
+                "playheadMs" to _ui.value.playheadMs.toString(),
+                "resumePlaying" to wasPlayingBeforeScrub.toString(),
+            ),
+        )
         seekTo(_ui.value.playheadMs)
         if (wasPlayingBeforeScrub) setPlaying(true)
         wasPlayingBeforeScrub = false
@@ -688,14 +872,28 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         scheduleAutosave()
     }
 
+    /**
+     * Crash-hardened autosave (v0.2.3): a failing disk write used to
+     * propagate out of the coroutine and kill the process via the default
+     * uncaught-exception handler. Now the failure is logged (sanitized) and
+     * the editor stays interactive.
+     */
     fun saveNow(onSaved: (() -> Unit)? = null) {
         val project = _ui.value.project ?: return
         autosaveJob?.cancel()
         viewModelScope.launch(Dispatchers.IO) {
-            repository.save(project.copy(updatedAtEpochMs = System.currentTimeMillis()))
+            val saveOk = runCatching {
+                repository.save(project.copy(updatedAtEpochMs = System.currentTimeMillis()))
+            }
+            saveOk.onFailure {
+                DiagnosticsLogger.e(
+                    "project", "SAVE", null,
+                    "explicit project save FAILED", it,
+                )
+            }
             withContext(Dispatchers.Main) {
                 _ui.value = _ui.value.copy(saving = false)
-                onSaved?.invoke()
+                if (saveOk.isSuccess) onSaved?.invoke()
             }
         }
     }
@@ -723,7 +921,14 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         autosaveJob = viewModelScope.launch(Dispatchers.IO) {
             delay(500)
             _ui.value.project?.let { project ->
-                repository.save(project.copy(updatedAtEpochMs = System.currentTimeMillis()))
+                runCatching {
+                    repository.save(project.copy(updatedAtEpochMs = System.currentTimeMillis()))
+                }.onFailure {
+                    DiagnosticsLogger.e(
+                        "project", "AUTOSAVE", null,
+                        "autosave FAILED (project state kept in memory)", it,
+                    )
+                }
                 withContext(Dispatchers.Main) { _ui.value = _ui.value.copy(saving = true) }
             }
         }
