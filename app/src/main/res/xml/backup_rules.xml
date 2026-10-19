@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Project JSON files and settings are backed up; thumbnails are small and safe to back up too. -->
+    <include domain="file" path="projects/" />
+    <include domain="sharedpref" path="." />
+</full-backup-content>

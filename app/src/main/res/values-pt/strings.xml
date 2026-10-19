@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Identidade da aplicação. O nome do produto não se traduz. -->
+    <string name="app_name" translatable="false">One Video G</string>
+
+    <!-- Início -->
+    <string name="home_title">One Video G</string>
+    <string name="projects_empty_title">Ainda não há projetos</string>
+    <string name="projects_empty_subtitle">Crie um projeto e importe o seu primeiro vídeo para começar a editar.</string>
+    <string name="new_project">Novo projeto</string>
+    <string name="project_default_name">Projeto %1$s</string>
+    <string name="rename_project">Renomear</string>
+    <string name="delete_project_confirm_title">Apagar projeto?</string>
+    <string name="delete_project_confirm_body">“%1$s” será removido deste dispositivo. Os ficheiros importados não são apagados.</string>
+    <string name="project_name_hint">Nome do projeto</string>
+    <string name="name_required">Escreva um nome.</string>
+    <string name="clips_and_duration">%1$d clipes · %2$s</string>
+    <string name="changes_saved">Todas as alterações guardadas</string>
+
+    <!-- Ações comuns -->
+    <string name="cancel">Cancelar</string>
+    <string name="save">Guardar</string>
+    <string name="delete">Apagar</string>
+    <string name="done">Concluir</string>
+    <string name="ok">OK</string>
+    <string name="close">Fechar</string>
+    <string name="retry">Tentar novamente</string>
+    <string name="reset">Repor</string>
+    <string name="settings">Definições</string>
+    <string name="back">Voltar</string>
+
+    <!-- Definições -->
+    <string name="language">Idioma</string>
+    <string name="language_system">Predefinição do sistema</string>
+    <string name="portuguese">Português</string>
+    <string name="english">English</string>
+    <string name="theme">Tema</string>
+    <string name="theme_dark">Escuro</string>
+    <string name="theme_light">Claro</string>
+    <string name="theme_system">Predefinição do sistema</string>
+    <string name="about">Acerca de</string>
+    <string name="version_label">Versão %1$s</string>
+    <string name="app_description">O One Video G é um editor de vídeo que funciona offline. Os seus projetos e vídeos ficam neste dispositivo.</string>
+    <string name="export_default_resolution">Resolução de exportação predefinida</string>
+
+    <!-- Editor -->
+    <string name="editor_import_video">Importar vídeo</string>
+    <string name="editor_import_music">Importar música</string>
+    <string name="editor_empty_title">A linha temporal está vazia</string>
+    <string name="editor_empty_body">Importe um vídeo para começar a editar. Pode cortar, dividir, reordenar e exportar offline.</string>
+    <string name="editor_clip_missing">Ficheiro em falta</string>
+    <string name="editor_missing_media_body">O ficheiro original deste clipe já não está acessível. Reassocie-o ou apague o clipe.</string>
+    <string name="editor_relink">Reassociar ficheiro</string>
+    <string name="clip_label">Clipe %1$d</string>
+    <string name="zoom_label">Ampliação</string>
+
+    <!-- Ferramentas -->
+    <string name="tools_trim">Cortar</string>
+    <string name="tools_split">Dividir</string>
+    <string name="tools_volume">Volume</string>
+    <string name="tools_speed">Velocidade</string>
+    <string name="tools_aspect">Formato</string>
+    <string name="tools_text">Texto</string>
+    <string name="tools_image">Imagem</string>
+    <string name="tools_color">Cor</string>
+    <string name="tools_music">Música</string>
+    <string name="tools_delete_clip">Apagar clipe</string>
+    <string name="tools_move_left">Mover para a esquerda</string>
+    <string name="tools_move_right">Mover para a direita</string>
+
+    <!-- Corte -->
+    <string name="trim_title">Cortar clipe</string>
+    <string name="trim_start">Início</string>
+    <string name="trim_end">Fim</string>
+    <string name="trim_duration">Duração</string>
+    <string name="trim_apply">Aplicar corte</string>
+
+    <!-- Divisão -->
+    <string name="split_here">Dividir aqui</string>
+    <string name="split_no_clip">Mova a posição de reprodução sobre um clipe para o dividir.</string>
+
+    <!-- Volume / velocidade -->
+    <string name="volume_title">Volume do clipe</string>
+    <string name="volume_percent">%1$d%%</string>
+    <string name="speed_title">Velocidade de reprodução</string>
+    <string name="speed_value">%1$s×</string>
+
+    <!-- Formato -->
+    <string name="aspect_title">Formato do projeto</string>
+    <string name="aspect_source">Original</string>
+    <string name="aspect_16_9">16:9</string>
+    <string name="aspect_9_16">9:16</string>
+    <string name="aspect_1_1">1:1</string>
+    <string name="aspect_4_3">4:3</string>
+    <string name="aspect_3_4">3:4</string>
+
+    <!-- Cor -->
+    <string name="color_title">Ajustes de cor</string>
+    <string name="color_brightness">Brilho</string>
+    <string name="color_contrast">Contraste</string>
+    <string name="color_saturation">Saturação</string>
+    <string name="color_applied_on_export">Os ajustes de cor são aplicados quando exporta.</string>
+
+    <!-- Sobreposição de texto -->
+    <string name="text_add">Adicionar texto</string>
+    <string name="text_update">Atualizar texto</string>
+    <string name="text_hint">Escreva o seu texto</string>
+    <string name="text_color">Cor do texto</string>
+    <string name="text_position">Posição</string>
+    <string name="position_top">Topo</string>
+    <string name="position_center">Centro</string>
+    <string name="position_bottom">Baixo</string>
+    <string name="overlay_remove">Remover</string>
+    <string name="overlay_applied_on_export">As sobreposições são aplicadas quando exporta.</string>
+
+    <!-- Sobreposição de imagem -->
+    <string name="image_add">Adicionar imagem</string>
+    <string name="image_pick">Escolher imagem</string>
+    <string name="image_scale">Tamanho</string>
+
+    <!-- Música -->
+    <string name="music_title">Faixa de música</string>
+    <string name="music_none">Nenhuma música selecionada</string>
+    <string name="music_volume">Volume da música</string>
+    <string name="music_applied_on_export">A música toca sobre o vídeo e é aplicada quando exporta. Na pré-visualização ouve-se apenas o áudio do vídeo.</string>
+    <string name="music_remove">Remover música</string>
+
+    <!-- Exportação -->
+    <string name="export_title">Exportar</string>
+    <string name="export_resolution">Resolução</string>
+    <string name="res_720">720p</string>
+    <string name="res_1080">1080p</string>
+    <string name="export_quality">Qualidade</string>
+    <string name="quality_low">Baixa</string>
+    <string name="quality_medium">Média</string>
+    <string name="quality_high">Alta</string>
+    <string name="export_output_name">Nome do ficheiro</string>
+    <string name="export_start">Exportar vídeo</string>
+    <string name="export_select_location">Escolher onde guardar</string>
+    <string name="export_need_clips">Adicione pelo menos um clipe antes de exportar.</string>
+    <string name="export_preparing">A preparar a exportação…</string>
+    <string name="export_running">A exportar… %1$d%%</string>
+    <string name="export_verifying">A verificar o ficheiro…</string>
+    <string name="export_done_title">Exportação concluída</string>
+    <string name="export_done_body">Guardado no local que escolheu. O ficheiro foi verificado e pode ser reproduzido.</string>
+    <string name="export_failed_title">A exportação falhou</string>
+    <string name="export_canceled">Exportação cancelada.</string>
+    <string name="fps_note">A taxa de imagens segue o vídeo original.</string>
+
+    <!-- Erros -->
+    <string name="error_unsupported_file">Este tipo de ficheiro não é suportado.</string>
+    <string name="error_file_unreadable">Não foi possível ler o ficheiro. Pode estar danificado ou inacessível.</string>
+    <string name="error_no_video">Não foi encontrada uma faixa de vídeo utilizável neste ficheiro.</string>
+    <string name="error_export_failed">Não foi possível concluir a exportação neste dispositivo. Tente uma resolução mais baixa ou outro ficheiro.</string>
+    <string name="error_storage">Não há espaço de armazenamento livre suficiente para esta exportação.</string>
+    <string name="error_project_load">Não foi possível carregar este projeto.</string>
+    <string name="error_generic">Ocorreu um erro. Tente novamente.</string>
+
+    <!-- Acessibilidade -->
+    <string name="a11y_back">Voltar</string>
+    <string name="a11y_play">Reproduzir</string>
+    <string name="a11y_pause">Pausar</string>
+    <string name="a11y_timeline">Linha temporal</string>
+    <string name="a11y_zoom_in">Ampliar linha temporal</string>
+    <string name="a11y_zoom_out">Reduzir linha temporal</string>
+    <string name="a11y_import_video">Importar vídeo</string>
+    <string name="a11y_undo">Desfazer</string>
+    <string name="a11y_redo">Refazer</string>
+    <string name="a11y_settings">Definições</string>
+    <string name="a11y_new_project">Novo projeto</string>
+    <string name="a11y_export">Exportar</string>
+</resources>
