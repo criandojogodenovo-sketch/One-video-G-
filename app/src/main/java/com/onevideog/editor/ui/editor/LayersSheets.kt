@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.VerticalAlignTop
+import androidx.compose.material.icons.filled.VerticalAlignBottom
 import androidx.compose.material.icons.filled.Animation
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
@@ -272,6 +273,16 @@ internal fun LayersPanel(viewModel: EditorViewModel, onOpenTool: (Tool) -> Unit)
                 Icon(
                     Icons.Filled.VerticalAlignTop,
                     contentDescription = stringResource(R.string.overlay_front),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(
+                onClick = { viewModel.sendOverlayToBack(overlay.id) },
+                modifier = Modifier.size(32.dp),
+            ) {
+                Icon(
+                    Icons.Filled.VerticalAlignBottom,
+                    contentDescription = stringResource(R.string.overlay_back),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }

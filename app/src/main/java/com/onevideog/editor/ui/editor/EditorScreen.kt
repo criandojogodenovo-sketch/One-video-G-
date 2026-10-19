@@ -124,6 +124,17 @@ fun EditorScreen(
             viewModel.consumePlaybackError()
         }
     }
+    val editError by viewModel.editError.collectAsState()
+    LaunchedEffect(editError) {
+        editError?.let {
+            errorText = when (it) {
+                EditorViewModel.EditError.NO_CLIP -> context.getString(R.string.split_no_clip)
+                EditorViewModel.EditError.SPLIT_TOO_SHORT ->
+                    context.getString(R.string.split_too_short)
+            }
+            viewModel.consumeEditError()
+        }
+    }
 
     Column(
         modifier = Modifier

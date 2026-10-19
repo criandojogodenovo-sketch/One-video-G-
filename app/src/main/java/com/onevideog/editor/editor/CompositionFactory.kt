@@ -6,9 +6,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.audio.SonicAudioProcessor
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.Presentation
-import androidx.media3.effect.SpeedChangeEffect
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
@@ -18,8 +16,6 @@ import com.onevideog.editor.data.AudioClipItem
 import com.onevideog.editor.data.Clip
 import com.onevideog.editor.data.ExportResolutionEnum
 import com.onevideog.editor.data.OvgProject
-import com.onevideog.editor.data.OverlayItem
-import com.onevideog.editor.data.OverlayKind
 import com.onevideog.editor.data.ProjectAspect
 import java.io.File
 
@@ -127,63 +123,31 @@ object CompositionFactory {
             audioProcessors.add(SonicAudioProcessor().apply { setSpeed(clip.speed) })
         }
 
-        val videoEffects = mutableListOf<androidx.media3.common.Effect>()
-        if (clip.speed != 1f) videoEffects.add(SpeedChangeEffect(clip.speed))
-        if (!clip.color.isDefault) {
-            videoEffects.add(
-                ColorAdjustmentEffect(clip.color.brightness, clip.color.contrast, clip.color.saturation),
-            )
-        }
-
-        // Overlays intersecting this clip, in item-local time.
-        val clipEndMs = clipStartMs + clip.effectiveDurationMs
-        val frameAspect = clip.sourceAspect
-            ?: project.aspectEnum.ratio()
-            ?: 16f / 9f
-        val activeOverlays = project.overlays
-            .filter { it.endMs > clipStartMs && it.startMs < clipEndMs && it.endMs > it.startMs }
-            .sortedBy { it.zOrder }
-
-        if (activeOverlays.isNotEmpty()) {
-            val overlays = ImmutableList.builder<androidx.media3.effect.TextureOverlay>()
-            for (overlay in activeOverlays) {
-                val bitmap = contentBitmapFor(context, overlay)
-                // Item timelines are 0-based; output time == project-local time.
-                val windowStart = (maxOf(overlay.startMs, clipStartMs) - clipStartMs)
-                    .coerceAtLeast(0)
-                val windowEnd = (minOf(overlay.endMs, clipEndMs) - clipStartMs)
-                    .coerceAtLeast(windowStart)
-                if (windowEnd <= windowStart) continue
-                overlays.add(
-                    KeyframedOverlay(
-                        overlay = overlay,
-                        contentBitmap = bitmap,
-                        windowStartLocalMs = windowStart,
-                        windowEndLocalMs = windowEnd,
-                        clipStartMs = clipStartMs,
-                        frameAspect = frameAspect,
-                    ),
-                )
-            }
-            val list = overlays.build()
-            if (list.isNotEmpty()) videoEffects.add(OverlayEffect(list))
-        }
+        // ONE shared effect pipeline: the same builder the preview player
+        // feeds into ExoPlayer.setVideoEffects (forPreview=false — the
+        // composition-level Presentation is added below at composition scope).
+        val videoEffects = ClipEffectsFactory.effectsFor(
+            context = context,
+            project = project,
+            clip = clip,
+            clipStartMs = clipStartMs,
+            forPreview = false,
+        )
 
         return EditedMediaItem.Builder(mediaItem)
             .setEffects(Effects(audioProcessors, videoEffects))
             .build()
     }
 
-    private fun contentBitmapFor(
-        context: Context,
-        overlay: OverlayItem,
-    ) = when (overlay.kind) {
-        OverlayKind.TEXT -> OverlayBitmapRenderer.textBitmap(overlay)
-        OverlayKind.IMAGE -> OverlayBitmapRenderer.imageBitmap(context, overlay)
-    }
-
     // ------------------------------------------------------------------ audio
 
+    /**
+     * Builds the audio sequence for [clip], clamped EXACTLY to
+     * [videoDurationMs] ([AudioTimeline.exportPlan]) so every parallel
+     * sequence in the Composition has the same duration — unequal durations
+     * make the 1.4.1 composition undefined. Legacy looping music keeps the
+     * sequence-level loop (fills the composition duration itself).
+     */
     private fun buildAudioSequence(
         clip: AudioClipItem,
         videoDurationMs: Long,
@@ -218,31 +182,32 @@ object CompositionFactory {
             return EditedMediaItemSequence(listOf(audioItem(clip.trimStartMs, end)), true)
         }
 
-        val segments = AudioTimeline.segmentsFor(clip, videoDurationMs)
-        if (segments.isEmpty()) return null
+        val plan = AudioTimeline.exportPlan(clip, videoDurationMs)
+        if (plan.segments.isEmpty()) return null
 
         val items = mutableListOf<EditedMediaItem>()
-        var cursor = 0L
-        for (segment in segments) {
-            val gap = segment.timelineStartMs - cursor
-            if (gap >= 20) {
-                val silence = SilenceWav.writeOrReuse(workDir, gap)
-                if (silence != null) {
-                    tempFiles += silence
-                    items.add(
-                        EditedMediaItem.Builder(MediaItem.fromUri(Uri.fromFile(silence)))
-                            .setRemoveVideo(true)
-                            .build(),
-                    )
-                }
-            }
-            val end = minOf(segment.sourceEndMs, clip.sourceDurationMs)
-            if (end - segment.sourceStartMs > 0) {
-                items.add(audioItem(segment.sourceStartMs, end))
-            }
-            cursor = segment.timelineStartMs + (end - segment.sourceStartMs)
+        if (plan.leadSilenceMs >= 20) {
+            silenceItem(workDir, plan.leadSilenceMs, tempFiles)?.let { items.add(it) }
+        }
+        for (segment in plan.segments) {
+            items.add(audioItem(segment.sourceStartMs, segment.sourceEndMs))
+        }
+        if (plan.tailSilenceMs >= 20) {
+            silenceItem(workDir, plan.tailSilenceMs, tempFiles)?.let { items.add(it) }
         }
         if (items.isEmpty()) return null
         return EditedMediaItemSequence(items)
+    }
+
+    private fun silenceItem(
+        workDir: File,
+        gapMs: Long,
+        tempFiles: MutableList<File>,
+    ): EditedMediaItem? {
+        val silence = SilenceWav.writeOrReuse(workDir, gapMs) ?: return null
+        tempFiles += silence
+        return EditedMediaItem.Builder(MediaItem.fromUri(Uri.fromFile(silence)))
+            .setRemoveVideo(true)
+            .build()
     }
 }

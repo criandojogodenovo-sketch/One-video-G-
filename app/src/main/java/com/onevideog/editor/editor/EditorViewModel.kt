@@ -182,8 +182,27 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun splitAtPlayhead() {
         val state = _ui.value
         val project = state.project ?: return
-        val result = TimelineLogic.split(project.clips, state.playheadMs) ?: return
+        val result = TimelineLogic.split(project.clips, state.playheadMs)
+        if (result == null) {
+            // Strictly-inside rule: give actionable feedback instead of a
+            // silent no-op (spec: show a clear message for invalid ops).
+            editError.value = if (project.clips.isEmpty()) {
+                EditError.NO_CLIP
+            } else {
+                EditError.SPLIT_TOO_SHORT
+            }
+            return
+        }
         commitProject { it.copy(clips = result) }
+    }
+
+    /** Actionable, localized feedback for rejected edit operations. */
+    enum class EditError { NO_CLIP, SPLIT_TOO_SHORT }
+
+    val editError = MutableStateFlow<EditError?>(null)
+
+    fun consumeEditError() {
+        editError.value = null
     }
 
     fun moveClip(clipId: String, delta: Int) {
@@ -311,6 +330,91 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             val overlays = project.overlays
             if (overlays.none { it.id == overlayId }) return@commitProjectOrNull null
             project.copy(overlays = overlays.map { if (it.id == overlayId) transform(it) else it })
+        }
+    }
+
+    /**
+     * Moves an overlay bar in time (timeline drag): shifts start/end keeping
+     * the duration AND shifts keyframe times by the same delta (keyframes
+     * belong to the overlay, not to absolute project time). Clamped to
+     * start >= 0. Invalid requests are rejected without an undo step. Pure
+     * rules in [OverlayEditing].
+     */
+    fun moveOverlay(overlayId: String, newStartMs: Long) {
+        commitProjectOrNull { project ->
+            val overlay = project.overlays.firstOrNull { it.id == overlayId }
+                ?: return@commitProjectOrNull null
+            val start = OverlayEditing.clampMove(newStartMs)
+            val delta = start - overlay.startMs
+            if (delta == 0L) return@commitProjectOrNull null
+            project.copy(
+                overlays = project.overlays.map {
+                    if (it.id == overlayId) {
+                        it.copy(
+                            startMs = it.startMs + delta,
+                            endMs = it.endMs + delta,
+                            keyframes = it.keyframes.map { kf -> kf.copy(timeMs = kf.timeMs + delta) },
+                        )
+                    } else {
+                        it
+                    }
+                },
+            )
+        }
+    }
+
+    /**
+     * Trims an overlay bar from the timeline LEFT edge handle. Enforces the
+     * minimum duration ([OverlayEditing]); rejects no-op requests without an
+     * undo step.
+     */
+    fun trimOverlayStart(overlayId: String, newStartMs: Long) {
+        commitProjectOrNull { project ->
+            val overlay = project.overlays.firstOrNull { it.id == overlayId }
+                ?: return@commitProjectOrNull null
+            val start = OverlayEditing.clampTrimStart(
+                newStartMs,
+                overlay.endMs,
+                OverlayEditing.MIN_OVERLAY_MS,
+            )
+            if (start == overlay.startMs) return@commitProjectOrNull null
+            project.copy(
+                overlays = project.overlays.map {
+                    if (it.id == overlayId) it.copy(startMs = start) else it
+                },
+            )
+        }
+    }
+
+    /** Trims an overlay bar from the timeline RIGHT edge handle. */
+    fun trimOverlayEnd(overlayId: String, newEndMs: Long) {
+        commitProjectOrNull { project ->
+            val overlay = project.overlays.firstOrNull { it.id == overlayId }
+                ?: return@commitProjectOrNull null
+            val end = OverlayEditing.clampTrimEnd(
+                overlay.startMs,
+                newEndMs,
+                OverlayEditing.MIN_OVERLAY_MS,
+            )
+            if (end == overlay.endMs) return@commitProjectOrNull null
+            project.copy(
+                overlays = project.overlays.map {
+                    if (it.id == overlayId) it.copy(endMs = end) else it
+                },
+            )
+        }
+    }
+
+    /** Moves an overlay to the bottom of the z-order stack (below all others). */
+    fun sendOverlayToBack(id: String) {
+        commitProjectOrNull { project ->
+            val bottom = (project.overlays.minOfOrNull { it.zOrder } ?: 0) - 1
+            if (project.overlays.none { it.id == id }) null
+            else project.copy(
+                overlays = project.overlays.map {
+                    if (it.id == id) it.copy(zOrder = bottom) else it
+                },
+            )
         }
     }
 

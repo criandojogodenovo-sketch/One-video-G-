@@ -79,6 +79,7 @@
     <!-- Dividir -->
     <string name="split_here">Dividir aqui</string>
     <string name="split_no_clip">Coloque a cabeça de leitura sobre um clipe para o dividir.</string>
+    <string name="split_too_short">Coloque a cabeça de leitura mais para dentro do clipe — ambas as partes precisam de pelo menos 0,1 s.</string>
 
     <!-- Volume / velocidade -->
     <string name="volume_title">Volume do clipe</string>
@@ -118,6 +119,7 @@
     <string name="overlay_existing">Sobreposições neste projeto</string>
     <string name="overlay_remove">Remover</string>
     <string name="overlay_front">Trazer para a frente</string>
+    <string name="overlay_back">Enviar para trás</string>
     <string name="overlay_timing">Duração</string>
 
     <!-- Transformação -->
