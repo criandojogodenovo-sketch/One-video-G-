@@ -42,10 +42,11 @@
     <string name="version_label">Versão %1$s</string>
     <string name="app_description">O One Video G é um editor de vídeo que funciona offline. Os seus projetos e vídeos ficam neste dispositivo.</string>
     <string name="export_default_resolution">Resolução de exportação predefinida</string>
+    <string name="export_default_resolution_hint">Pré-selecionada no ecrã de exportação. Pode mudá-la em cada exportação.</string>
 
     <!-- Editor -->
     <string name="editor_import_video">Importar vídeo</string>
-    <string name="editor_import_music">Importar música</string>
+    <string name="editor_import_music">Importar áudio</string>
     <string name="editor_empty_title">A linha temporal está vazia</string>
     <string name="editor_empty_body">Importe um vídeo para começar a editar. Pode cortar, dividir, reordenar e exportar offline.</string>
     <string name="editor_clip_missing">Ficheiro em falta</string>
@@ -63,21 +64,21 @@
     <string name="tools_text">Texto</string>
     <string name="tools_image">Imagem</string>
     <string name="tools_color">Cor</string>
-    <string name="tools_music">Música</string>
+    <string name="tools_audio">Áudio</string>
     <string name="tools_delete_clip">Apagar clipe</string>
     <string name="tools_move_left">Mover para a esquerda</string>
     <string name="tools_move_right">Mover para a direita</string>
 
-    <!-- Corte -->
+    <!-- Cortar -->
     <string name="trim_title">Cortar clipe</string>
     <string name="trim_start">Início</string>
     <string name="trim_end">Fim</string>
     <string name="trim_duration">Duração</string>
     <string name="trim_apply">Aplicar corte</string>
 
-    <!-- Divisão -->
+    <!-- Dividir -->
     <string name="split_here">Dividir aqui</string>
-    <string name="split_no_clip">Mova a posição de reprodução sobre um clipe para o dividir.</string>
+    <string name="split_no_clip">Coloque a cabeça de leitura sobre um clipe para o dividir.</string>
 
     <!-- Volume / velocidade -->
     <string name="volume_title">Volume do clipe</string>
@@ -93,39 +94,67 @@
     <string name="aspect_1_1">1:1</string>
     <string name="aspect_4_3">4:3</string>
     <string name="aspect_3_4">3:4</string>
+    <string name="aspect_preview_note">A pré-visualização segue este formato com barras (letterbox/pillarbox), exatamente como no vídeo exportado.</string>
 
     <!-- Cor -->
     <string name="color_title">Ajustes de cor</string>
     <string name="color_brightness">Brilho</string>
     <string name="color_contrast">Contraste</string>
     <string name="color_saturation">Saturação</string>
-    <string name="color_applied_on_export">Os ajustes de cor são aplicados quando exporta.</string>
+    <string name="color_live_preview">Os ajustes aplicam-se à pré-visualização imediatamente e ao vídeo exportado.</string>
 
     <!-- Sobreposição de texto -->
     <string name="text_add">Adicionar texto</string>
-    <string name="text_update">Atualizar texto</string>
+    <string name="text_edit">Editar sobreposição de texto</string>
     <string name="text_hint">Escreva o seu texto</string>
     <string name="text_color">Cor do texto</string>
-    <string name="text_position">Posição</string>
-    <string name="position_top">Topo</string>
-    <string name="position_center">Centro</string>
-    <string name="position_bottom">Baixo</string>
+    <string name="text_background">Fundo</string>
+    <string name="text_font">Tipo de letra</string>
+    <string name="font_sans">Sans</string>
+    <string name="font_serif">Serif</string>
+    <string name="font_mono">Mono</string>
+    <string name="font_condensed">Condensada</string>
+    <string name="text_size">Tamanho %1$d</string>
+    <string name="overlay_existing">Sobreposições neste projeto</string>
     <string name="overlay_remove">Remover</string>
-    <string name="overlay_applied_on_export">As sobreposições são aplicadas quando exporta.</string>
+    <string name="overlay_front">Trazer para a frente</string>
+    <string name="overlay_timing">Duração</string>
+
+    <!-- Transformação -->
+    <string name="transform_title">Transformação (toque na sobreposição na pré-visualização para arrastar, beliscar, rodar)</string>
+    <string name="transform_x">Posição X</string>
+    <string name="transform_y">Posição Y</string>
+    <string name="transform_scale">Escala</string>
+    <string name="transform_rotation">Rotação</string>
+    <string name="transform_opacity">Opacidade</string>
+    <string name="transform_touch_hint">Arraste com um dedo para mover, belisque para redimensionar, rode com dois dedos.</string>
+
+    <!-- Fotogramas-chave -->
+    <string name="keyframes_title">Fotogramas-chave</string>
+    <string name="keyframes_hint">Adicione fotogramas-chave para animar posição, escala, rotação e opacidade ao longo do tempo. A pré-visualização e a exportação usam a mesma animação.</string>
+    <string name="keyframe_add">Adicionar fotograma-chave na cabeça de leitura</string>
+    <string name="keyframe_delete">Apagar fotograma-chave</string>
+    <string name="keyframes_none">Ainda não há fotogramas-chave.</string>
+    <string name="interp_linear">Linear</string>
+    <string name="interp_smooth">Suave</string>
 
     <!-- Sobreposição de imagem -->
     <string name="image_add">Adicionar imagem</string>
+    <string name="image_edit">Editar sobreposição de imagem</string>
+    <string name="image_hint">Adicione uma imagem que flutua sobre o vídeo.</string>
     <string name="image_pick">Escolher imagem</string>
     <string name="image_scale">Tamanho</string>
 
-    <!-- Música -->
-    <string name="music_title">Faixa de música</string>
-    <string name="music_none">Nenhuma música selecionada</string>
-    <string name="music_volume">Volume da música</string>
-    <string name="music_applied_on_export">A música toca sobre o vídeo e é aplicada quando exporta. Na pré-visualização ouve-se apenas o áudio do vídeo.</string>
-    <string name="music_remove">Remover música</string>
+    <!-- Faixas de áudio -->
+    <string name="audio_tracks">Faixas de áudio</string>
+    <string name="audio_remove">Remover áudio</string>
+    <string name="audio_start">Início</string>
+    <string name="audio_move_to_playhead">Mover para a cabeça de leitura</string>
+    <string name="audio_loop">Repetir até o vídeo acabar</string>
+    <string name="audio_plan_note">O áudio em repetição repete até %1$d vezes. O áudio que ouve na pré-visualização é misturado na exportação.</string>
+    <string name="music_none">Ainda não há faixas de áudio</string>
 
-    <!-- Exportação -->
+    <!-- Exportar -->
     <string name="export_title">Exportar</string>
     <string name="export_resolution">Resolução</string>
     <string name="res_720">720p</string>
@@ -136,35 +165,59 @@
     <string name="quality_high">Alta</string>
     <string name="export_output_name">Nome do ficheiro</string>
     <string name="export_start">Exportar vídeo</string>
-    <string name="export_select_location">Escolher onde guardar</string>
+    <string name="export_select_location">Escolha onde guardar</string>
     <string name="export_need_clips">Adicione pelo menos um clipe antes de exportar.</string>
     <string name="export_preparing">A preparar a exportação…</string>
+    <string name="export_queued">Exportação em fila…</string>
     <string name="export_running">A exportar… %1$d%%</string>
+    <string name="export_finalizing">A finalizar e a verificar o ficheiro…</string>
+    <string name="export_service_note">A exportação continua em segundo plano — pode bloquear o ecrã ou sair desta página.</string>
+    <string name="export_audio_tracks">Inclui %1$d faixa(s) de áudio independentes.</string>
+    <string name="export_failed_diagnostics">Os detalhes técnicos foram guardados no registo de diagnóstico da aplicação para ajudar a descobrir a causa.</string>
     <string name="export_verifying">A verificar o ficheiro…</string>
     <string name="export_done_title">Exportação concluída</string>
     <string name="export_done_body">Guardado no local que escolheu. O ficheiro foi verificado e pode ser reproduzido.</string>
     <string name="export_failed_title">A exportação falhou</string>
     <string name="export_canceled">Exportação cancelada.</string>
-    <string name="fps_note">A taxa de imagens segue o vídeo original.</string>
+    <string name="fps_note">A taxa de fotogramas segue o vídeo original.</string>
 
     <!-- Erros -->
     <string name="error_unsupported_file">Este tipo de ficheiro não é suportado.</string>
     <string name="error_file_unreadable">Não foi possível ler o ficheiro. Pode estar danificado ou inacessível.</string>
     <string name="error_no_video">Não foi encontrada uma faixa de vídeo utilizável neste ficheiro.</string>
-    <string name="error_export_failed">Não foi possível concluir a exportação neste dispositivo. Tente uma resolução mais baixa ou outro ficheiro.</string>
+    <string name="error_export_failed">Não foi possível concluir a exportação neste dispositivo. Tente uma resolução inferior ou outro ficheiro.</string>
     <string name="error_storage">Não há espaço de armazenamento livre suficiente para esta exportação.</string>
+    <string name="error_read_source">Não foi possível ler um ficheiro de origem. Remova ou reassocie os meios em falta e tente novamente.</string>
+    <string name="error_write_output">Falha ao escrever o ficheiro de saída. Verifique o espaço livre e o local onde guardar.</string>
+    <string name="error_encoding">O codificador de vídeo falhou neste dispositivo. Tente 720p ou a qualidade Baixa.</string>
+    <string name="error_decoding">Não foi possível descodificar um vídeo de origem (código não suportado ou ficheiro danificado).</string>
+    <string name="error_muxing">Falha ao escrever o contentor MP4 perto do fim da exportação.</string>
     <string name="error_project_load">Não foi possível carregar este projeto.</string>
-    <string name="error_generic">Ocorreu um erro. Tente novamente.</string>
+    <string name="error_generic">Algo correu mal. Tente novamente.</string>
+
+    <!-- Linha temporal -->
+    <string name="timeline_total">Total</string>
+    <string name="timeline_no_video">Ainda não há clipes de vídeo</string>
+    <string name="timeline_add_audio_hint">+ Adicionar uma faixa de áudio</string>
+    <string name="timeline_more_audio">+%1$d faixas de áudio adicionais</string>
+    <string name="timeline_image_marker">Imagem</string>
+
+    <!-- Pré-visualização -->
+    <string name="preview_audio_active">%1$d faixa(s) de áudio</string>
+
+    <!-- Notificação de exportação -->
+    <string name="export_notification_channel">Exportação de vídeo</string>
+    <string name="export_notification_title">A exportar vídeo</string>
 
     <!-- Acessibilidade -->
     <string name="a11y_back">Voltar</string>
     <string name="a11y_play">Reproduzir</string>
-    <string name="a11y_pause">Pausar</string>
+    <string name="a11y_pause">Pausa</string>
     <string name="a11y_timeline">Linha temporal</string>
     <string name="a11y_zoom_in">Ampliar linha temporal</string>
     <string name="a11y_zoom_out">Reduzir linha temporal</string>
     <string name="a11y_import_video">Importar vídeo</string>
-    <string name="a11y_undo">Desfazer</string>
+    <string name="a11y_undo">Anular</string>
     <string name="a11y_redo">Refazer</string>
     <string name="a11y_settings">Definições</string>
     <string name="a11y_new_project">Novo projeto</string>

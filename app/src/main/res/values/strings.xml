@@ -42,6 +42,7 @@
     <string name="version_label">Version %1$s</string>
     <string name="app_description">One Video G is an offline-first video editor. Your projects and videos stay on this device.</string>
     <string name="export_default_resolution">Default export resolution</string>
+    <string name="export_default_resolution_hint">Pre-selected on the export screen. You can still change it per export.</string>
 
     <!-- Editor -->
     <string name="editor_import_video">Import video</string>
@@ -63,7 +64,7 @@
     <string name="tools_text">Text</string>
     <string name="tools_image">Image</string>
     <string name="tools_color">Color</string>
-    <string name="tools_music">Music</string>
+    <string name="tools_audio">Audio</string>
     <string name="tools_delete_clip">Delete clip</string>
     <string name="tools_move_left">Move left</string>
     <string name="tools_move_right">Move right</string>
@@ -93,37 +94,65 @@
     <string name="aspect_1_1">1:1</string>
     <string name="aspect_4_3">4:3</string>
     <string name="aspect_3_4">3:4</string>
+    <string name="aspect_preview_note">The preview viewport follows this format with letterbox/pillarbox bars, exactly like the exported frame.</string>
 
     <!-- Color -->
     <string name="color_title">Color adjustments</string>
     <string name="color_brightness">Brightness</string>
     <string name="color_contrast">Contrast</string>
     <string name="color_saturation">Saturation</string>
-    <string name="color_applied_on_export">Color adjustments are applied when you export.</string>
+    <string name="color_live_preview">Adjustments are applied to the preview immediately and to the exported video.</string>
 
     <!-- Text overlay -->
     <string name="text_add">Add text</string>
-    <string name="text_update">Update text</string>
+    <string name="text_edit">Edit text overlay</string>
     <string name="text_hint">Type your text</string>
     <string name="text_color">Text color</string>
-    <string name="text_position">Position</string>
-    <string name="position_top">Top</string>
-    <string name="position_center">Center</string>
-    <string name="position_bottom">Bottom</string>
+    <string name="text_background">Background</string>
+    <string name="text_font">Font</string>
+    <string name="font_sans">Sans</string>
+    <string name="font_serif">Serif</string>
+    <string name="font_mono">Mono</string>
+    <string name="font_condensed">Condensed</string>
+    <string name="text_size">Size %1$d</string>
+    <string name="overlay_existing">Overlays in this project</string>
     <string name="overlay_remove">Remove</string>
-    <string name="overlay_applied_on_export">Overlays are applied when you export.</string>
+    <string name="overlay_front">Bring to front</string>
+    <string name="overlay_timing">Timing</string>
+
+    <!-- Transform -->
+    <string name="transform_title">Transform (touch the overlay in the preview to drag, pinch, rotate)</string>
+    <string name="transform_x">Position X</string>
+    <string name="transform_y">Position Y</string>
+    <string name="transform_scale">Scale</string>
+    <string name="transform_rotation">Rotation</string>
+    <string name="transform_opacity">Opacity</string>
+    <string name="transform_touch_hint">Drag with one finger to move, pinch to resize, twist with two fingers to rotate.</string>
+
+    <!-- Keyframes -->
+    <string name="keyframes_title">Keyframes</string>
+    <string name="keyframes_hint">Add keyframes to animate position, scale, rotation and opacity over time. The preview and the export use the same animation.</string>
+    <string name="keyframe_add">Add keyframe at playhead</string>
+    <string name="keyframe_delete">Delete keyframe</string>
+    <string name="keyframes_none">No keyframes yet.</string>
+    <string name="interp_linear">Linear</string>
+    <string name="interp_smooth">Smooth</string>
 
     <!-- Image overlay -->
     <string name="image_add">Add image</string>
+    <string name="image_edit">Edit image overlay</string>
+    <string name="image_hint">Add a picture that floats over the video.</string>
     <string name="image_pick">Choose image</string>
     <string name="image_scale">Size</string>
 
-    <!-- Music -->
-    <string name="music_title">Music track</string>
-    <string name="music_none">No music selected</string>
-    <string name="music_volume">Music volume</string>
-    <string name="music_applied_on_export">The music track plays over your video and is applied when you export. In the preview only the video audio is heard.</string>
-    <string name="music_remove">Remove music</string>
+    <!-- Audio tracks -->
+    <string name="audio_tracks">Audio tracks</string>
+    <string name="audio_remove">Remove audio</string>
+    <string name="audio_start">Start time</string>
+    <string name="audio_move_to_playhead">Move to playhead</string>
+    <string name="audio_loop">Loop until video ends</string>
+    <string name="audio_plan_note">Looping audio repeats up to %1$d times. Audio you hear in the preview is mixed into the export.</string>
+    <string name="music_none">No audio tracks yet</string>
 
     <!-- Export -->
     <string name="export_title">Export</string>
@@ -139,7 +168,12 @@
     <string name="export_select_location">Choose where to save</string>
     <string name="export_need_clips">Add at least one clip before exporting.</string>
     <string name="export_preparing">Preparing export…</string>
+    <string name="export_queued">Export queued…</string>
     <string name="export_running">Exporting… %1$d%%</string>
+    <string name="export_finalizing">Finalizing and verifying file…</string>
+    <string name="export_service_note">The export continues in the background — you can lock the screen or leave this page.</string>
+    <string name="export_audio_tracks">Includes %1$d independent audio track(s).</string>
+    <string name="export_failed_diagnostics">Technical details were saved to the app’s export diagnostics log to help find the cause.</string>
     <string name="export_verifying">Verifying file…</string>
     <string name="export_done_title">Export complete</string>
     <string name="export_done_body">Saved to the location you chose. The file was verified and can be played.</string>
@@ -153,8 +187,27 @@
     <string name="error_no_video">No usable video track was found in this file.</string>
     <string name="error_export_failed">The export could not be completed on this device. Try a lower resolution or a different file.</string>
     <string name="error_storage">There is not enough free storage space for this export.</string>
+    <string name="error_read_source">A source file could not be read. Remove or relink missing media and try again.</string>
+    <string name="error_write_output">Writing the output file failed. Check free storage and the save location.</string>
+    <string name="error_encoding">The video encoder failed on this device. Try 720p or the Low quality setting.</string>
+    <string name="error_decoding">A source video could not be decoded (unsupported codec or damaged file).</string>
+    <string name="error_muxing">Writing the MP4 container failed near the end of the export.</string>
     <string name="error_project_load">This project could not be loaded.</string>
     <string name="error_generic">Something went wrong. Please try again.</string>
+
+    <!-- Timeline -->
+    <string name="timeline_total">Total</string>
+    <string name="timeline_no_video">No video clips yet</string>
+    <string name="timeline_add_audio_hint">+ Add an audio track</string>
+    <string name="timeline_more_audio">+%1$d more audio tracks</string>
+    <string name="timeline_image_marker">Image</string>
+
+    <!-- Preview -->
+    <string name="preview_audio_active">%1$d audio track(s)</string>
+
+    <!-- Export notification -->
+    <string name="export_notification_channel">Video export</string>
+    <string name="export_notification_title">Exporting video</string>
 
     <!-- Accessibility -->
     <string name="a11y_back">Back</string>

@@ -6,7 +6,18 @@
 
 ![icon](design/one-video-g-icon-512.png)
 
-## Funcionalidades implementadas (v0.1.0)
+
+## Novidades v0.2.0 (pré-visualização = exportação)
+
+- **Pré-visualização em tempo real da composição**: sobreposições (texto/imagem), faixas de áudio, transformações, opacidade, cor e fotogramas-chave são mostrados no editor com a mesma matemática usada na exportação (`docs/PREVIEW_EXPORT_PARITY.md`).
+- **Faixas de áudio independentes**: importar, mover, cortar, volume e loop; misturadas na exportação e audíveis na pré-visualização.
+- **Fotogramas-chave** para posição X/Y, escala, rotação e opacidade, com interpolação linear/suave e tempos editáveis.
+- **Modelo multi-camada**: vídeo, imagem, texto e áudio; manipulação por toque (arrastar/beliscar/rodar) na pré-visualização.
+- **Texto**: tipo de letra, negrito/itálico, tamanho, cor e fundo.
+- **Exportação em serviço em primeiro plano**: exportações longas já não falham quando o ecrã bloqueia (correção para realme C33 / Android 13); erros mapeados por categoria com registo de diagnóstico; pré-verificação de espaço e limpeza de ficheiros temporários.
+- **Duração autoritativa única** para linha temporal, etiquetas, pré-visualização e exportação (`ProjectMath`).
+
+## Funcionalidades implementadas (v0.2.0)
 
 - **Projetos**: criar, abrir, renomear, apagar; autosave JSON atómico; recuperação após interrupções; deteção de ficheiros em falta (reassociar/remover); miniaturas.
 - **Importação**: vídeo, áudio (música) e imagens via document picker (SAF) — **sem permissões largas de armazenamento**; thumbnails limitadas e em cache.

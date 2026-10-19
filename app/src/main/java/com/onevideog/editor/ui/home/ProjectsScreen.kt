@@ -265,7 +265,7 @@ private fun ProjectCard(
                     stringResource(
                         R.string.clips_and_duration,
                         project.clips.size,
-                        formatDuration(project.totalDurationMs),
+                        formatDuration(com.onevideog.editor.editor.ProjectMath.projectDurationMs(project)),
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
