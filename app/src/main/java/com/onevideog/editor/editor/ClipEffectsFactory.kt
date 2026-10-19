@@ -10,6 +10,11 @@ import com.google.common.collect.ImmutableList
 import com.onevideog.editor.data.OvgProject
 import com.onevideog.editor.data.OverlayItem
 import com.onevideog.editor.data.ProjectAspect
+import com.onevideog.editor.diag.DiagContext
+import com.onevideog.editor.diag.DiagSanitizer
+import com.onevideog.editor.diag.DiagnosticsLogger
+import com.onevideog.editor.diag.ImageImportStages
+import android.os.SystemClock
 
 /**
  * THE single source of truth for per-clip video effects. Both pipelines call
@@ -52,6 +57,7 @@ object ClipEffectsFactory {
         clipStartMs: Long,
         forPreview: Boolean,
     ): List<Effect> {
+        val startedAt = SystemClock.elapsedRealtime()
         val effects = mutableListOf<Effect>()
         if (clip.speed != 1f) {
             effects.add(SpeedChangeEffect(clip.speed))
@@ -68,6 +74,20 @@ object ClipEffectsFactory {
         if (forPreview) {
             previewPresentation(project)?.let { effects.add(it) }
         }
+        // Stage J evidence: how long the overlay/effect build took (image
+        // decodes happen here — on the preview this is the caller's thread,
+        // i.e. the MAIN thread) and how many overlay textures were attached.
+        DiagnosticsLogger.i(
+            "preview", "EFFECT_ATTACH", DiagContext.currentOpId(),
+            "effect list built for clip",
+            meta = listOf(
+                "effects" to effects.size.toString(),
+                "textures" to textures.size.toString(),
+                "elapsedMs" to (SystemClock.elapsedRealtime() - startedAt).toString(),
+                "forPreview" to forPreview.toString(),
+                "thread" to Thread.currentThread().name,
+            ),
+        )
         return effects
     }
 
@@ -108,8 +128,20 @@ object ClipEffectsFactory {
             val bitmap = when (window.overlay.kind) {
                 com.onevideog.editor.data.OverlayKind.TEXT ->
                     OverlayBitmapRenderer.textBitmap(window.overlay)
-                com.onevideog.editor.data.OverlayKind.IMAGE ->
-                    OverlayBitmapRenderer.imageBitmap(context, window.overlay)
+                com.onevideog.editor.data.OverlayKind.IMAGE -> {
+                    val bmp = OverlayBitmapRenderer.imageBitmap(context, window.overlay)
+                    if (bmp == null) {
+                        // Stage L: recoverable render failure — the overlay
+                        // will be invisible this session; the decode stage
+                        // event already carries the exact exception/reason.
+                        DiagnosticsLogger.w(
+                            "preview", ImageImportStages.RENDER_FAIL, DiagContext.currentOpId(),
+                            "image overlay has no bitmap (overlay hidden)",
+                            meta = listOf("ovId" to DiagSanitizer.fingerprint(window.overlay.id)),
+                        )
+                    }
+                    bmp
+                }
             }
             builder.add(
                 KeyframedOverlay(

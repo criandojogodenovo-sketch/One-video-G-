@@ -17,6 +17,8 @@ import com.onevideog.editor.R
 import com.onevideog.editor.data.ExportResolutionEnum
 import com.onevideog.editor.data.OvgProject
 import com.onevideog.editor.data.ProjectRepository
+import com.onevideog.editor.diag.DiagSanitizer
+import com.onevideog.editor.diag.DiagnosticsLogger
 import com.onevideog.editor.editor.ExportConfig.Quality
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -49,16 +51,19 @@ class ExportService : Service() {
     override fun onCreate() {
         super.onCreate()
         createChannel()
+        DiagnosticsLogger.i("export", "SERVICE_CREATE", null, "export service created")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_CANCEL -> {
+                DiagnosticsLogger.i("export", "SERVICE_CANCEL", null, "service received cancel action")
                 manager?.cancel()
                 return START_NOT_STICKY
             }
             ACTION_START -> startExport(intent)
             else -> {
+                DiagnosticsLogger.w("export", "SERVICE_START", null, "service started with unknown action — stopping")
                 stopSelf()
                 return START_NOT_STICKY
             }
@@ -73,8 +78,24 @@ class ExportService : Service() {
         val qualityName = intent.getStringExtra(EXTRA_QUALITY) ?: Quality.MEDIUM.name
         val destination = intent.getStringExtra(EXTRA_DESTINATION_URI) ?: run { stopSelf(); return }
 
+        DiagnosticsLogger.i(
+            "export", "SERVICE_START", null,
+            "export service received START",
+            meta = listOf(
+                "projectId" to DiagSanitizer.fingerprint(projectId),
+                "resolution" to resolutionName,
+                "quality" to qualityName,
+                "destinationProvider" to DiagSanitizer.sanitizeUri(destination).substringAfter("uri:").substringBefore('#'),
+            ),
+        )
+
         val repository = ProjectRepository(applicationContext)
         val project: OvgProject = repository.load(projectId)?.migrated() ?: run {
+            DiagnosticsLogger.e(
+                "export", "SERVICE_START", null,
+                "export aborted: project could not be loaded from disk",
+                meta = listOf("projectId" to DiagSanitizer.fingerprint(projectId)),
+            )
             ExportBus.update(projectId, null, ExportManager.State.Failed(ExportManager.Failure.VALIDATION_FAILED))
             stopSelf()
             return
@@ -131,6 +152,14 @@ class ExportService : Service() {
     override fun onDestroy() {
         // Defensive: if the system tears us down mid-export, stop the
         // transformer and clean temp output so storage is not leaked.
+        val wasRunning = manager != null
+        if (wasRunning) {
+            DiagnosticsLogger.w(
+                "export", "SERVICE_DESTROY", null,
+                "export service destroyed while a manager was attached " +
+                    "(system teardown OR terminal state cleanup)",
+            )
+        }
         manager?.cancel()
         manager = null
         serviceScope.cancel()

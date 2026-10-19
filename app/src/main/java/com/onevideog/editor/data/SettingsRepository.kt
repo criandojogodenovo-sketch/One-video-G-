@@ -3,6 +3,7 @@ package com.onevideog.editor.data
 import android.content.Context
 import android.content.SharedPreferences
 import com.onevideog.editor.R
+import com.onevideog.editor.diag.DiagnosticsLogger
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -33,6 +34,17 @@ class SettingsRepository(context: Context) {
     private val _defaultResolution =
         MutableStateFlow(resFromName(prefs.getString(KEY_EXPORT_RES, null)))
     val defaultResolution: StateFlow<ExportResolutionEnum> get() = _defaultResolution
+
+    /**
+     * Temporary diagnostics (v0.2.3): mirrors [DiagnosticsLogger.enabled].
+     * OFF by default; the toggle persists via the logger (same prefs file)
+     * so the state is available before this repository is constructed.
+     */
+    val diagnosticsEnabled: StateFlow<Boolean> get() = DiagnosticsLogger.enabled
+
+    fun setDiagnosticsEnabled(value: Boolean) {
+        DiagnosticsLogger.setEnabled(value)
+    }
 
     fun setTheme(mode: ThemeMode) {
         prefs.edit().putString(KEY_THEME, mode.name).apply()

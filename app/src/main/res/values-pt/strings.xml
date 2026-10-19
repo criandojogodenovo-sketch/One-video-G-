@@ -248,4 +248,23 @@
     <string name="keyframe_no_kf_at_playhead">Não há fotograma-chave na cabeça de leitura. Mova a cabeça de leitura (régua da linha temporal) ou adicione um fotograma-chave para editar os valores aqui.</string>
     <string name="error_audio_preview">Não foi possível reproduzir este ficheiro de áudio na pré-visualização. O ficheiro pode estar em falta, num formato não suportado, ou o aparelho não tem o descodificador. A importação foi mantida — tente remover e importar novamente.</string>
     <string name="error_playback">Não foi possível reproduzir o vídeo aqui. O ficheiro pode estar em falta ou num formato que este aparelho não consegue descodificar.</string>
+    <string name="error_image_unreadable">Não foi possível carregar a imagem. Pode estar em falta, danificada, ou num formato que este aparelho não consegue ler. Não foi adicionada ao projeto.</string>
+
+    <!-- Diagnóstico temporário (v0.2.3) -->
+    <string name="diag_section_title">Diagnóstico e Registos</string>
+    <string name="diag_toggle_label">Ativar registo de diagnóstico</string>
+    <string name="diag_status_on">Estado: ativo — as operações e falhas estão a ser registadas neste aparelho.</string>
+    <string name="diag_status_off">Estado: desativado — nenhum evento está a ser registado.</string>
+    <string name="diag_stats_line">Eventos registados: %1$d · tamanho aproximado: ~%2$d KB</string>
+    <string name="diag_copy_report">Copiar relatório de diagnóstico</string>
+    <string name="diag_clear_logs">Limpar registos</string>
+    <string name="diag_export_report">Exportar relatório de diagnóstico</string>
+    <string name="diag_clear_confirm_title">Limpar os registos de diagnóstico?</string>
+    <string name="diag_clear_confirm_body">Todos os eventos de diagnóstico registados neste aparelho serão apagados permanentemente. Esta ação não pode ser anulada.</string>
+    <string name="diag_clear_confirm_yes">Limpar registos</string>
+    <string name="diag_copied">Relatório de diagnóstico copiado para a área de transferência.</string>
+    <string name="diag_copy_failed">Não foi possível copiar o relatório. Tente “Exportar relatório de diagnóstico”.</string>
+    <string name="diag_export_saved">Relatório de diagnóstico guardado.</string>
+    <string name="diag_export_failed">Não foi possível guardar o relatório de diagnóstico.</string>
+    <string name="diag_notice">Os registos ficam neste aparelho, no armazenamento privado da aplicação. Só são copiados ou partilhados quando toca explicitamente nas ações acima. Nada é enviado automaticamente, e os registos nunca contêm o conteúdo dos seus vídeos/áudios, texto renderizado ou nomes de ficheiros.</string>
 </resources>

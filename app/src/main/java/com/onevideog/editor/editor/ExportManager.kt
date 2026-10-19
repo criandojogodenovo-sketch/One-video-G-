@@ -18,6 +18,12 @@ import androidx.media3.transformer.VideoEncoderSettings
 import com.onevideog.editor.data.ExportResolutionEnum
 import com.onevideog.editor.data.OvgProject
 import com.onevideog.editor.editor.ExportConfig.Quality
+import com.onevideog.editor.diag.DiagContext
+import com.onevideog.editor.diag.DiagSanitizer
+import com.onevideog.editor.diag.DiagnosticsLogger
+import com.onevideog.editor.diag.ExportOp
+import com.onevideog.editor.diag.OpRegistry
+import com.onevideog.editor.diag.Severity
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -98,6 +104,50 @@ class ExportManager(
     /** Latest technical detail for diagnostics/UI (single-writer coroutine). */
     private var pendingDetail: String? = null
 
+    /** Correlation handle for the current export (null when idle). */
+    private var op: ExportOp? = null
+
+    private val opRegistry = OpRegistry()
+
+    /** Wall-clock start of the current export (for total-duration evidence). */
+    @Volatile private var exportStartedMs: Long = 0L
+
+    private fun freeMemoryMb(): Long {
+        val rt = Runtime.getRuntime()
+        return (rt.maxMemory() - (rt.totalMemory() - rt.freeMemory())) / (1024 * 1024)
+    }
+
+    /**
+     * Stage C evidence: every source URI (video + audio) must still open.
+     * Logs per-clip sanitized results; NEVER logs document URIs or names.
+     */
+    private fun checkSourceMedia(project: OvgProject, exportOp: ExportOp) {
+        var unreadable = 0
+        val videoOk = project.clips.count { clip ->
+            val ok = isUriReadable(Uri.parse(clip.uri))
+            if (!ok) unreadable++
+            ok
+        }
+        val audioOk = project.audioClips.count { clip ->
+            val ok = isUriReadable(Uri.parse(clip.uri))
+            if (!ok) unreadable++
+            ok
+        }
+        DiagnosticsLogger.i(
+            "export", ExportOp.Stages.SOURCE_MEDIA, exportOp.opId,
+            if (unreadable == 0) "all source media readable" else "SOME SOURCE MEDIA UNREADABLE",
+            meta = listOf(
+                "videoReadable" to "$videoOk/${project.clips.size}",
+                "audioReadable" to "$audioOk/${project.audioClips.size}",
+                "unreadable" to unreadable.toString(),
+            ),
+        )
+    }
+
+    private fun isUriReadable(uri: Uri): Boolean = runCatching {
+        context.contentResolver.openFileDescriptor(uri, "r")?.use { true } ?: false
+    }.getOrDefault(false)
+
     val isRunning: Boolean
         get() = job?.isActive == true
 
@@ -110,17 +160,48 @@ class ExportManager(
         destinationUri: Uri,
     ) {
         if (isRunning) return
+        val exportOp = ExportOp(OpRegistry.newOpId("exp"), opRegistry)
+        op = exportOp
         val problem = ExportConfig.validateForExport(project)
+        DiagnosticsLogger.i(
+            "export", ExportOp.Stages.VALIDATE, exportOp.opId,
+            if (problem == null) "project validated for export" else "project validation FAILED",
+            meta = listOf(
+                "problem" to (problem?.name ?: "none"),
+                "durationMs" to ProjectMath.projectDurationMs(project).toString(),
+                "clips" to project.clips.size.toString(),
+                "overlays" to project.overlays.size.toString(),
+                "audio" to project.audioClips.size.toString(),
+                "resolution" to resolution.name, "quality" to quality.name,
+            ),
+        )
         if (problem != null) {
+            exportOp.fail(Failure.VALIDATION_FAILED.name, problem.name)
+            DiagnosticsLogger.noteExportState(
+                exportOp.opId,
+                "state=FAILED stage=VALIDATE cat=VALIDATION_FAILED detail=${problem.name}",
+            )
             emit(State.Failed(Failure.VALIDATION_FAILED, problem.name))
             return
         }
         val durationMs = ProjectMath.projectDurationMs(project)
 
+        // Source media validation (stage C): every URI must still open.
+        checkSourceMedia(project, exportOp)
+
         // Preflight: drop stale output from earlier crashed/cancelled runs.
         val removed = ExportPreflight.cleanupStaleFiles(exportsDir())
         val required = ExportPreflight.requiredBytes(resolution, quality, durationMs)
         val stat = StatFs(context.cacheDir.absolutePath)
+        DiagnosticsLogger.i(
+            "export", ExportOp.Stages.PREFLIGHT, exportOp.opId,
+            "storage preflight",
+            meta = listOf(
+                "neededBytes" to required.toString(),
+                "freeBytes" to stat.availableBytes.toString(),
+                "removedStale" to removed.toString(),
+            ),
+        )
         if (stat.availableBytes < required) {
             writeDiagnostics(
                 phase = "preflight",
@@ -130,11 +211,18 @@ class ExportManager(
                 resolution = resolution,
                 quality = quality,
             )
+            exportOp.fail(Failure.INSUFFICIENT_STORAGE.name, "needed=$required free=${stat.availableBytes}")
+            DiagnosticsLogger.noteExportState(
+                exportOp.opId,
+                "state=FAILED stage=PREFLIGHT cat=INSUFFICIENT_STORAGE needed=$required free=${stat.availableBytes}",
+            )
             emit(State.Failed(Failure.INSUFFICIENT_STORAGE, "needed=$required"))
             return
         }
 
         cancelled = false
+        exportStartedMs = System.currentTimeMillis()
+        exportOp.transition(ExportOp.Stages.SERVICE_START)
         emit(State.Queued)
 
         val tempFile = File(exportsDir(), "export_${System.currentTimeMillis()}.mp4")
@@ -146,43 +234,104 @@ class ExportManager(
             var plan: CompositionFactory.Plan? = null
             try {
                 emit(State.Running(0))
+                val planStarted = System.currentTimeMillis()
                 plan = withContext(Dispatchers.Default) {
-                    CompositionFactory.build(context, project, resolution, workDir)
+                    DiagContext.withOp(exportOp.opId) {
+                        CompositionFactory.build(context, project, resolution, workDir)
+                    }
                 }
+                DiagnosticsLogger.i(
+                    "export", ExportOp.Stages.PLAN, exportOp.opId,
+                    "composition plan built",
+                    meta = listOf(
+                        "plannedDurationMs" to plan.plannedDurationMs.toString(),
+                        "tempFiles" to plan.tempFiles.size.toString(),
+                        "elapsedMs" to (System.currentTimeMillis() - planStarted).toString(),
+                    ),
+                )
+                exportOp.transition(ExportOp.Stages.TRANSFORMER_START)
                 startTransformer(
                     plan = plan,
                     resolution = resolution,
                     quality = quality,
                     outputPath = tempFile,
                     completionDeferred = completionDeferred,
+                    exportOp = exportOp,
                 )
-                pollProgress(completionDeferred)
+                pollProgress(completionDeferred, exportOp)
                 val succeeded = completionDeferred.await()
 
                 when {
                     cancelled -> {
                         tempFile.delete()
+                        exportOp.transition(
+                            ExportOp.Stages.CANCELLED,
+                            Severity.INFO,
+                            "export cancelled by user",
+                        )
+                        DiagnosticsLogger.clearExportMarker()
+                        DiagnosticsLogger.noteExportState(exportOp.opId, "state=CANCELLED stage=TRANSFORM")
                         emit(State.Cancelled)
                     }
                     !succeeded || !tempFile.isFile || tempFile.length() == 0L -> {
                         tempFile.delete()
+                        exportOp.fail(
+                            Failure.EXPORT_ERROR.name,
+                            "transformer reported success but output missing/empty (${pendingDetail ?: "no detail"})",
+                        )
+                        DiagnosticsLogger.e(
+                            "export", ExportOp.Stages.COMPLETED, exportOp.opId,
+                            "output validation failed: transformer done but file missing/empty",
+                            meta = listOf("detail" to (pendingDetail ?: "-")),
+                        )
+                        DiagnosticsLogger.clearExportMarker()
+                        DiagnosticsLogger.noteExportState(
+                            exportOp.opId,
+                            "state=FAILED stage=FINALIZE cat=EXPORT_ERROR detail=${pendingDetail ?: "-"}",
+                        )
                         emit(State.Failed(Failure.EXPORT_ERROR, pendingDetail))
                     }
                     else -> {
                         emit(State.Finalizing)
+                        exportOp.transition(
+                            ExportOp.Stages.FINALIZE, Severity.INFO,
+                            "validating and copying output",
+                        )
+                        DiagnosticsLogger.markExportLive(exportOp.opId, "FINALIZING")
+                        val verifyStarted = System.currentTimeMillis()
                         val verified = withContext(Dispatchers.IO) {
                             verifyPlayable(tempFile, durationMs) &&
                                 copyToDestination(tempFile, destinationUri)
                         }
                         tempFile.delete()
                         if (verified) {
+                            val outSize = destinationSize(destinationUri)
                             writeDiagnostics(
                                 phase = "done",
                                 failure = null,
-                                detail = "duration=$durationMs size=${destinationSize(destinationUri)}",
+                                detail = "duration=$durationMs size=$outSize",
                                 durationMs = durationMs,
                                 resolution = resolution,
                                 quality = quality,
+                            )
+                            exportOp.transition(
+                                ExportOp.Stages.DONE, Severity.INFO,
+                                "export completed and verified",
+                            )
+                            DiagnosticsLogger.i(
+                                "export", ExportOp.Stages.DONE, exportOp.opId,
+                                "export COMPLETED (output verified)",
+                                meta = listOf(
+                                    "durationMs" to durationMs.toString(),
+                                    "outputBytes" to outSize.toString(),
+                                    "finalizeMs" to (System.currentTimeMillis() - verifyStarted).toString(),
+                                    "totalMs" to (System.currentTimeMillis() - exportStartedMs).toString(),
+                                ),
+                            )
+                            DiagnosticsLogger.clearExportMarker()
+                            DiagnosticsLogger.noteExportState(
+                                exportOp.opId,
+                                "state=SUCCESS durationMs=$durationMs outputBytes=$outSize",
                             )
                             emit(State.Done(destinationUri, durationMs))
                         } else {
@@ -193,6 +342,17 @@ class ExportManager(
                                 durationMs = durationMs,
                                 resolution = resolution,
                                 quality = quality,
+                            )
+                            exportOp.fail(Failure.COPY_ERROR.name, pendingDetail)
+                            DiagnosticsLogger.e(
+                                "export", ExportOp.Stages.FINALIZE, exportOp.opId,
+                                "output verify/copy FAILED", null,
+                                listOf("detail" to (pendingDetail ?: "-")),
+                            )
+                            DiagnosticsLogger.clearExportMarker()
+                            DiagnosticsLogger.noteExportState(
+                                exportOp.opId,
+                                "state=FAILED stage=FINALIZE cat=COPY_ERROR detail=${pendingDetail ?: "-"}",
                             )
                             emit(State.Failed(Failure.COPY_ERROR, pendingDetail))
                         }
@@ -208,6 +368,17 @@ class ExportManager(
                     durationMs = durationMs,
                     resolution = resolution,
                     quality = quality,
+                )
+                exportOp.fail(failure.name, t.javaClass.simpleName)
+                DiagnosticsLogger.e(
+                    "export", "EXCEPTION", exportOp.opId,
+                    "export coroutine threw (stage=${exportOp.stage})", t,
+                    listOf("memoryFreeMb" to freeMemoryMb().toString()),
+                )
+                DiagnosticsLogger.clearExportMarker()
+                DiagnosticsLogger.noteExportState(
+                    exportOp.opId,
+                    "state=FAILED stage=EXCEPTION cat=GENERIC exc=${t.javaClass.simpleName}",
                 )
                 emit(State.Failed(failure, t.javaClass.simpleName))
             } finally {
@@ -230,6 +401,10 @@ class ExportManager(
     fun cancel() {
         if (!isRunning || cancelled) return
         cancelled = true
+        DiagnosticsLogger.w(
+            "export", "CANCEL_REQUESTED", op?.opId,
+            "user requested export cancellation",
+        )
         runCatching { transformer?.cancel() }
         completion?.complete(false)
     }
@@ -242,6 +417,7 @@ class ExportManager(
         quality: Quality,
         outputPath: File,
         completionDeferred: CompletableDeferred<Boolean>,
+        exportOp: ExportOp,
     ) {
         val encoderSettings = VideoEncoderSettings.Builder()
             .setBitrate(ExportConfig.videoBitrate(resolution, quality))
@@ -249,6 +425,21 @@ class ExportManager(
 
         val listener = object : Transformer.Listener {
             override fun onCompleted(composition: Composition, result: ExportResult) {
+                // Completion is recorded but NOT trusted alone: the caller
+                // still validates the output file exists/ non-empty/plausible
+                // before reporting success (spec section 4, item L).
+                DiagnosticsLogger.i(
+                    "export", ExportOp.Stages.COMPLETED, exportOp.opId,
+                    "Transformer onCompleted",
+                    meta = listOf(
+                        "processedBytes" to result.fileSizeBytes.toString(),
+                        "durationMs" to result.durationMs.toString(),
+                    ),
+                )
+                exportOp.transition(
+                    ExportOp.Stages.COMPLETED, Severity.INFO,
+                    "transformer completed",
+                )
                 completionDeferred.complete(true)
             }
 
@@ -267,6 +458,27 @@ class ExportManager(
                     resolution = null,
                     quality = quality,
                 )
+                exportOp.fail(failure.name, "code=${exception.errorCode}")
+                // Full nested cause chain + memory pressure evidence — the
+                // original exception is preserved, never replaced by a
+                // generic one (spec section 4, item J/K).
+                DiagnosticsLogger.e(
+                    "export", ExportOp.Stages.TRANSFORMER_ERROR, exportOp.opId,
+                    "Transformer onError (stage=${exportOp.stage}, elapsedMs=" +
+                        (System.currentTimeMillis() - exportStartedMs) + ")",
+                    exception,
+                    listOf(
+                        "errorCode" to exception.errorCode.toString(),
+                        "failureCat" to failure.name,
+                        "memoryFreeMb" to freeMemoryMb().toString(),
+                    ),
+                )
+                DiagnosticsLogger.clearExportMarker()
+                DiagnosticsLogger.noteExportState(
+                    exportOp.opId,
+                    "state=FAILED stage=TRANSFORMER_ERROR cat=$failure code=${exception.errorCode} " +
+                        "elapsedMs=${System.currentTimeMillis() - exportStartedMs}",
+                )
                 completionDeferred.complete(false)
             }
         }
@@ -284,6 +496,19 @@ class ExportManager(
                 .addListener(listener)
                 .build()
             transformer?.start(plan.composition, outputPath.absolutePath)
+            // Durable "export in flight" marker: if the process dies before
+            // a terminal state clears it, the next launch reports the export
+            // as INTERRUPTED (distinct from a confirmed failure).
+            DiagnosticsLogger.markExportLive(exportOp.opId, "RUNNING")
+            DiagnosticsLogger.i(
+                "export", ExportOp.Stages.TRANSFORMER_START, exportOp.opId,
+                "Transformer started",
+                meta = listOf(
+                    "plannedDurationMs" to plan.plannedDurationMs.toString(),
+                    "outputFile" to DiagSanitizer.sanitizeFileName(outputPath.name),
+                    "memoryFreeMb" to freeMemoryMb().toString(),
+                ),
+            )
         } catch (t: Throwable) {
             // Synchronous start failures (no decoder surface, invalid
             // composition, codec init) must not leave a zombie state.
@@ -297,12 +522,27 @@ class ExportManager(
                 resolution = null,
                 quality = quality,
             )
+            exportOp.fail(failure.name, "start: ${t.javaClass.simpleName}")
+            DiagnosticsLogger.e(
+                "export", ExportOp.Stages.TRANSFORMER_START, exportOp.opId,
+                "Transformer start FAILED synchronously", t,
+                listOf(
+                    "failureCat" to failure.name,
+                    "memoryFreeMb" to freeMemoryMb().toString(),
+                ),
+            )
+            DiagnosticsLogger.clearExportMarker()
+            DiagnosticsLogger.noteExportState(
+                exportOp.opId,
+                "state=FAILED stage=TRANSFORMER_START cat=$failure exc=${t.javaClass.simpleName}",
+            )
             completionDeferred.complete(false)
         }
     }
 
-    private suspend fun pollProgress(completionDeferred: CompletableDeferred<Boolean>) {
+    private suspend fun pollProgress(completionDeferred: CompletableDeferred<Boolean>, exportOp: ExportOp) {
         val holder = ProgressHolder()
+        var lastLoggedStep = -10
         while (currentCoroutineContext().isActive && !completionDeferred.isCompleted) {
             val t = transformer ?: break
             val progressState = t.getProgress(holder)
@@ -312,6 +552,19 @@ class ExportManager(
                 else -> 0
             }
             emit(State.Running(pct))
+            // Stage H evidence at 10% steps (NOT every 250 ms callback —
+            // keeps the log bounded and the export fast).
+            val step = pct / 10 * 10
+            if (step > lastLoggedStep) {
+                lastLoggedStep = step
+                DiagnosticsLogger.d(
+                    "export", ExportOp.Stages.PROGRESS, exportOp.opId,
+                    "progress $pct%",
+                    meta = listOf(
+                        "elapsedMs" to (System.currentTimeMillis() - exportStartedMs).toString(),
+                    ),
+                )
+            }
             delay(250)
         }
     }

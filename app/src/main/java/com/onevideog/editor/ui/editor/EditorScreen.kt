@@ -102,6 +102,8 @@ fun EditorScreen(
                     context.getString(R.string.error_unsupported_file)
                 com.onevideog.editor.editor.MediaImporter.ImportException.Kind.NO_VIDEO ->
                     context.getString(R.string.error_no_video)
+                com.onevideog.editor.editor.MediaImporter.ImportException.Kind.IMAGE_UNREADABLE ->
+                    context.getString(R.string.error_image_unreadable)
                 else -> context.getString(R.string.error_file_unreadable)
             }
             viewModel.consumeImportError()

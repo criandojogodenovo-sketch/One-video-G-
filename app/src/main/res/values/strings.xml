@@ -248,4 +248,23 @@
     <string name="keyframe_no_kf_at_playhead">No keyframe at the playhead. Move the playhead (timeline ruler) or add a keyframe to edit values here.</string>
     <string name="error_audio_preview">This audio file could not be played in the preview. The file may be missing, in an unsupported format, or the device lacks the decoder. The import was kept — try removing and re-importing it.</string>
     <string name="error_playback">The video could not be played here. The file may be missing or in a format this device cannot decode.</string>
+    <string name="error_image_unreadable">The image could not be loaded. It may be missing, corrupted, or in a format this device cannot read. It was not added to the project.</string>
+
+    <!-- Temporary diagnostics (v0.2.3) -->
+    <string name="diag_section_title">Diagnostics and Logs</string>
+    <string name="diag_toggle_label">Enable diagnostic logging</string>
+    <string name="diag_status_on">Status: active — operations and failures are being recorded on this device.</string>
+    <string name="diag_status_off">Status: off — no events are being recorded.</string>
+    <string name="diag_stats_line">Recorded events: %1$d · approx. size: ~%2$d KB</string>
+    <string name="diag_copy_report">Copy Diagnostic Report</string>
+    <string name="diag_clear_logs">Clear Logs</string>
+    <string name="diag_export_report">Export Diagnostic Report</string>
+    <string name="diag_clear_confirm_title">Clear diagnostic logs?</string>
+    <string name="diag_clear_confirm_body">All diagnostic events recorded on this device will be permanently deleted. This cannot be undone.</string>
+    <string name="diag_clear_confirm_yes">Clear logs</string>
+    <string name="diag_copied">Diagnostic report copied to the clipboard.</string>
+    <string name="diag_copy_failed">Could not copy the report. Try “Export Diagnostic Report” instead.</string>
+    <string name="diag_export_saved">Diagnostic report saved.</string>
+    <string name="diag_export_failed">Could not save the diagnostic report.</string>
+    <string name="diag_notice">Logs stay on this device, in the app\'s private storage. They are copied or shared only when you explicitly tap the actions above. Nothing is uploaded automatically, and logs never contain your video/audio content, rendered text or file names.</string>
 </resources>

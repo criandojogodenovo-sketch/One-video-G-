@@ -2,10 +2,15 @@ package com.onevideog.editor.editor
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.util.Log
 import com.onevideog.editor.data.Clip
+import com.onevideog.editor.diag.DiagContext
+import com.onevideog.editor.diag.DiagSanitizer
+import com.onevideog.editor.diag.DiagnosticsLogger
+import com.onevideog.editor.diag.ImageImportStages
 import java.io.File
 import kotlin.math.ceil
 
@@ -20,7 +25,7 @@ import kotlin.math.ceil
 class MediaImporter(private val context: Context) {
 
     class ImportException(val kind: Kind, cause: Throwable? = null) : Exception(kind.name, cause) {
-        enum class Kind { UNREADABLE, NO_VIDEO, UNSUPPORTED }
+        enum class Kind { UNREADABLE, NO_VIDEO, UNSUPPORTED, IMAGE_UNREADABLE }
     }
 
     data class VideoMeta(
@@ -31,20 +36,71 @@ class MediaImporter(private val context: Context) {
 
     data class AudioMeta(val durationMs: Long)
 
-    /** Persists read permission so the document survives process restarts. */
-    fun persistReadPermission(uri: Uri) {
-        runCatching {
-            context.contentResolver.takePersistableUriPermission(
-                uri,
-                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
-            )
-        }
-    }
+    /**
+     * Persists read permission so the document survives process restarts.
+     * Returns true when the grant was taken (best-effort — some providers
+     * reject persistable grants; the import can still succeed for this
+     * session). Never throws.
+     */
+    fun persistReadPermission(uri: Uri): Boolean = runCatching {
+        context.contentResolver.takePersistableUriPermission(
+            uri,
+            android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
+        )
+        true
+    }.getOrDefault(false)
 
     /** True when the document can still be opened (used for missing-media detection). */
     fun isReadable(uri: Uri): Boolean = runCatching {
         context.contentResolver.openFileDescriptor(uri, "r")?.use { true } ?: false
     }.getOrDefault(false)
+
+    /** Probed image metadata (bounds only — pixels are never loaded here). */
+    data class ImageMeta(
+        val mimeType: String?,
+        val boundsWidth: Int,
+        val boundsHeight: Int,
+        val sizeBytes: Long,
+    )
+
+    /**
+     * Probes an image document WITHOUT decoding pixels: scheme/authority,
+     * MIME type, byte size and bitmap bounds. Throws [ImportException] with
+     * a UI-mappable kind. Used by the image-import instrumentation to
+     * attribute failures to the exact stage (spec section 3 B–E).
+     */
+    fun probeImage(uri: Uri): ImageMeta {
+        DiagnosticsLogger.i(
+            SUBSYSTEM, ImageImportStages.URI_META, DiagContext.currentOpId(),
+            "image document ${DiagSanitizer.sanitizeUri(uri.toString())}",
+        )
+        val mime = runCatching { context.contentResolver.getType(uri) }.getOrNull()
+        val size = runCatching {
+            context.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: -1L
+        }.getOrDefault(-1L)
+        DiagnosticsLogger.i(
+            SUBSYSTEM, ImageImportStages.ACCESS, DiagContext.currentOpId(),
+            "image document opened",
+            meta = listOf("mime" to (mime ?: "?"), "sizeBytes" to size.toString()),
+        )
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        var streamOpened = false
+        runCatching {
+            context.contentResolver.openInputStream(uri)?.use {
+                // NOTE: with inJustDecodeBounds=true decodeStream returns
+                // null by design; only the outWidth/outHeight are meaningful.
+                streamOpened = true
+                BitmapFactory.decodeStream(it, null, bounds)
+            }
+        }
+        if (!streamOpened) {
+            throw ImportException(ImportException.Kind.UNREADABLE)
+        }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            throw ImportException(ImportException.Kind.UNSUPPORTED)
+        }
+        return ImageMeta(mime, bounds.outWidth, bounds.outHeight, size)
+    }
 
     /** Probes a video document. Throws [ImportException] with a UI-mappable kind. */
     fun probeVideo(uri: Uri): VideoMeta {
@@ -138,6 +194,7 @@ class MediaImporter(private val context: Context) {
     /**
      * Generates up to [MAX_THUMBS_PER_CLIP] thumbnails for [clip], sampled
      * across its trimmed range, each downscaled to [THUMB_WIDTH] px.
+     * Failures are logged (sanitized) but remain best-effort.
      */
     fun generateThumbnails(clip: Clip, thumbsDir: File, thumbWidth: Int = THUMB_WIDTH): Int {
         val durationSec = (clip.trimEndMs - clip.trimStartMs) / 1000.0
@@ -163,7 +220,12 @@ class MediaImporter(private val context: Context) {
                 written++
             }
         } catch (e: Exception) {
-            // Thumbnails are best-effort; the clip itself remains usable.
+            // Thumbnails are best-effort; the clip itself remains usable —
+            // but the failure is now recorded, not silently swallowed.
+            DiagnosticsLogger.w(
+                SUBSYSTEM, "THUMBNAILS", DiagContext.currentOpId(),
+                "thumbnail generation incomplete (written=$written)", e,
+            )
         } finally {
             runCatching { retriever.release() }
         }
@@ -180,6 +242,7 @@ class MediaImporter(private val context: Context) {
         const val MAX_THUMBS_PER_CLIP = 8
         const val THUMB_WIDTH = 160
         private const val DIAG_TAG = "OvgMediaImport"
+        internal const val SUBSYSTEM = "import"
     }
 }
 

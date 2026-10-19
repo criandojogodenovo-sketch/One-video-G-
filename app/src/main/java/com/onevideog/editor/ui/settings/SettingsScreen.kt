@@ -130,6 +130,10 @@ fun SettingsScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
+            // Temporary diagnostics (v0.2.3): opt-in, on-device evidence
+            // collection for field debugging (toggle/copy/clear/export).
+            DiagnosticsSection(settings = settings)
+
             Text(
                 stringResource(R.string.about),
                 style = MaterialTheme.typography.titleMedium,

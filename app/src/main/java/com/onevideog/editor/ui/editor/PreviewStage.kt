@@ -28,6 +28,10 @@ import androidx.media3.exoplayer.ExoPlayer
 import com.onevideog.editor.R
 import com.onevideog.editor.data.OverlayTransform
 import com.onevideog.editor.data.ProjectAspect
+import com.onevideog.editor.diag.DiagContext
+import com.onevideog.editor.diag.DiagSanitizer
+import com.onevideog.editor.diag.DiagnosticsLogger
+import com.onevideog.editor.diag.OpRegistry
 import com.onevideog.editor.editor.AudioPreviewController
 import com.onevideog.editor.editor.ClipEffectsFactory
 import com.onevideog.editor.editor.EditorViewModel
@@ -96,6 +100,9 @@ fun PreviewStage(viewModel: EditorViewModel) {
     val player = remember {
         ExoPlayer.Builder(context).build().apply { repeatMode = Player.REPEAT_MODE_OFF }
     }
+    // One preview correlation id per composition instance: every effect
+    // rebuild / player error / activation event of this session shares it.
+    val previewOpId = remember { OpRegistry.newOpId("pvw") }
     DisposableEffect(Unit) {
         onDispose {
             player.release()
@@ -118,6 +125,12 @@ fun PreviewStage(viewModel: EditorViewModel) {
             override fun onPlayerError(error: PlaybackException) {
                 viewModel.setPlaying(false)
                 viewModel.playbackError.value = error.errorCodeName
+                DiagnosticsLogger.e(
+                    "playback", "PLAYER_ERROR", previewOpId,
+                    "preview player error",
+                    throwable = error,
+                    meta = listOf("code" to error.errorCodeName),
+                )
             }
         }
         player.addListener(listener)
@@ -157,14 +170,25 @@ fun PreviewStage(viewModel: EditorViewModel) {
     // first prepare() happens with the effects already set.
     LaunchedEffect(effectsRevision) {
         val clip = currentClip ?: return@LaunchedEffect
-        val effects = ClipEffectsFactory.effectsFor(
-            context = context,
-            project = project,
-            clip = clip,
-            clipStartMs = clipStart,
-            forPreview = true,
-        )
+        val effects = DiagContext.withOp(previewOpId) {
+            ClipEffectsFactory.effectsFor(
+                context = context,
+                project = project,
+                clip = clip,
+                clipStartMs = clipStart,
+                forPreview = true,
+            )
+        }
         player.setVideoEffects(effects)
+        DiagnosticsLogger.i(
+            "preview", "PREVIEW_REBUILD", previewOpId,
+            "preview effect list rebuilt and attached",
+            meta = listOf(
+                "clip" to DiagSanitizer.fingerprint(clip.id),
+                "overlays" to project.overlays.size.toString(),
+                "thread" to Thread.currentThread().name,
+            ),
+        )
         // When the same clip is already loaded, force a new input stream so
         // the pending effects apply immediately; otherwise the media-load
         // effect will prepare the item with the fresh list.
@@ -183,6 +207,19 @@ fun PreviewStage(viewModel: EditorViewModel) {
             loadedClipId = null
             return@LaunchedEffect
         }
+        // Stage K evidence (cold: once per seek/clip change): which overlays
+        // are active at the playhead this seek lands on.
+        DiagnosticsLogger.d(
+            "preview", "ACTIVATION", previewOpId,
+            "seek applied",
+            meta = listOf(
+                "playheadMs" to state.playheadMs.toString(),
+                "activeOverlays" to project.overlays
+                    .count { state.playheadMs >= it.startMs && state.playheadMs < it.endMs }
+                    .toString(),
+                "clip" to DiagSanitizer.fingerprint(currentClip.id),
+            ),
+        )
         // Item position is 0-based within the clip window (Media3 resets
         // timestamps at the clipping start), scaled by playback speed.
         val localMs = ProjectMath.projectToItemLocalMs(
@@ -309,6 +346,18 @@ fun PreviewStage(viewModel: EditorViewModel) {
                 },
                 onGestureEnd = { overlay, transform ->
                     gestureState = null
+                    DiagnosticsLogger.d(
+                        "timeline", "OVERLAY_TRANSFORM", previewOpId,
+                        "overlay transform committed",
+                        meta = listOf(
+                            "ovId" to DiagSanitizer.fingerprint(overlay.id),
+                            "x" to transform.x.toString(),
+                            "y" to transform.y.toString(),
+                            "scale" to transform.scale.toString(),
+                            "rotDeg" to transform.rotationDeg.toString(),
+                            "opacity" to transform.opacity.toString(),
+                        ),
+                    )
                     viewModel.updateOverlay(overlay.id) {
                         it.copy(transform = transform.withClampedValues())
                     }
