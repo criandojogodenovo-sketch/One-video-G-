@@ -1,17 +1,19 @@
 package com.onevideog.editor.ui.export
 
+import android.Manifest
+import android.content.Context
+import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -33,20 +35,39 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import com.onevideog.editor.R
 import com.onevideog.editor.data.ExportResolutionEnum
 import com.onevideog.editor.data.SettingsRepository
+import com.onevideog.editor.editor.ExportBus
 import com.onevideog.editor.editor.ExportConfig
 import com.onevideog.editor.editor.ExportManager
+import com.onevideog.editor.editor.ExportService
 import com.onevideog.editor.editor.EditorViewModel
+import com.onevideog.editor.editor.ProjectMath
 import com.onevideog.editor.ui.common.OvgTopBar
 import com.onevideog.editor.ui.home.formatDuration
-import kotlinx.coroutines.launch
+
+/** Localized, actionable failure descriptions for the export state machine. */
+@Composable
+internal fun exportFailureText(failure: ExportManager.Failure?): String = when (failure) {
+    ExportManager.Failure.INSUFFICIENT_STORAGE -> stringResource(R.string.error_storage)
+    ExportManager.Failure.IO_READ -> stringResource(R.string.error_read_source)
+    ExportManager.Failure.IO_WRITE -> stringResource(R.string.error_write_output)
+    ExportManager.Failure.ENCODING -> stringResource(R.string.error_encoding)
+    ExportManager.Failure.DECODING -> stringResource(R.string.error_decoding)
+    ExportManager.Failure.MUXING -> stringResource(R.string.error_muxing)
+    ExportManager.Failure.EXPORT_ERROR -> stringResource(R.string.error_export_failed)
+    ExportManager.Failure.COPY_ERROR -> stringResource(R.string.error_file_unreadable)
+    ExportManager.Failure.VALIDATION_FAILED -> stringResource(R.string.error_no_video)
+    null, ExportManager.Failure.GENERIC -> stringResource(R.string.error_generic)
+}
 
 /**
- * Export screen: resolution + quality presets, SAF destination picker, real
- * progress, cancellation and validation. Builds the release-quality MP4 with
- * Media3 Transformer entirely offline.
+ * Export screen: resolution + quality presets, SAF destination picker, then
+ * the work happens in [ExportService] (foreground) so long exports survive
+ * screen-off/backgrounding. State arrives via [ExportBus]; progress,
+ * finalization, cancellation and mapped failure reasons are all real.
  */
 @Composable
 fun ExportScreen(
@@ -69,34 +90,43 @@ fun ExportScreen(
         fileName = ExportConfig.sanitizeFileName(viewModel.ui.value.project?.name ?: "one-video-g")
     }
 
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
-    val exportState = remember { mutableStateOf<ExportManager.State>(ExportManager.State.Idle) }
-    val exportManager = remember {
-        ExportManager(context.applicationContext, scope).apply {
-            onState = { exportState.value = it }
-        }
-    }
+    val bus by ExportBus.snapshot.collectAsState()
+    val busState = if (bus.projectId == projectId) bus.state else ExportManager.State.Idle
 
-    // Keep the screen on while exporting.
+    // Keep the screen on while the user watches the export screen (the
+    // foreground service keeps the export alive regardless).
     DisposableEffect(Unit) {
         val window = (context as? android.app.Activity)?.window
         window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         onDispose {
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            exportManager.cancel()
         }
     }
+
+    val notificationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { }
 
     val createDocument = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("video/mp4"),
     ) { uri ->
-        if (uri != null) {
-            exportManager.start(
-                project = viewModel.ui.value.project ?: return@rememberLauncherForActivityResult,
-                resolution = resolution,
-                quality = quality,
-                destinationUri = uri,
-            )
+        if (uri != null && uri != Uri.EMPTY) {
+            val currentProject = viewModel.ui.value.project ?: return@rememberLauncherForActivityResult
+            viewModel.saveNow {
+                if (Build.VERSION.SDK_INT >= 33) {
+                    notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
+                ContextCompat.startForegroundService(
+                    context,
+                    ExportService.startIntent(
+                        context,
+                        currentProject.id,
+                        resolution,
+                        quality,
+                        uri,
+                    ),
+                )
+            }
         }
     }
 
@@ -111,18 +141,30 @@ fun ExportScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             if (project != null) {
+                val durationMs = ProjectMath.projectDurationMs(project)
                 Text(
                     stringResource(
                         R.string.clips_and_duration,
                         project.clips.size,
-                        formatDuration(project.totalDurationMs),
+                        formatDuration(durationMs),
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (project.audioClips.isNotEmpty()) {
+                    Text(
+                        stringResource(R.string.export_audio_tracks, project.audioClips.size),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
 
-            Text(stringResource(R.string.export_resolution), style = MaterialTheme.typography.titleSmall)
+            Text(
+                stringResource(R.string.export_resolution),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ExportResolutionEnum.entries.forEach { res ->
                     FilterChip(
@@ -138,7 +180,11 @@ fun ExportScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
-            Text(stringResource(R.string.export_quality), style = MaterialTheme.typography.titleSmall)
+            Text(
+                stringResource(R.string.export_quality),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(
                     ExportConfig.Quality.LOW to R.string.quality_low,
@@ -161,9 +207,10 @@ fun ExportScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            val canStart = project != null && project.clips.isNotEmpty() && !exportManager.isRunning &&
-                exportState.value !is ExportManager.State.Running &&
-                exportState.value !is ExportManager.State.Verifying
+            val busy = busState is ExportManager.State.Queued ||
+                busState is ExportManager.State.Running ||
+                busState is ExportManager.State.Finalizing
+            val canStart = project != null && project.clips.isNotEmpty() && !busy
             if (project != null && project.clips.isEmpty()) {
                 Text(
                     stringResource(R.string.export_need_clips),
@@ -172,19 +219,44 @@ fun ExportScreen(
                 )
             }
 
-            when (val s = exportState.value) {
+            when (val s = busState) {
+                is ExportManager.State.Queued -> {
+                    Text(
+                        stringResource(R.string.export_queued),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    OutlinedButton(onClick = {
+                        context.startService(ExportService.cancelIntent(context))
+                    }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                }
                 is ExportManager.State.Running -> {
-                    Text(stringResource(R.string.export_running, s.progressPercent))
+                    Text(
+                        stringResource(R.string.export_running, s.progressPercent),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
                     LinearProgressIndicator(
                         progress = { s.progressPercent / 100f },
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    OutlinedButton(onClick = { exportManager.cancel() }) {
+                    Text(
+                        stringResource(R.string.export_service_note),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedButton(onClick = {
+                        context.startService(ExportService.cancelIntent(context))
+                    }) {
                         Text(stringResource(R.string.cancel))
                     }
                 }
-                is ExportManager.State.Verifying -> {
-                    Text(stringResource(R.string.export_verifying))
+                is ExportManager.State.Finalizing -> {
+                    Text(
+                        stringResource(R.string.export_finalizing),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
                 is ExportManager.State.Done -> {
@@ -193,8 +265,11 @@ fun ExportScreen(
                         color = MaterialTheme.colorScheme.primary,
                         style = MaterialTheme.typography.titleMedium,
                     )
-                    Text(stringResource(R.string.export_done_body))
-                    Button(onClick = { exportState.value = ExportManager.State.Idle }) {
+                    Text(
+                        stringResource(R.string.export_done_body),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Button(onClick = { ExportBus.reset() }) {
                         Text(stringResource(R.string.close))
                     }
                 }
@@ -205,22 +280,24 @@ fun ExportScreen(
                         style = MaterialTheme.typography.titleMedium,
                     )
                     Text(
-                        stringResource(
-                            when (s.message) {
-                                "error_storage" -> R.string.error_storage
-                                "error_no_video" -> R.string.error_no_video
-                                "error_file_unreadable" -> R.string.error_file_unreadable
-                                else -> R.string.error_export_failed
-                            },
-                        ),
+                        exportFailureText(s.failure),
+                        color = MaterialTheme.colorScheme.onSurface,
                     )
-                    Button(onClick = { exportState.value = ExportManager.State.Idle }) {
+                    Text(
+                        stringResource(R.string.export_failed_diagnostics),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Button(onClick = { ExportBus.reset() }) {
                         Text(stringResource(R.string.retry))
                     }
                 }
                 is ExportManager.State.Cancelled -> {
-                    Text(stringResource(R.string.export_canceled))
-                    Button(onClick = { exportState.value = ExportManager.State.Idle }) {
+                    Text(
+                        stringResource(R.string.export_canceled),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Button(onClick = { ExportBus.reset() }) {
                         Text(stringResource(R.string.ok))
                     }
                 }

@@ -14,7 +14,8 @@ val Charcoal = Color(0xFF0F0F17)
 val SurfaceDark = Color(0xFF171821)
 val SurfaceVariantDark = Color(0xFF1F2029)
 val TextPrimary = Color(0xFFECEBF0)
-val TextSecondary = Color(0xFFA7A9B3)
+// Secondary text lifted for WCAG-AA contrast on the dark surfaces.
+val TextSecondary = Color(0xFFB4B6C2)
 val DangerRed = Color(0xFFE2574C)
 
 private val DarkScheme = darkColorScheme(

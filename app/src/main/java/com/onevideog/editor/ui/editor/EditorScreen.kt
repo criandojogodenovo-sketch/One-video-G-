@@ -1,44 +1,31 @@
 package com.onevideog.editor.ui.editor
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.Photo
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.Redo
-import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.filled.TextFields
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.Undo
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
-import androidx.compose.material.icons.filled.Crop
-import androidx.compose.material.icons.filled.VolumeUp
-import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AspectRatio
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AudioFile
+import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.IosShare
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Photo
+import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -52,31 +39,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.media3.common.MediaItem
-import androidx.media3.common.Player
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
 import com.onevideog.editor.R
 import com.onevideog.editor.editor.EditorViewModel
 import com.onevideog.editor.editor.TimelineLogic
 import com.onevideog.editor.ui.common.EmptyState
-import com.onevideog.editor.ui.home.formatDuration
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
 
 /**
- * Editing screen: video preview (ExoPlayer), timeline strip, contextual
- * bottom tool bar and tool sheets. Designed for one-handed portrait use.
+ * Editing screen: composition preview ([PreviewStage]), multi-track timeline
+ * ([TimelineStrip]) and contextual tool sheets. Designed for one-handed
+ * portrait use on phones with 4 GB RAM.
  */
 @Composable
 fun EditorScreen(
@@ -99,6 +75,14 @@ fun EditorScreen(
         if (uri != null) {
             val name = queryDisplayName(context, uri) ?: "video"
             viewModel.importVideo(uri, name)
+        }
+    }
+    val audioLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            val name = queryDisplayName(context, uri) ?: "audio"
+            viewModel.addAudioClip(uri, name)
         }
     }
 
@@ -155,17 +139,21 @@ fun EditorScreen(
                 .weight(1f),
             contentAlignment = Alignment.Center,
         ) {
-            if (project.clips.isEmpty()) {
+            if (project.clips.isEmpty() && project.overlays.isEmpty() && project.audioClips.isEmpty()) {
                 EmptyState(
                     title = stringResource(R.string.editor_empty_title),
                     body = stringResource(R.string.editor_empty_body),
                 )
             } else {
-                PreviewArea(viewModel = viewModel)
+                PreviewStage(viewModel = viewModel)
             }
         }
 
-        TimelineStrip(viewModel = viewModel)
+        TimelineStrip(
+            viewModel = viewModel,
+            onAddAudio = { audioLauncher.launch(arrayOf("audio/*")) },
+            onOpenTool = { activeTool = it },
+        )
 
         ToolBarRow(
             onImport = {
@@ -237,7 +225,7 @@ private fun EditorTopBar(
                 else MaterialTheme.colorScheme.outline,
             )
         }
-        androidx.compose.material3.FilledTonalButton(onClick = onExport) {
+        FilledTonalButton(onClick = onExport) {
             Icon(
                 Icons.Filled.IosShare,
                 contentDescription = null,
@@ -245,121 +233,6 @@ private fun EditorTopBar(
             )
             Spacer(Modifier.width(6.dp))
             Text(stringResource(R.string.export_title))
-        }
-    }
-}
-
-@Composable
-private fun PreviewArea(viewModel: EditorViewModel) {
-    val state by viewModel.ui.collectAsState()
-    val project = state.project ?: return
-    val context = LocalContext.current
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
-
-    val player = remember {
-        ExoPlayer.Builder(context).build().apply {
-            repeatMode = Player.REPEAT_MODE_OFF
-        }
-    }
-    androidx.compose.runtime.DisposableEffect(Unit) {
-        onDispose { player.release() }
-    }
-
-    // Which timeline clip is under the playhead.
-    val clipIndex = TimelineLogic.clipIndexAt(project.clips, state.playheadMs)
-    val currentClip = project.clips.getOrNull(clipIndex)
-    val clipStart = TimelineLogic.clipStartMs(project.clips, clipIndex)
-
-    // (Re)load the media item whenever the active clip changes.
-    var loadedClipId by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(currentClip?.id, viewModel.seekToken.collectAsState().value) {
-        if (currentClip == null) {
-            player.stop()
-            loadedClipId = null
-            return@LaunchedEffect
-        }
-        val localMs = currentClip.trimStartMs +
-            Math.round((state.playheadMs - clipStart).coerceAtLeast(0) * currentClip.speed)
-        val item = MediaItem.Builder()
-            .setUri(android.net.Uri.parse(currentClip.uri))
-            .setClippingConfiguration(
-                MediaItem.ClippingConfiguration.Builder()
-                    .setStartPositionMs(currentClip.trimStartMs)
-                    .setEndPositionMs(currentClip.trimEndMs)
-                    .build(),
-            )
-            .build()
-        player.setMediaItem(item, localMs.coerceAtMost(currentClip.trimEndMs))
-        player.setPlaybackSpeed(currentClip.speed)
-        player.prepare()
-        player.playWhenReady = state.isPlaying
-        loadedClipId = currentClip.id
-    }
-
-    // Poll player position back into the view model while playing.
-    LaunchedEffect(state.isPlaying, loadedClipId) {
-        while (isActive && state.isPlaying && currentClip != null) {
-            val localMedia = player.currentPosition
-            val timelineMs = clipStart +
-                Math.round((localMedia - currentClip.trimStartMs).coerceAtLeast(0) / currentClip.speed)
-            val clipEnd = clipStart + currentClip.effectiveDurationMs
-            if (localMedia >= currentClip.trimEndMs - 30) {
-                if (clipIndex < project.clips.lastIndex) {
-                    viewModel.seekTo(clipEnd)
-                } else {
-                    viewModel.setPlaying(false)
-                    viewModel.seekTo(clipEnd)
-                }
-            } else {
-                viewModel.setPlayhead(timelineMs)
-            }
-            delay(80)
-        }
-    }
-
-    Column {
-        AndroidView(
-            factory = { ctx ->
-                PlayerView(ctx).apply {
-                    useController = false
-                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                }
-            },
-            update = { view -> view.player = player },
-            modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(fraction = 0.82f),
-        )
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = {
-                viewModel.setPlaying(!state.isPlaying)
-                player.playWhenReady = !state.isPlaying
-            }) {
-                Icon(
-                    if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    contentDescription = stringResource(
-                        if (state.isPlaying) R.string.a11y_pause else R.string.a11y_play,
-                    ),
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(36.dp),
-                )
-            }
-            Text(
-                formatDuration(state.playheadMs) + " / " + formatDuration(project.totalDurationMs),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
-            Spacer(Modifier.weight(1f))
-            Text(
-                formatDuration(project.totalDurationMs),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }
@@ -380,30 +253,27 @@ private fun ToolBarRow(
             Tool.COLOR to Icons.Filled.Palette,
             Tool.TEXT to Icons.Filled.TextFields,
             Tool.IMAGE to Icons.Filled.Photo,
-            Tool.MUSIC to Icons.Filled.MusicNote,
+            Tool.AUDIO to Icons.Filled.AudioFile,
         )
     }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surface)
-            .verticalScroll(rememberScrollState())
             .padding(vertical = 6.dp, horizontal = 4.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
     ) {
         IconButton(onClick = onImport, modifier = Modifier.size(44.dp)) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(
-                    Icons.Filled.Add,
-                    contentDescription = stringResource(R.string.a11y_import_video),
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-            }
+            Icon(
+                Icons.Filled.Add,
+                contentDescription = stringResource(R.string.a11y_import_video),
+                tint = MaterialTheme.colorScheme.primary,
+            )
         }
         tools.forEach { (tool, icon) ->
             IconButton(
                 onClick = { onTool(tool) },
-                enabled = hasClips || tool == Tool.MUSIC,
+                enabled = hasClips || tool == Tool.AUDIO || tool == Tool.ASPECT,
                 modifier = Modifier.size(44.dp),
             ) {
                 Icon(

@@ -44,6 +44,20 @@ class MainActivity : AppCompatActivity() {
                 com.onevideog.editor.data.ThemeMode.LIGHT -> false
                 com.onevideog.editor.data.ThemeMode.SYSTEM -> isSystemInDarkTheme()
             }
+            // Keep the AppCompat day/night delegate in sync so XML-level
+            // surfaces (window background, dialogs) match the Compose scheme.
+            androidx.compose.runtime.LaunchedEffect(themeMode) {
+                AppCompatDelegate.setDefaultNightMode(
+                    when (themeMode) {
+                        com.onevideog.editor.data.ThemeMode.DARK ->
+                            AppCompatDelegate.MODE_NIGHT_YES
+                        com.onevideog.editor.data.ThemeMode.LIGHT ->
+                            AppCompatDelegate.MODE_NIGHT_NO
+                        com.onevideog.editor.data.ThemeMode.SYSTEM ->
+                            AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
+                    },
+                )
+            }
             OvgTheme(darkTheme = dark) {
                 OvgNavHost(
                     settings = settings,

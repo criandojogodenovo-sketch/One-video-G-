@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- PlayerView with a TextureView surface so colour adjustments can be
+     applied via a hardware-layer Paint (ColorMatrixColorFilter) — mirroring
+     the export pipeline's RgbMatrix. -->
+<androidx.media3.ui.PlayerView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/preview_player"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    app:surface_type="texture_view"
+    app:resize_mode="fit"
+    app:use_controller="false" />

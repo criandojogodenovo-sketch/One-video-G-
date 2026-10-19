@@ -1,0 +1,117 @@
+package com.onevideog.editor.editor
+
+import com.onevideog.editor.data.OverlayTransform
+import kotlin.math.abs
+
+/**
+ * Shared overlay placement math — the contract between the preview canvas and
+ * the Media3 export pipeline.
+ *
+ * Coordinate systems:
+ *  - Model space ("normalised content space"): the overlay centre is
+ *    (x, y) with 0..1 across/height-down of the video CONTENT area (the
+ *    fitted video rectangle, i.e. the exported frame after Presentation
+ *    letterboxing is applied to the source). `scale` is the overlay width as
+ *    a fraction of the content width. Rotation is clockwise-positive.
+ *  - Export space: Media3 `OverlaySettings` NDC (-1..1, +y up, counter-
+ *    clockwise rotation around the overlay centre).
+ *
+ * The conversions below are the ONLY bridge between the two; the parity unit
+ * tests round-trip them so a regression breaks the build, not the user's
+ * export.
+ */
+object OverlayLayout {
+
+    data class FittedRect(
+        val offsetX: Float,
+        val offsetY: Float,
+        val width: Float,
+        val height: Float,
+    )
+
+    /**
+     * Letterbox/pillarbox fit of a [contentAspect] (w/h) rectangle centred
+     * inside a container. Used by the preview viewport so the on-screen video
+     * area is exactly the area overlays are positioned against — matching the
+     * exported frame.
+     */
+    fun fitRect(containerWidth: Float, containerHeight: Float, contentAspect: Float): FittedRect {
+        if (containerWidth <= 0f || containerHeight <= 0f) {
+            return FittedRect(0f, 0f, containerWidth, containerHeight)
+        }
+        val containerAspect = containerWidth / containerHeight
+        val (w, h) = if (contentAspect >= containerAspect) {
+            containerWidth to containerWidth / contentAspect
+        } else {
+            containerHeight * contentAspect to containerHeight
+        }
+        return FittedRect(
+            offsetX = (containerWidth - w) / 2f,
+            offsetY = (containerHeight - h) / 2f,
+            width = w,
+            height = h,
+        )
+    }
+
+    // ------------------------------------------------------------- NDC bridge
+
+    /** Model (nx, ny) -> export `backgroundFrameAnchor` NDC. */
+    fun toBackgroundNdc(nx: Float, ny: Float): Pair<Float, Float> =
+        (nx * 2f - 1f) to (1f - ny * 2f)
+
+    /** Export `backgroundFrameAnchor` NDC -> model (nx, ny). Used by tests. */
+    fun fromBackgroundNdc(ndcX: Float, ndcY: Float): Pair<Float, Float> =
+        ((ndcX + 1f) / 2f) to ((1f - ndcY) / 2f)
+
+    /**
+     * `OverlaySettings.setScale` values that render a bitmap with aspect
+     * [bitmapAspect] (w/h) at [widthFrac] of the frame width.
+     *
+     * In Media3 the overlay quad spans the whole frame before scaling, so
+     * scale.x = widthFrac and scale.y keeps the bitmap's aspect:
+     * (widthFrac * frameW / bitmapAspect) / frameH.
+     */
+    fun overlayScaleSettings(
+        frameAspect: Float,
+        bitmapAspect: Float,
+        widthFrac: Float,
+    ): Pair<Float, Float> {
+        val safeAspect = if (abs(bitmapAspect) < 1e-6f) 1f else bitmapAspect
+        val sy = widthFrac * frameAspect / safeAspect
+        return widthFrac to sy
+    }
+
+    /** Model rotation (clockwise-positive) -> export rotation (CCW). */
+    fun toExportRotation(rotationDeg: Float): Float = -rotationDeg
+
+    /** Export rotation (CCW) -> model rotation (clockwise-positive). */
+    fun fromExportRotation(rotationDeg: Float): Float = -rotationDeg
+
+    // ----------------------------------------------------------- preview side
+
+    /** Overlay size in content pixels for the preview canvas. */
+    fun previewSize(
+        contentWidth: Float,
+        contentHeight: Float,
+        bitmapAspect: Float,
+        widthFrac: Float,
+    ): Pair<Float, Float> {
+        val w = widthFrac * contentWidth
+        val safeAspect = if (abs(bitmapAspect) < 1e-6f) 1f else bitmapAspect
+        return w to w / safeAspect
+    }
+
+    /**
+     * Width fraction for a text overlay so that a bitmap rendered with the
+     * text at [sizeFrac] of the canonical height appears at the same size
+     * relative to the content.
+     */
+    fun textWidthFrac(sizeFrac: Float, bitmapAspect: Float, contentAspect: Float): Float {
+        val safeAspect = if (abs(bitmapAspect) < 1e-6f) 1f else bitmapAspect
+        val safeContentAspect = if (abs(contentAspect) < 1e-6f) 1f else contentAspect
+        return sizeFrac * safeAspect / safeContentAspect
+    }
+
+    /** Clamps an evaluated transform into the valid model range. */
+    fun clampTransform(t: OverlayTransform): OverlayTransform = t.withClampedValues()
+}

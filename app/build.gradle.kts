@@ -13,8 +13,8 @@ android {
         applicationId = "com.onevideog.editor"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
 
         // Keep only the locales the app ships so resource resolution is deterministic.
         resourceConfigurations += listOf("en", "pt")
@@ -32,6 +32,14 @@ android {
                 keyAlias = System.getenv("ANDROID_KEY_ALIAS")
                 keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
             }
+        }
+    }
+
+    testOptions {
+        unitTests {
+            // Allow android.os.SystemClock etc. to return defaults in JVM
+            // tests (ExportException records timestamps via SystemClock).
+            isReturnDefaultValues = true
         }
     }
 

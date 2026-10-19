@@ -1,54 +1,32 @@
 package com.onevideog.editor.ui.editor
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.onevideog.editor.R
-import com.onevideog.editor.data.OverlayPosition
 import com.onevideog.editor.data.ProjectAspect
-import com.onevideog.editor.editor.ColorAdjustmentEffect
+import com.onevideog.editor.editor.ColorMatrixMath
 import com.onevideog.editor.editor.EditorViewModel
 import com.onevideog.editor.editor.TimelineLogic
 import com.onevideog.editor.ui.home.formatDuration
@@ -63,13 +41,8 @@ enum class Tool(val labelRes: Int) {
     COLOR(R.string.tools_color),
     TEXT(R.string.tools_text),
     IMAGE(R.string.tools_image),
-    MUSIC(R.string.tools_music),
+    AUDIO(R.string.tools_audio),
 }
-
-private val TEXT_COLORS = listOf(
-    0xFFFFFFFF.toInt(), 0xFF111111.toInt(), 0xFFF98A0B.toInt(),
-    0xFFE2574C.toInt(), 0xFF4C9BE2.toInt(), 0xFF59C979.toInt(),
-)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -102,23 +75,24 @@ fun ToolSheet(
                 Tool.SPEED -> if (clip != null) SpeedPanel(viewModel, clip) else InfoLine(stringResource(R.string.split_no_clip))
                 Tool.ASPECT -> AspectPanel(viewModel, project.aspectEnum)
                 Tool.COLOR -> if (clip != null) ColorPanel(viewModel, clip) else InfoLine(stringResource(R.string.split_no_clip))
-                Tool.TEXT -> TextPanel(viewModel)
-                Tool.IMAGE -> ImagePanel(viewModel)
-                Tool.MUSIC -> MusicPanel(viewModel)
+                Tool.TEXT -> OverlayEditorPanel(viewModel, com.onevideog.editor.data.OverlayKind.TEXT)
+                Tool.IMAGE -> OverlayEditorPanel(viewModel, com.onevideog.editor.data.OverlayKind.IMAGE)
+                Tool.AUDIO -> AudioPanel(viewModel)
             }
         }
     }
 }
 
 @Composable
-private fun InfoLine(text: String) {
+internal fun InfoLine(text: String) {
     Text(text, style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 @Composable
-private fun SheetTitle(text: String) {
-    Text(text, style = MaterialTheme.typography.titleMedium)
+internal fun SheetTitle(text: String) {
+    Text(text, style = MaterialTheme.typography.titleMedium,
+        color = MaterialTheme.colorScheme.onSurface)
 }
 
 // ---------------------------------------------------------------- Trim
@@ -138,15 +112,18 @@ private fun TrimPanel(viewModel: EditorViewModel, clip: com.onevideog.editor.dat
         Text(
             stringResource(R.string.trim_start) + ": " + formatDuration(range.start.toLong()),
             style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface,
         )
         Text(
             stringResource(R.string.trim_duration) + ": " +
                 formatDuration((range.endInclusive - range.start).toLong()),
             style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface,
         )
         Text(
             stringResource(R.string.trim_end) + ": " + formatDuration(range.endInclusive.toLong()),
             style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface,
         )
     }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -194,18 +171,19 @@ private fun SplitPanel(viewModel: EditorViewModel, hasClipUnderPlayhead: Boolean
 private fun VolumePanel(viewModel: EditorViewModel, clip: com.onevideog.editor.data.Clip) {
     var volume by remember(clip.id, clip.volume) { mutableFloatStateOf(clip.volume) }
     SheetTitle(stringResource(R.string.volume_title))
-    Text(stringResource(R.string.volume_percent, (volume * 100).toInt()))
+    Text(
+        stringResource(R.string.volume_percent, (volume * 100).toInt()),
+        color = MaterialTheme.colorScheme.onSurface,
+    )
     Slider(
         value = volume,
         onValueChange = { volume = it },
+        onValueChangeFinished = { viewModel.setVolume(clip.id, volume) },
         valueRange = 0f..2f,
     )
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(onClick = { volume = 1f; viewModel.setVolume(clip.id, 1f) }) {
             Text(stringResource(R.string.reset))
-        }
-        Button(onClick = { viewModel.setVolume(clip.id, volume) }) {
-            Text(stringResource(R.string.save))
         }
     }
 }
@@ -221,7 +199,8 @@ private fun SpeedPanel(viewModel: EditorViewModel, clip: com.onevideog.editor.da
             FilterChip(
                 selected = clip.speed == speed,
                 onClick = { viewModel.setSpeed(clip.id, speed) },
-                label = { Text(stringResource(R.string.speed_value, String.format("%.2f", speed).removeSuffix("0").removeSuffix("."))) },            )
+                label = { Text(stringResource(R.string.speed_value, String.format("%.2f", speed).removeSuffix("0").removeSuffix("."))) },
+            )
         }
     }
 }
@@ -244,6 +223,11 @@ private fun AspectPanel(viewModel: EditorViewModel, current: ProjectAspect) {
             }
         }
     }
+    Text(
+        stringResource(R.string.aspect_preview_note),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 // ---------------------------------------------------------------- Color
@@ -254,14 +238,59 @@ private fun ColorPanel(viewModel: EditorViewModel, clip: com.onevideog.editor.da
     var contrast by remember(clip.id) { mutableFloatStateOf(if (clip.color.contrast >= 1f) (clip.color.contrast - 1f) * 100f else (clip.color.contrast - 1f) * 200f) }
     var saturation by remember(clip.id) { mutableFloatStateOf((clip.color.saturation - 1f) * 100f) }
     SheetTitle(stringResource(R.string.color_title))
-    Text(stringResource(R.string.color_brightness))
-    Slider(value = brightness, onValueChange = { brightness = it }, valueRange = -100f..100f)
-    Text(stringResource(R.string.color_contrast))
-    Slider(value = contrast, onValueChange = { contrast = it }, valueRange = -100f..100f)
-    Text(stringResource(R.string.color_saturation))
-    Slider(value = saturation, onValueChange = { saturation = it }, valueRange = -100f..100f)
     Text(
-        stringResource(R.string.color_applied_on_export),
+        stringResource(R.string.color_brightness),
+        color = MaterialTheme.colorScheme.onSurface,
+    )
+    Slider(
+        value = brightness,
+        onValueChange = { brightness = it },
+        onValueChangeFinished = {
+            viewModel.setColor(
+                clip.id,
+                ColorMatrixMath.brightnessFromSlider(brightness.toInt()),
+                ColorMatrixMath.contrastFromSlider(contrast.toInt()),
+                ColorMatrixMath.saturationFromSlider(saturation.toInt()),
+            )
+        },
+        valueRange = -100f..100f,
+    )
+    Text(
+        stringResource(R.string.color_contrast),
+        color = MaterialTheme.colorScheme.onSurface,
+    )
+    Slider(
+        value = contrast,
+        onValueChange = { contrast = it },
+        onValueChangeFinished = {
+            viewModel.setColor(
+                clip.id,
+                ColorMatrixMath.brightnessFromSlider(brightness.toInt()),
+                ColorMatrixMath.contrastFromSlider(contrast.toInt()),
+                ColorMatrixMath.saturationFromSlider(saturation.toInt()),
+            )
+        },
+        valueRange = -100f..100f,
+    )
+    Text(
+        stringResource(R.string.color_saturation),
+        color = MaterialTheme.colorScheme.onSurface,
+    )
+    Slider(
+        value = saturation,
+        onValueChange = { saturation = it },
+        onValueChangeFinished = {
+            viewModel.setColor(
+                clip.id,
+                ColorMatrixMath.brightnessFromSlider(brightness.toInt()),
+                ColorMatrixMath.contrastFromSlider(contrast.toInt()),
+                ColorMatrixMath.saturationFromSlider(saturation.toInt()),
+            )
+        },
+        valueRange = -100f..100f,
+    )
+    Text(
+        stringResource(R.string.color_live_preview),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -271,201 +300,6 @@ private fun ColorPanel(viewModel: EditorViewModel, clip: com.onevideog.editor.da
             viewModel.setColor(clip.id, 0f, 1f, 1f)
         }) {
             Text(stringResource(R.string.reset))
-        }
-        Button(onClick = {
-            viewModel.setColor(
-                clip.id,
-                ColorAdjustmentEffect.brightnessFromSlider(brightness.toInt()),
-                ColorAdjustmentEffect.contrastFromSlider(contrast.toInt()),
-                ColorAdjustmentEffect.saturationFromSlider(saturation.toInt()),
-            )
-        }) {
-            Text(stringResource(R.string.save))
-        }
-    }
-}
-
-// ---------------------------------------------------------------- Text overlay
-
-@Composable
-private fun TextPanel(viewModel: EditorViewModel) {
-    val state by viewModel.ui.collectAsState()
-    val project = state.project ?: return
-    var text by remember { mutableStateOf("") }
-    var color by remember { mutableStateOf(TEXT_COLORS.first()) }
-    var position by remember { mutableStateOf(OverlayPosition.BOTTOM) }
-
-    SheetTitle(stringResource(R.string.text_add))
-    OutlinedTextField(
-        value = text,
-        onValueChange = { text = it },
-        label = { Text(stringResource(R.string.text_hint)) },
-        modifier = Modifier.fillMaxWidth(),
-    )
-    Text(stringResource(R.string.text_color))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        TEXT_COLORS.forEach { c ->
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .background(Color(c), CircleShape)
-                    .clickable { color = c },
-                contentAlignment = Alignment.Center,
-            ) {
-                if (color == c) {
-                    Box(
-                        modifier = Modifier
-                            .size(14.dp)
-                            .background(
-                                if (c == 0xFFFFFFFF.toInt()) Color.Black else Color.White,
-                                CircleShape,
-                            ),
-                    )
-                }
-            }
-        }
-    }
-    PositionChips(position) { position = it }
-    Text(
-        stringResource(R.string.overlay_applied_on_export),
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    Button(
-        onClick = {
-            viewModel.addTextOverlay(text.trim(), color, position)
-            text = ""
-        },
-        enabled = text.isNotBlank(),
-    ) {
-        Text(stringResource(R.string.text_add))
-    }
-    if (project.textOverlays.isNotEmpty()) {
-        Text(stringResource(R.string.tools_text), style = MaterialTheme.typography.labelMedium)
-        project.textOverlays.forEach { overlay ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    overlay.text,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                TextButton(onClick = { viewModel.removeTextOverlay(overlay.id) }) {
-                    Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.overlay_remove))
-                }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------- Image overlay
-
-@Composable
-private fun ImagePanel(viewModel: EditorViewModel) {
-    val state by viewModel.ui.collectAsState()
-    val project = state.project ?: return
-    var position by remember { mutableStateOf(OverlayPosition.BOTTOM) }
-    var scale by remember { mutableStateOf(0.4f) }
-    val picker = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument(),
-    ) { uri ->
-        if (uri != null) viewModel.addImageOverlay(uri, position, scale)
-    }
-
-    SheetTitle(stringResource(R.string.image_add))
-    PositionChips(position) { position = it }
-    Text(stringResource(R.string.image_scale) + String.format(": %d%%", (scale * 100).toInt()))
-    Slider(value = scale, onValueChange = { scale = it }, valueRange = 0.1f..1f)
-    Text(
-        stringResource(R.string.overlay_applied_on_export),
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    Button(onClick = { picker.launch(arrayOf("image/*")) }) {
-        Text(stringResource(R.string.image_pick))
-    }
-    if (project.imageOverlays.isNotEmpty()) {
-        project.imageOverlays.forEach { overlay ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    overlay.uri.substringAfterLast('/'),
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                TextButton(onClick = { viewModel.removeImageOverlay(overlay.id) }) {
-                    Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.overlay_remove))
-                }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------- Music
-
-@Composable
-private fun MusicPanel(viewModel: EditorViewModel) {
-    val state by viewModel.ui.collectAsState()
-    val music = state.project?.music
-    var volume by remember(music?.uri) { mutableFloatStateOf(music?.volume ?: 0.8f) }
-    val picker = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument(),
-    ) { uri ->
-        if (uri != null) {
-            viewModel.setMusic(uri, uri.lastPathSegment ?: "music")
-        }
-    }
-
-    SheetTitle(stringResource(R.string.music_title))
-    if (music == null) {
-        InfoLine(stringResource(R.string.music_none))
-    } else {
-        Text(music.displayName, maxLines = 1)
-        Text(stringResource(R.string.music_volume) + " " + (music.volume * 100).toInt() + "%")
-        Slider(value = volume, onValueChange = { volume = it }, valueRange = 0f..2f)
-        Button(onClick = { viewModel.setMusicVolume(volume) }) {
-            Text(stringResource(R.string.save))
-        }
-    }
-    Text(
-        stringResource(R.string.music_applied_on_export),
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(onClick = { picker.launch(arrayOf("audio/*")) }) {
-            Text(stringResource(R.string.editor_import_music))
-        }
-        if (music != null) {
-            OutlinedButton(onClick = { viewModel.removeMusic() }) {
-                Text(stringResource(R.string.music_remove))
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------- Shared
-
-@Composable
-private fun PositionChips(current: OverlayPosition, onSelect: (OverlayPosition) -> Unit) {
-    Text(stringResource(R.string.text_position))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OverlayPosition.entries.forEach { position ->
-            FilterChip(
-                selected = current == position,
-                onClick = { onSelect(position) },
-                label = {
-                    Text(
-                        stringResource(
-                            when (position) {
-                                OverlayPosition.TOP -> R.string.position_top
-                                OverlayPosition.CENTER -> R.string.position_center
-                                OverlayPosition.BOTTOM -> R.string.position_bottom
-                            },
-                        ),
-                    )
-                },
-            )
         }
     }
 }

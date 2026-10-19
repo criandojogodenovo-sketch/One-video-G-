@@ -1,6 +1,7 @@
 package com.onevideog.editor.ui.settings
 
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -30,7 +31,14 @@ import com.onevideog.editor.ui.common.OvgTopBar
 
 /**
  * Settings: language (pt/en/system, applied via AppCompat per-app locales and
- * persisted), theme, default export resolution, about.
+ * persisted), theme (also applied to the AppCompat delegate so XML-level
+ * surfaces match), default export resolution (pre-selected on the export
+ * screen), about.
+ *
+ * Every setting here has a real effect:
+ *  - Language   -> AppCompatDelegate.setApplicationLocales (persisted)
+ *  - Theme      -> Compose color scheme + AppCompat day/night (window/dialogs)
+ *  - Resolution -> initial selection on the Export screen
  */
 @Composable
 fun SettingsScreen(
@@ -42,7 +50,11 @@ fun SettingsScreen(
     val language by settings.language.collectAsState()
     val defaultRes by settings.defaultResolution.collectAsState()
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
+    ) {
         OvgTopBar(title = stringResource(R.string.settings), onBack = onBack)
         Column(
             modifier = Modifier
@@ -51,7 +63,11 @@ fun SettingsScreen(
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(stringResource(R.string.language), style = MaterialTheme.typography.titleMedium)
+            Text(
+                stringResource(R.string.language),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
             LanguageRow(
                 label = stringResource(R.string.language_system),
                 selected = language == LanguageMode.SYSTEM,
@@ -77,6 +93,7 @@ fun SettingsScreen(
             Text(
                 stringResource(R.string.theme),
                 style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onBackground,
                 modifier = Modifier.padding(top = 12.dp),
             )
             RadioRow(
@@ -95,6 +112,7 @@ fun SettingsScreen(
             Text(
                 stringResource(R.string.export_default_resolution),
                 style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onBackground,
                 modifier = Modifier.padding(top = 12.dp),
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -106,10 +124,16 @@ fun SettingsScreen(
                     )
                 }
             }
+            Text(
+                stringResource(R.string.export_default_resolution_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
             Text(
                 stringResource(R.string.about),
                 style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onBackground,
                 modifier = Modifier.padding(top = 16.dp),
             )
             Text(
@@ -140,6 +164,10 @@ private fun RadioRow(label: String, selected: Boolean, onSelect: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         RadioButton(selected = selected, onClick = onSelect)
-        Text(label, style = MaterialTheme.typography.bodyLarge)
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onBackground,
+        )
     }
 }
