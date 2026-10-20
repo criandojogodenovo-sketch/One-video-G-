@@ -42,6 +42,9 @@ object DiagnosticsLogger {
     private const val QUEUE_CAPACITY = 256
     private const val MARKER_FILE = "export-interrupted.txt"
 
+    /** Log-tail bound for registry replay after a process restart. */
+    private const val REPLAY_LINES = 2_000
+
     @Volatile private var appContext: Context? = null
     private var store: DiagLogStore? = null
     private var registry = OpRegistry()
@@ -84,6 +87,21 @@ object DiagnosticsLogger {
             writerHandler = Handler(writerThread!!.looper)
             consumeInterruptedMarker()
             refreshStats()
+            // v0.2.5 restart recovery: the previous implementation kept the
+            // event count and the op registry ONLY in RAM while the log
+            // FILES persist — a report copied after a restart showed real
+            // events in its tail but `events_recorded=0` and "Recent
+            // operations: none recorded". Recount from disk + replay the
+            // persisted tail into the registry (writer thread; UI reads
+            // fresh values via stats/buildReport whenever they land).
+            writerHandler?.post {
+                runCatching {
+                    store?.recountFromDisk()
+                    val lines = store?.readRecentLines(REPLAY_LINES) ?: emptyList()
+                    DiagRegistryReplay.replay(lines, registry)
+                    refreshStats()
+                }
+            }
         }
     }
 
@@ -193,6 +211,7 @@ object DiagnosticsLogger {
         }
         handler.post {
             drain()
+            refreshStats()
             synchronized(lock) { drainScheduled = false }
         }
     }
@@ -205,7 +224,6 @@ object DiagnosticsLogger {
                 .onFailure { Log.w(safeTag(), "persist failed: ${it.javaClass.simpleName}") }
             mirrorToLogcat(event)
         }
-        refreshStats()
     }
 
     private fun mirrorToLogcat(event: DiagnosticEvent) {

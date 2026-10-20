@@ -175,6 +175,37 @@ class DiagLogStore(
         }
     }
 
+    /**
+     * Restores the in-RAM counters from the PERSISTED files (v0.2.5).
+     *
+     * Root cause fixed here: `count` used to be a session-local RAM counter
+     * while the log FILES persist across process restarts — so a report
+     * copied after a restart showed real events in its tail but
+     * `events_recorded=0`. Now init recounts the actual lines on disk
+     * (bounded by the store's own size caps) so the header always matches
+     * the embedded log tail. Pure java.io — unit-tested.
+     */
+    fun recountFromDisk() {
+        synchronized(lock) {
+            val files = buildList {
+                for (i in (keepPrevious - 1) downTo 1) {
+                    val f = rotatedFile(i)
+                    if (f.exists()) add(f)
+                }
+                if (previousBase.exists()) add(previousBase)
+                if (current.exists()) add(current)
+            }
+            var lines = 0L
+            for (file in files) {
+                runCatching {
+                    file.useLines { lines += it.count() }
+                }
+            }
+            count = lines
+            rotations = if (files.size > 1 || (previousBase.exists())) 1 else 0
+        }
+    }
+
     companion object {
         const val CURRENT_FILE = "diag-current.log"
         const val PREVIOUS_FILE = "diag-prev.log"

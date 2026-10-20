@@ -123,6 +123,23 @@ object OverlayBitmapRenderer {
         return decoded
     }
 
+    /**
+     * Cache-only lookup for image overlays (v0.2.5): returns the cached
+     * bitmap or null WITHOUT decoding. Used by the editor canvas
+     * ([OverlayCanvas]) so the render/gesture paths can never trigger a
+     * decode on the main/render thread, and a failed decode cannot be
+     * retried once per frame (the v0.2.4 report's main-thread decode +
+     * "image never appears" symptom). Populating the cache is the
+     * pre-warm path's job (Dispatchers.Default) — or the effects-pipeline
+     * build, which shares this cache.
+     */
+    fun peekImageBitmap(overlay: OverlayItem): Bitmap? =
+        if (overlay.kind == com.onevideog.editor.data.OverlayKind.IMAGE) {
+            cache.get(contentKey(overlay))
+        } else {
+            null
+        }
+
     /** Aspect (w/h) of the rendered content bitmap. */
     fun bitmapAspect(bitmap: Bitmap): Float =
         if (bitmap.height <= 0) 1f else bitmap.width.toFloat() / bitmap.height

@@ -27,15 +27,34 @@ object ProjectMath {
         audioClips.maxOfOrNull { it.endMs } ?: 0L
 
     /**
-     * Authoritative project duration: the video sequence length, extended to
-     * cover any audio clip or overlay that ends later. Export and preview both
-     * use this value.
+     * Authoritative project duration — THE documented project rule (v0.2.5):
+     *
+     *  - When the project has video clips, the duration is the VIDEO
+     *    timeline, extended to cover any overlay window that ends later.
+     *    AUDIO NEVER EXTENDS THE PROJECT DURATION: the Media3 1.4.1
+     *    composition is video-length (audio sequences are clamped to the
+     *    video duration — [AudioTimeline.exportPlan]), so an audio clip
+     *    longer than the video must not stretch the timeline, the playhead
+     *    range or the export plan. This is the device-reported
+     *    "durationMs changed after importing audio" bug (v0.2.4 report):
+     *    with a 3-minute song on a 30-second video the editor showed a
+     *    3-minute timeline while the exported file stayed 30 s — and
+     *    `verifyPlayable` then rejected the VALID file against the wrong
+     *    planned duration.
+     *  - When the project has NO video clips (audio/overlay-only project),
+     *    the duration is the longest element, so such projects stay usable.
+     *
+     * Preview and export both read the duration from here — what the user
+     * sees is exactly what is exported.
      */
-    fun projectDurationMs(project: OvgProject): Long = maxOf(
-        videoDurationMs(project.clips),
-        overlayEndMs(project.overlays),
-        audioEndMs(project.audioClips),
-    )
+    fun projectDurationMs(project: OvgProject): Long {
+        val video = videoDurationMs(project.clips)
+        return if (project.clips.isEmpty()) {
+            maxOf(overlayEndMs(project.overlays), audioEndMs(project.audioClips))
+        } else {
+            maxOf(video, overlayEndMs(project.overlays))
+        }
+    }
 
     /** Start position of clip [index] on the video timeline. */
     fun clipStartMs(clips: List<Clip>, index: Int): Long =

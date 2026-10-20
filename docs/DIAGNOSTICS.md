@@ -87,3 +87,18 @@ infrastructure only — no editor behaviour was redesigned in this release.
    (`report-2`).
 6. Send both reports. Each contains `op=…` ids the developer can trace
    end-to-end.
+
+## Report consistency across restarts (v0.2.5)
+
+Log FILES persist across process restarts (rotation caps ≈ 2 MB), while the
+event counter and the op registry are in-memory. v0.2.5 removes the resulting
+inconsistency — a report copied after a restart used to show real events in
+its tail but `events_recorded=0` and "Recent operations: none recorded":
+
+- At init the store **recounts its persisted lines** (`recountFromDisk`) so
+  the header always matches the embedded log tail, and
+- the **persisted tail is replayed into the op registry**
+  (`DiagRegistryReplay`), so correlation-id summaries survive a restart
+  (last 2000 lines; malformed lines are skipped).
+
+Privacy, opt-in default (OFF), sanitization and rotation caps are unchanged.

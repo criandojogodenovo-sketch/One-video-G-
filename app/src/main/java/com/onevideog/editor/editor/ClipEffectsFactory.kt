@@ -203,4 +203,41 @@ object ClipEffectPlan {
             }
             .filter { it.windowEndLocalMs > it.windowStartLocalMs }
     }
+
+    /**
+     * Signature of everything the effect list for [clip] VISUALLY depends on
+     * (v0.2.5): clip identity/trim/speed/colour, project aspect, and ONLY the
+     * overlays whose windows intersect this clip (full data-class state).
+     *
+     * The preview uses this as its effects-rebuild revision key. Consequences
+     * (the v0.2.4 device report's redundant-rebuild complaint):
+     *  - editing an overlay that does NOT touch this clip (other time window
+     *    or other clip) keeps the signature unchanged -> no rebuild;
+     *  - a playhead move alone NEVER changes the signature (it is not an
+     *    input) -> a playhead update can never rebuild the effects chain;
+     *  - adding/removing/reordering/editing an intersecting overlay DOES
+     *    change it (required — Media3 applies a changed list at the next
+     *    input stream).
+     * Pure — unit-tested.
+     */
+    fun effectiveSignature(
+        project: OvgProject,
+        clip: com.onevideog.editor.data.Clip?,
+        clipStartMs: Long,
+    ): Int {
+        clip ?: return 0
+        var h = clip.id.hashCode()
+        h = 31 * h + clip.trimStartMs.hashCode()
+        h = 31 * h + clip.trimEndMs.hashCode()
+        h = 31 * h + clip.speed.hashCode()
+        h = 31 * h + clip.color.hashCode()
+        h = 31 * h + project.aspect.hashCode()
+        // Stable order: overlayWindowsForClip sorts by zOrder (stable tie-break
+        // on list order), so equal-zOrder reordering that changes render order
+        // changes the signature too.
+        for (window in overlayWindowsForClip(project, clip, clipStartMs)) {
+            h = 31 * h + window.overlay.hashCode()
+        }
+        return h
+    }
 }

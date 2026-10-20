@@ -7,6 +7,8 @@ import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
@@ -162,16 +164,33 @@ internal fun OverlayLayer(
         OverlayKind.TEXT -> OverlayBitmapRenderer
             .textBitmap(overlay).asImageBitmap()
         OverlayKind.IMAGE -> OverlayBitmapRenderer
-            .imageBitmap(context, overlay)?.asImageBitmap()
+            // v0.2.5: cache-only — the draw/gesture paths must never decode
+            // on the render thread and a failed decode must not be retried
+            // once per frame. Populated by the pre-warm below (Default
+            // dispatcher) and by the shared effects pipeline (same cache).
+            .peekImageBitmap(overlay)?.asImageBitmap()
     }
 
-    // Pre-warm image bitmaps off the UI thread so first paint is smooth.
+    // Image overlays that failed to decode this session (bounded set): the
+    // pre-warm stops retrying them — RENDER_FAIL evidence is already logged
+    // by the decode stage — so a broken image cannot stall the render loop.
+    // Re-adding the image (new overlay id) retries naturally.
+    val failedImageIds = remember { mutableStateOf(emptySet<String>()) }
+
+    // Pre-warm image bitmaps off the UI thread so first paint is smooth;
+    // v0.2.5: failures back off instead of retrying every frame.
     LaunchedEffect(overlays) {
-        overlays.filter { it.kind == OverlayKind.IMAGE }.forEach { overlay ->
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-                OverlayBitmapRenderer.imageBitmap(context, overlay)
+        overlays.filter { it.kind == OverlayKind.IMAGE && it.id !in failedImageIds.value }
+            .forEach { overlay ->
+                val bitmap = kotlinx.coroutines.withContext(
+                    kotlinx.coroutines.Dispatchers.Default,
+                ) {
+                    OverlayBitmapRenderer.imageBitmap(context, overlay)
+                }
+                if (bitmap == null) {
+                    failedImageIds.value = failedImageIds.value + overlay.id
+                }
             }
-        }
     }
 
     Canvas(

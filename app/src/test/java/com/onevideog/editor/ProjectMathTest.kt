@@ -44,12 +44,29 @@ class ProjectMathTest {
     }
 
     @Test
-    fun `duration extends to the latest audio end`() {
+    fun `audio longer than video does NOT extend the duration (v0_2_5 rule)`() {
+        // Device-reported bug (v0.2.4 report): importing a long audio used to
+        // stretch durationMs from 5 s to 13 s while the export stayed 5 s.
         val p = project(
             clips = listOf(clip(5_000)),
             audio = listOf(audio(3_000, 0, 10_000)),
         )
-        assertEquals(13_000L, ProjectMath.projectDurationMs(p))
+        assertEquals(5_000L, ProjectMath.projectDurationMs(p))
+    }
+
+    @Test
+    fun `audio shorter than video keeps the video duration`() {
+        val p = project(
+            clips = listOf(clip(5_000)),
+            audio = listOf(audio(1_000, 0, 3_000)),
+        )
+        assertEquals(5_000L, ProjectMath.projectDurationMs(p))
+    }
+
+    @Test
+    fun `audio-only project keeps the audio-driven duration`() {
+        val p = project(audio = listOf(audio(0, 0, 10_000)))
+        assertEquals(10_000L, ProjectMath.projectDurationMs(p))
     }
 
     @Test

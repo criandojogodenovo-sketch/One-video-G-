@@ -55,8 +55,20 @@ object CompositionFactory {
         resolution: ExportResolutionEnum,
         workDir: File,
     ): Plan {
-        val durationMs = ProjectMath.projectDurationMs(project)
         val videoDurationMs = ProjectMath.videoDurationMs(project.clips)
+        // Planned duration = what the OUTPUT FILE will actually contain
+        // (v0.2.5 rule): the video sequence length. Audio sequences are
+        // clamped to the video length ([buildAudioSequence]), and overlay
+        // windows only render inside clips — so using the editor timeline
+        // (which overlays may extend) here made `verifyPlayable` reject a
+        // VALID export whenever an overlay/audio ended later than the video
+        // (device-reported "durationMs changed after importing audio").
+        // Audio-only projects (no clips) keep the element-driven duration.
+        val plannedDurationMs = if (project.clips.isEmpty()) {
+            ProjectMath.projectDurationMs(project)
+        } else {
+            videoDurationMs
+        }
 
         // ---- video sequence ----
         val videoItems = ImmutableList.builder<EditedMediaItem>()
@@ -96,7 +108,7 @@ object CompositionFactory {
             .setEffects(Effects(emptyList(), compositionEffects))
             .build()
 
-        return Plan(composition, durationMs, tempFiles)
+        return Plan(composition, plannedDurationMs, tempFiles)
     }
 
     // ------------------------------------------------------------------ video
