@@ -10,10 +10,19 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
 /**
- * v0.2.5 regression: the preview effects-rebuild revision key must reflect
- * ONLY what the active clip's effect list visually depends on. The previous
- * key (project.overlays.hashCode()) rebuilt the whole effect chain on ANY
- * overlay edit anywhere — one avoidable decoder init per unrelated edit.
+ * Preview effects-rebuild revision key contract.
+ *
+ * v0.2.5: the key must reflect ONLY what the active clip's effect list
+ * visually depends on (the previous key, project.overlays.hashCode(), rebuilt
+ * the whole effect chain on ANY overlay edit anywhere).
+ *
+ * v0.3.1 revision: the preview effect list no longer contains the
+ * OverlayEffect — overlay pixels are drawn by the Compose layer, which
+ * re-renders from project state directly. Overlays are therefore NOT
+ * signature inputs at all: editing, adding, removing or reordering overlays
+ * must never re-prepare the preview decoder (previously one decoder init +
+ * frame flash per overlay edit). Clip identity/trim/speed/colour/aspect
+ * remain inputs.
  */
 class ClipEffectSignatureTest {
 
@@ -50,72 +59,59 @@ class ClipEffectSignatureTest {
     }
 
     @Test
-    fun `editing an overlay OUTSIDE this clip's window does not change the signature`() {
-        // Empty overlays vs an overlay beyond the clip end: the WINDOW list is
-        // empty in both cases, so the effective signature is identical even
-        // though project.overlays.hashCode() differs (the old key rebuilt).
-        val base = project(overlays = emptyList())
-        val outside = base.copy(
-            overlays = listOf(overlay("o1", 20_000, 25_000)),
-        )
-        val sBase = ClipEffectPlan.effectiveSignature(base, base.clips[0], 0)
-        val sOutside = ClipEffectPlan.effectiveSignature(outside, outside.clips[0], 0)
-        assertNotEquals(base.overlays.hashCode(), outside.overlays.hashCode())
-        assertEquals(sBase, sOutside)
-        // Adding an overlay INSIDE the window DOES change it.
-        val inside = base.copy(overlays = listOf(overlay("o1", 0, 5_000)))
-        assertNotEquals(
-            sBase,
-            ClipEffectPlan.effectiveSignature(inside, inside.clips[0], 0),
-        )
-        // Moving that overlay to another position inside the window also does.
-        val moved = base.copy(overlays = listOf(overlay("o1", 7_000, 9_000)))
-        assertNotEquals(
-            ClipEffectPlan.effectiveSignature(inside, inside.clips[0], 0),
-            ClipEffectPlan.effectiveSignature(moved, moved.clips[0], 0),
-        )
-    }
-
-    @Test
-    fun `editing an intersecting overlay changes the signature`() {
+    fun `editing an overlay INSIDE the clip window does not change the signature`() {
+        // v0.3.1: overlay pixels are drawn by the Compose layer from project
+        // state — an overlay edit must never re-prepare the decoder.
         val base = project(overlays = listOf(overlay("o1", 0, 5_000)))
-        val moved = base.copy(overlays = listOf(overlay("o1", 0, 5_000, transform = OverlayTransform(x = 0.7f))))
-        assertNotEquals(
+        val moved = base.copy(
+            overlays = listOf(overlay("o1", 0, 5_000, transform = OverlayTransform(x = 0.7f))),
+        )
+        assertEquals(
             ClipEffectPlan.effectiveSignature(base, base.clips[0], 0),
-            ClipEffectPlan.effectiveSignature(moved, moved.clips[0], 0),
+            ClipEffectPlan.effectiveSignature(moved, base.clips[0], 0),
         )
     }
 
     @Test
-    fun `overlay on a DIFFERENT clip does not change this clip's signature`() {
+    fun `adding removing or reordering overlays does not change the signature`() {
+        val base = project(overlays = emptyList())
+        val added = base.copy(
+            overlays = listOf(overlay("o1", 0, 5_000), overlay("o2", 2_000, 8_000, z = 1)),
+        )
+        assertEquals(
+            ClipEffectPlan.effectiveSignature(base, base.clips[0], 0),
+            ClipEffectPlan.effectiveSignature(added, added.clips[0], 0),
+        )
+        // Removing all overlays: same story — the decoder has nothing to
+        // re-apply for overlay-only changes.
+        assertEquals(
+            ClipEffectPlan.effectiveSignature(added, added.clips[0], 0),
+            ClipEffectPlan.effectiveSignature(base, added.clips[0], 0),
+        )
+    }
+
+    @Test
+    fun `overlay edits on ANY clip never change another clip's signature`() {
         val first = clip("c1", 10_000)
         val second = clip("c2", 10_000)
         val base = project(clips = listOf(first, second))
-        val withOverlayOnSecond = base.copy(
+        val withOverlays = base.copy(
             overlays = listOf(overlay("o2", 10_000, 15_000)),
         )
         assertEquals(
             ClipEffectPlan.effectiveSignature(base, first, 0),
-            ClipEffectPlan.effectiveSignature(withOverlayOnSecond, first, 0),
-        )
-        // ...but the second clip's own signature reacts.
-        assertNotEquals(
-            ClipEffectPlan.effectiveSignature(base, second, 10_000),
-            ClipEffectPlan.effectiveSignature(withOverlayOnSecond, second, 10_000),
+            ClipEffectPlan.effectiveSignature(withOverlays, first, 0),
         )
     }
 
     @Test
-    fun `zOrder change reorders rendering and changes the signature`() {
-        val base = project(
-            overlays = listOf(overlay("a", 0, 5_000, z = 0), overlay("b", 0, 5_000, z = 1)),
-        )
-        val swapped = base.copy(
-            overlays = listOf(overlay("a", 0, 5_000, z = 2), overlay("b", 0, 5_000, z = 1)),
-        )
-        assertNotEquals(
+    fun `out-of-range overlay edits do not change the signature`() {
+        // v0.2.5 rule, still true under the v0.3.1 contract.
+        val base = project(overlays = listOf(overlay("o1", 20_000, 25_000)))
+        val edited = base.copy(overlays = listOf(overlay("o1", 21_000, 26_000)))
+        assertEquals(
             ClipEffectPlan.effectiveSignature(base, base.clips[0], 0),
-            ClipEffectPlan.effectiveSignature(swapped, swapped.clips[0], 0),
+            ClipEffectPlan.effectiveSignature(edited, edited.clips[0], 0),
         )
     }
 
