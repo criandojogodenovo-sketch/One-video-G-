@@ -178,6 +178,14 @@ object ClipEffectPlan {
      * [clipStartMs, clipStartMs + effectiveDuration), converted to item-local
      * windows (0-based at the clip start; equal in project-local units after
      * SpeedChangeEffect — verified contract, see class docs).
+     *
+     * v0.3.0 rules enforced here (shared by preview and export — one
+     * implementation, no drift):
+     *  - hidden layers ([OverlayItem.visible] == false) render nothing;
+     *  - windows are clipped to the clip span, so elements placed past the
+     *    video end (or before a later clip's start) simply produce no window
+     *    for this clip instead of breaking it — an out-of-range element can
+     *    never block the tracks it does not intersect.
      */
     fun overlayWindowsForClip(
         project: OvgProject,
@@ -189,7 +197,10 @@ object ClipEffectPlan {
             ?: project.aspectEnum.ratio()
             ?: 16f / 9f
         return project.overlays
-            .filter { it.endMs > clipStartMs && it.startMs < clipEndMs && it.endMs > it.startMs }
+            .filter {
+                it.visible &&
+                    it.endMs > clipStartMs && it.startMs < clipEndMs && it.endMs > it.startMs
+            }
             .sortedBy { it.zOrder }
             .map { overlay ->
                 OverlayWindow(

@@ -14,12 +14,16 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.VerticalAlignTop
 import androidx.compose.material.icons.filled.VerticalAlignBottom
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Animation
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
@@ -225,7 +229,8 @@ internal fun LayersPanel(viewModel: EditorViewModel, onOpenTool: (Tool) -> Unit)
             Icon(
                 if (overlay.isText) Icons.Filled.TextFields else Icons.Filled.Image,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = if (overlay.visible) MaterialTheme.colorScheme.onSurfaceVariant
+                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
                 modifier = Modifier.size(16.dp),
             )
             Text(
@@ -268,6 +273,7 @@ internal fun LayersPanel(viewModel: EditorViewModel, onOpenTool: (Tool) -> Unit)
             }
             IconButton(
                 onClick = { viewModel.bringOverlayToFront(overlay.id) },
+                enabled = !overlay.locked,
                 modifier = Modifier.size(32.dp),
             ) {
                 Icon(
@@ -278,6 +284,7 @@ internal fun LayersPanel(viewModel: EditorViewModel, onOpenTool: (Tool) -> Unit)
             }
             IconButton(
                 onClick = { viewModel.sendOverlayToBack(overlay.id) },
+                enabled = !overlay.locked,
                 modifier = Modifier.size(32.dp),
             ) {
                 Icon(
@@ -286,7 +293,38 @@ internal fun LayersPanel(viewModel: EditorViewModel, onOpenTool: (Tool) -> Unit)
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            IconButton(onClick = { viewModel.removeOverlay(overlay.id) }, modifier = Modifier.size(32.dp)) {
+            // v0.3.0 layer state: visibility + lock toggles (single-tap).
+            IconButton(
+                onClick = { viewModel.setOverlayVisible(overlay.id, !overlay.visible) },
+                modifier = Modifier.size(32.dp),
+            ) {
+                Icon(
+                    if (overlay.visible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                    contentDescription = stringResource(
+                        if (overlay.visible) R.string.layer_hide else R.string.layer_show,
+                    ),
+                    tint = if (overlay.visible) MaterialTheme.colorScheme.secondary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(
+                onClick = { viewModel.setOverlayLocked(overlay.id, !overlay.locked) },
+                modifier = Modifier.size(32.dp),
+            ) {
+                Icon(
+                    if (overlay.locked) Icons.Filled.Lock else Icons.Filled.LockOpen,
+                    contentDescription = stringResource(
+                        if (overlay.locked) R.string.layer_unlock else R.string.layer_lock,
+                    ),
+                    tint = if (overlay.locked) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(
+                onClick = { viewModel.removeOverlay(overlay.id) },
+                enabled = !overlay.locked,
+                modifier = Modifier.size(32.dp),
+            ) {
                 Icon(
                     Icons.Filled.Delete,
                     contentDescription = stringResource(R.string.layer_delete),

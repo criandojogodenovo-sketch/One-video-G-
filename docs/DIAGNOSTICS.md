@@ -42,6 +42,22 @@ infrastructure only — no editor behaviour was redesigned in this release.
   export runs; if the process dies, the next launch reports the export as
   **INTERRUPTED** — distinguishable from a confirmed failure.
 
+## Reading `video=none` / `videoW=0` events correctly (v0.3.0)
+
+`PREVIEW_RENDER` with `video=none` fires when the decoder reports no video
+output geometry for the current item. Since v0.3.0 the event carries the
+playback context so it can never be misread as "the video was lost":
+
+- `playerState`: `ENDED` + `playheadInsideVideo=false` → the player is
+  parked at the end of the item (normal after playback finishes, replay is
+  handled). NOT a video loss.
+- `ENDED/IDLE` + `playheadInsideVideo=true` → playback stopped while the
+  playhead is still inside the video range: this is the actionable case
+  (decoder dropped output mid-range) and needs the full report.
+- `VIEWPORT_GEOMETRY` with `videoW=0 videoH=0` accompanies the same states
+  (the last decoded size is cleared when the player stops/ends). Read it
+  together with the matching `PREVIEW_RENDER` context, not in isolation.
+
 ## Storage, privacy and performance
 
 - Files live in app-private storage: `files/diagnostics/diag-current.log`

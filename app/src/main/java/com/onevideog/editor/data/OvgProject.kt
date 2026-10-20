@@ -143,6 +143,11 @@ data class OverlayItem(
     val endMs: Long = 0,
     val transform: OverlayTransform = OverlayTransform(),
     val zOrder: Int = 0,
+    // v0.3.0 layer state: hidden layers render nothing (preview AND export);
+    // locked layers stay visible but reject every editing gesture. Defaults
+    // keep v1/v2 documents loadable unchanged.
+    val visible: Boolean = true,
+    val locked: Boolean = false,
     val keyframes: List<Keyframe> = emptyList(),
     val interpolation: Interpolation = Interpolation.LINEAR,
     // ---- text ----

@@ -11,6 +11,15 @@ object OverlayEditing {
     /** Minimum overlay duration in project ms. */
     const val MIN_OVERLAY_MS = 150L
 
+    /**
+     * v0.3.0 layer-lock rule: a locked layer is still SELECTABLE (so the
+     * user can inspect it and unlock it) but every editing write —
+     * transform gesture, move/trim, keyframe edits, z-order changes and
+     * delete — is rejected. Pure, unit-tested; enforced by the ViewModel
+     * (single write path) and by the canvas hit-test (no gesture starts).
+     */
+    fun isEditable(locked: Boolean): Boolean = !locked
+
     /** Move rule: start >= 0 (duration preserved by the caller). */
     fun clampMove(newStartMs: Long): Long = newStartMs.coerceAtLeast(0)
 

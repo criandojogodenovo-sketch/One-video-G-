@@ -72,6 +72,7 @@ internal fun AudioTrackRow(
     selected: Boolean,
     viewModel: EditorViewModel,
     onOpenTool: (Tool) -> Unit,
+    videoEndMs: Long,
 ) {
     var liveStart by remember(audioClip.id, audioClip.startMs) { mutableStateOf<Long?>(null) }
     var liveTrimStart by remember(audioClip.id, audioClip.trimStartMs) { mutableStateOf<Long?>(null) }
@@ -81,6 +82,11 @@ internal fun AudioTrackRow(
     val trimStartMs = liveTrimStart ?: audioClip.trimStartMs
     val trimEndMs = liveTrimEnd ?: audioClip.trimEndMs
     val durationMs = (trimEndMs - trimStartMs).coerceAtLeast(1)
+    // v0.3.0: with video present, audio never sounds past the video end
+    // (AudioTimeline clamp) — a bar fully past the end is drawn dimmed so
+    // the user sees it will not be heard/exported there.
+    val outsideVideo = videoEndMs > 0L && audioClip.startMs >= videoEndMs
+    val barAlpha = if (outsideVideo) 0.35f else 1f
 
     Box(
         modifier = Modifier
@@ -94,8 +100,9 @@ internal fun AudioTrackRow(
                 .width(with(LocalDensity.current) { scale.spanToPx(durationMs).toDp() })
                 .clip(RoundedCornerShape(6.dp))
                 .background(
-                    if (selected) MaterialTheme.colorScheme.tertiary.copy(alpha = 0.4f)
-                    else MaterialTheme.colorScheme.tertiary.copy(alpha = 0.18f),
+                    (if (selected) MaterialTheme.colorScheme.tertiary.copy(alpha = 0.4f)
+                    else MaterialTheme.colorScheme.tertiary.copy(alpha = 0.18f)).copy(alpha = 
+                        (if (selected) 0.4f else 0.18f) * barAlpha),
                 )
                 // Body: tap selects; drag moves the clip in time.
                 .pointerInput(audioClip.id, audioClip.startMs) {
@@ -145,7 +152,7 @@ internal fun AudioTrackRow(
                 Icon(
                     Icons.Filled.MusicNote,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurface,
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = barAlpha),
                     modifier = Modifier
                         .padding(start = 4.dp)
                         .size(14.dp),
@@ -153,18 +160,20 @@ internal fun AudioTrackRow(
                 Text(
                     audioClip.displayName + " · " + formatDuration(durationMs) +
                         (if (audioClip.loop) " · ∞" else "") +
-                        (if (audioClip.volume != 1f) " · " + (audioClip.volume * 100).toInt() + "%" else ""),
+                        (if (audioClip.volume != 1f) " · " + (audioClip.volume * 100).toInt() + "%" else "") +
+                        (if (outsideVideo) " · " + stringResource(R.string.timeline_outside_video) else ""),
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = barAlpha),
                     maxLines = 1,
                     modifier = Modifier.padding(start = 4.dp, end = 20.dp),
                 )
             }
             // Left/right trim edge handles (on top of the body).
+            // v0.3.0: 24 dp-wide targets (was 18 dp) — small-screen error rate.
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterStart)
-                    .width(18.dp)
+                    .width(24.dp)
                     .fillMaxHeight()
                     .pointerInput(audioClip.id, audioClip.trimStartMs, audioClip.startMs) {
                         detectDragGestures(
@@ -208,7 +217,7 @@ internal fun AudioTrackRow(
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
-                    .width(18.dp)
+                    .width(24.dp)
                     .fillMaxHeight()
                     .pointerInput(audioClip.id, audioClip.trimEndMs) {
                         detectDragGestures(
@@ -260,6 +269,7 @@ internal fun OverlayTrackLanes(
     val state by viewModel.ui.collectAsState()
     val project = state.project ?: return
     if (project.overlays.isEmpty()) return
+    val videoEndMs = com.onevideog.editor.editor.ProjectMath.videoDurationMs(project.clips)
     val assignments = remember(project.overlays) { LanePacker.pack(project.overlays) }
     val laneCount = (assignments.maxOfOrNull { it.lane } ?: -1) + 1
     val visibleLanes = laneCount.coerceAtMost(MAX_LANES_DRAWN)
@@ -279,6 +289,7 @@ internal fun OverlayTrackLanes(
                         selected = assignment.overlay.id == state.selectedOverlayId,
                         viewModel = viewModel,
                         onOpenTool = onOpenTool,
+                        videoEndMs = videoEndMs,
                     )
                 }
         }
@@ -300,6 +311,7 @@ private fun OverlayBar(
     selected: Boolean,
     viewModel: EditorViewModel,
     onOpenTool: (Tool) -> Unit,
+    videoEndMs: Long,
 ) {
     var liveStart by remember(overlay.id, overlay.startMs) { mutableStateOf<Long?>(null) }
     var liveEnd by remember(overlay.id, overlay.endMs) { mutableStateOf<Long?>(null) }
@@ -307,6 +319,11 @@ private fun OverlayBar(
     val endMs = liveEnd ?: overlay.endMs
     val duration = (endMs - startMs).coerceAtLeast(1)
     val barW = with(LocalDensity.current) { scale.spanToPx(duration).toDp() }
+    // v0.3.0: a bar entirely past the video end renders nothing (preview
+    // and export share the rule) — draw it dimmed with a hint so the state
+    // is visible and the bar can still be dragged back into range.
+    val outsideVideo = videoEndMs > 0L && overlay.startMs >= videoEndMs
+    val dimmed = outsideVideo || !overlay.visible
 
     Box(
         modifier = Modifier
@@ -315,8 +332,9 @@ private fun OverlayBar(
             .width(barW)
             .clip(RoundedCornerShape(6.dp))
             .background(
-                if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
-                else MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
+                (if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
+                else MaterialTheme.colorScheme.primary.copy(alpha = 0.22f))
+                    .copy(alpha = (if (selected) 0.45f else 0.22f) * if (dimmed) 0.35f else 1f),
             )
             // Body: tap selects (and opens the editor); drag moves in time.
             .pointerInput(overlay.id, overlay.startMs) {
@@ -362,9 +380,11 @@ private fun OverlayBar(
                 when (overlay.kind) {
                     OverlayKind.TEXT -> overlay.text.take(16)
                     else -> stringResource(R.string.timeline_image_marker)
-                },
+                } +
+                    (if (outsideVideo) " · " + stringResource(R.string.timeline_outside_video) else "") +
+                    (if (!overlay.visible) " · " + stringResource(R.string.layer_hide) else ""),
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (dimmed) 0.5f else 1f),
                 maxLines = 1,
                 modifier = Modifier.padding(start = 3.dp, end = 20.dp),
             )
@@ -386,10 +406,11 @@ private fun OverlayBar(
             }
         }
         // Left edge trim handle (on top of the body).
+        // v0.3.0: 24 dp-wide targets (was 16 dp) — small-screen error rate.
         Box(
             modifier = Modifier
                 .align(Alignment.CenterStart)
-                .width(16.dp)
+                .width(24.dp)
                 .fillMaxHeight()
                 .pointerInput(overlay.id, overlay.startMs, overlay.endMs) {
                     detectDragGestures(
@@ -423,7 +444,7 @@ private fun OverlayBar(
         Box(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
-                .width(16.dp)
+                .width(24.dp)
                 .fillMaxHeight()
                 .pointerInput(overlay.id, overlay.startMs, overlay.endMs) {
                     detectDragGestures(

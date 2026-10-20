@@ -70,12 +70,48 @@ class ProjectMathTest {
     }
 
     @Test
-    fun `duration extends to the latest overlay end`() {
+    fun `overlay past the video end does NOT extend the duration (v0_3_0 rule)`() {
+        // Device-reported temporal bug (v0.3.0 report): an image bar dragged
+        // past the video end used to stretch the timeline while the export
+        // composition stayed video-length — and playback beyond the video
+        // end froze the UI. The video now defines the duration; the overlay
+        // persists but renders nothing outside the active range.
         val p = project(
             clips = listOf(clip(5_000)),
             overlays = listOf(overlay(4_000, 8_000)),
         )
-        assertEquals(8_000L, ProjectMath.projectDurationMs(p))
+        assertEquals(5_000L, ProjectMath.projectDurationMs(p))
+    }
+
+    @Test
+    fun `overlay fully past the video end keeps the video duration`() {
+        val p = project(
+            clips = listOf(clip(5_490)),
+            overlays = listOf(overlay(60_000, 65_000)),
+        )
+        assertEquals(5_490L, ProjectMath.projectDurationMs(p))
+        // The element still exists and the timeline span shows it, but the
+        // playhead range (duration) never enters the inactive region.
+        assertEquals(65_000L, ProjectMath.timelineSpanMs(p))
+    }
+
+    @Test
+    fun `timeline span is the widest element and never below the duration`() {
+        val p = project(
+            clips = listOf(clip(10_000)),
+            overlays = listOf(overlay(0, 4_000)),
+            audio = listOf(audio(2_000, 0, 6_000)),
+        )
+        assertEquals(10_000L, ProjectMath.timelineSpanMs(p))
+        val extended = p.copy(overlays = listOf(overlay(60_000, 65_000)))
+        assertEquals(65_000L, ProjectMath.timelineSpanMs(extended))
+    }
+
+    @Test
+    fun `playhead clamp keeps the playhead inside the video range`() {
+        // Regression for the frozen-playback bug: scrub/transport writes
+        // can never park the playhead past the video end.
+        assertEquals(5_490L, ProjectMath.clampPlayheadMs(60_000, 5_490))
     }
 
     @Test

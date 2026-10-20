@@ -91,4 +91,31 @@ class ProjectJsonTest {
         val restored = projectJson.decodeFromString(ListSerializer(Clip.serializer()), json)
         assertEquals(project.clips, restored)
     }
+
+    @Test
+    fun `v0_3_0 layer state visible-locked round-trips and defaults keep old projects loadable`() {
+        // New fields persist.
+        val tagged = project.copy(
+            overlays = listOf(
+                com.onevideog.editor.data.OverlayItem(
+                    id = "o1", kind = com.onevideog.editor.data.OverlayKind.TEXT,
+                    startMs = 0, endMs = 5_000, text = "x",
+                    visible = false, locked = true,
+                ),
+            ),
+        )
+        val restored = projectJson
+            .decodeFromString<OvgProject>(projectJson.encodeToString(tagged))
+        assertEquals(false, restored.overlays[0].visible)
+        assertEquals(true, restored.overlays[0].locked)
+        // Documents saved by <= v0.2.5 (no visible/locked fields) load with
+        // the defaults — existing projects are preserved unchanged.
+        val legacyJson = """
+            {"id":"x","name":"n","createdAtEpochMs":1,"updatedAtEpochMs":2,
+             "overlays":[{"id":"o","kind":"TEXT","startMs":0,"endMs":1000,"text":"hi"}]}
+        """.trimIndent()
+        val legacy = projectJson.decodeFromString<OvgProject>(legacyJson)
+        assertEquals(true, legacy.overlays[0].visible)
+        assertEquals(false, legacy.overlays[0].locked)
+    }
 }

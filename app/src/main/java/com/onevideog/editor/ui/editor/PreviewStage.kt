@@ -47,6 +47,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 
+/** Bounded playback-state name for diagnostics (no reflection, no churn). */
+private fun playbackStateName(state: Int): String = when (state) {
+    Player.STATE_IDLE -> "IDLE"
+    Player.STATE_BUFFERING -> "BUFFERING"
+    Player.STATE_READY -> "READY"
+    Player.STATE_ENDED -> "ENDED"
+    else -> "#$state"
+}
+
 /**
  * Real-time composition preview.
  *
@@ -170,12 +179,24 @@ fun PreviewStage(viewModel: EditorViewModel) {
                 // geometry (it means no video track was decoded for this
                 // item — e.g. an audio-only item) so the report cannot
                 // misread w=0 as a decode failure without evidence.
+                // v0.3.0: the event carries the playback context (state +
+                // playhead vs video range) so "parked at the end / player
+                // stopped" can never be misread as "the video was lost".
                 videoSize = size
                 if (size.width <= 0 || size.height <= 0) {
+                    val videoEnd = ProjectMath.videoDurationMs(project.clips)
                     DiagnosticsLogger.d(
                         "preview", "PREVIEW_RENDER", previewOpId,
                         "no video track geometry for this item (video=none)",
-                        meta = listOf("video" to "none"),
+                        meta = listOf(
+                            "video" to "none",
+                            "playerState" to playbackStateName(player.playbackState),
+                            "playheadMs" to state.playheadMs.toString(),
+                            "videoEndMs" to videoEnd.toString(),
+                            "playheadInsideVideo" to
+                                (state.playheadMs < videoEnd && project.clips.isNotEmpty())
+                                    .toString(),
+                        ),
                     )
                 } else {
                     DiagnosticsLogger.d(
@@ -319,7 +340,15 @@ fun PreviewStage(viewModel: EditorViewModel) {
 
     // Play/Pause MUST reach the player even when nothing else changed —
     // this dedicated effect is the actual button → player wiring.
+    // v0.3.0 replay-after-end fix: ExoPlayer with REPEAT_MODE_OFF stays in
+    // STATE_ENDED when playWhenReady is set on an ended player — pressing
+    // play after playback finished silently did NOTHING (device-reported
+    // "bug ao reproduzir"). A play request on an ENDED player restarts the
+    // item from position 0.
     LaunchedEffect(state.isPlaying) {
+        if (state.isPlaying && player.playbackState == Player.STATE_ENDED) {
+            player.seekTo(0)
+        }
         player.playWhenReady = state.isPlaying
     }
 
@@ -370,6 +399,36 @@ fun PreviewStage(viewModel: EditorViewModel) {
                 audioClips, state.playheadMs, state.isPlaying, videoDurationMs,
             )
             delay(100)
+        }
+    }
+
+    // -------------------- clip-less playback (v0.3.0) -------------------------
+    // Audio/overlay-only projects have no video publisher: without this
+    // driver the playhead froze at 0 while audio played, and the audio
+    // scheduler then drift-seeked the clip back every ~300 ms (stutter).
+    // With clips present the frame publisher below owns the playhead and
+    // this loop is idle, so the two can never fight each other.
+    // NOTE: the state is re-read from the ViewModel every frame — the
+    // composition-captured `state` object is stale inside a long loop.
+    if (project.clips.isEmpty()) {
+        LaunchedEffect(state.isPlaying, durationMs) {
+            if (!state.isPlaying || durationMs <= 0L) return@LaunchedEffect
+            var lastFrame = 0L
+            while (isActive) {
+                val now = withFrameNanos { it }
+                val current = viewModel.ui.value
+                if (!current.isPlaying || current.isScrubbing) break
+                if (lastFrame != 0L) {
+                    val next = current.playheadMs + (now - lastFrame) / 1_000_000L
+                    if (next >= durationMs) {
+                        viewModel.setPlaying(false)
+                        viewModel.seekTo(durationMs)
+                        break
+                    }
+                    viewModel.setPlayhead(next)
+                }
+                lastFrame = now
+            }
         }
     }
 
