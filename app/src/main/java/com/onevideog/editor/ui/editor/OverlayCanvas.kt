@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -119,15 +120,27 @@ internal fun PlacedOverlay.toCanvas(local: Offset): Offset {
 /**
  * The live overlay layer.
  *
- * Rendering contract (v0.2.2): when a video clip is active and the player is
- * ready, overlay PIXELS come from the Media3 GL pipeline via
- * `ExoPlayer.setVideoEffects` (see [com.onevideog.editor.editor.ClipEffectsFactory])
- * — the same effect list the export composes. This layer then draws only
- * editor chrome (selection bounds, scale/rotate/delete handles) plus the
- * live preview of the overlay being manipulated. When there is no active
- * clip (overlays over black) or the player is not ready, it falls back to
- * drawing the overlay content here with the same shared math, so overlays
- * are always visible and scrubbing never blanks them.
+ * Rendering contract (v0.3.1 — device-reported fix: overlays were invisible
+ * in the preview unless selected while the export showed them):
+ *  - THIS layer is the ONLY preview overlay renderer. It draws the CONTENT
+ *    of every overlay active at the current playhead (startMs <= playhead <
+ *    endMs, visible) — text and image alike — ALWAYS, on top of the
+ *    PlayerView, selected or not. Visibility no longer depends on the
+ *    ExoPlayer GL pipeline (which did not composite the overlay textures on
+ *    the affected device) and there is no fallback/gesture-only gate.
+ *  - The selection chrome (bounds frame, rotate knob, delete chip, scale
+ *    corner) is drawn in a SECOND pass, ONLY for the selected overlay, on
+ *    top of all already-visible content — an overlay with a higher zOrder
+ *    can never cover the selected item's handles.
+ *  - Positions are the model's normalized coordinates (x, y in 0..1 of the
+ *    content area, scale as a width fraction) evaluated by the SAME pure
+ *    math the export composition uses ([KeyframeEvaluator] +
+ *    [OverlayLayout] -> [com.onevideog.editor.editor.KeyframedOverlay]),
+ *    so what is seen here is what the export composes.
+ *  - The playhead arrives as Compose state ([EditorViewModel.UiState
+ *    .playheadMs] — the same state the timeline and transport use), so
+ *    overlays appear/disappear in sync with the timeline and the player
+ *    position without any extra rebuilding.
  *
  * Gestures: tap to select/deselect, drag body to move, corner handle to
  * scale, top handle to rotate (clockwise-positive), delete chip to remove.
@@ -142,7 +155,6 @@ internal fun OverlayLayer(
     contentHeightPx: () -> Float,
     selectedOverlayId: () -> String?,
     gestureOverride: () -> Pair<String, OverlayTransform>?,
-    renderContentFallback: () -> Boolean,
     onTap: (OverlayItem?) -> Unit,
     onGesture: (OverlayItem, OverlayTransform) -> Unit,
     onGestureEnd: (OverlayItem, OverlayTransform) -> Unit,
@@ -156,7 +168,6 @@ internal fun OverlayLayer(
     val currentH = rememberUpdatedState(contentHeightPx)
     val currentSelected = rememberUpdatedState(selectedOverlayId)
     val currentOverride = rememberUpdatedState(gestureOverride)
-    val currentFallback = rememberUpdatedState(renderContentFallback)
     val currentOnTap = rememberUpdatedState(onTap)
     val currentOnGesture = rememberUpdatedState(onGesture)
     val currentOnGestureEnd = rememberUpdatedState(onGestureEnd)
@@ -326,19 +337,20 @@ internal fun OverlayLayer(
                 placed
             }
         }
-        val fallback = currentFallback.value()
-        placements.forEach { placed ->
-            val isGestured = override != null && override.first == placed.overlay.id
-            // Content pixels only when the GL pipeline is not already showing
-            // them (no active clip / player not ready) or while this overlay
-            // is being manipulated live. Chrome always draws.
-            if (fallback || isGestured) {
-                drawPlaced(placed)
-            }
-            if (placed.selected) {
-                drawSelectionChrome(placed)
-            }
+        // Pass 1 — content: EVERY active overlay draws its pixels here,
+        // always (v0.3.1). The gesture override swaps in the live transform
+        // so the manipulated overlay follows the finger between commits.
+        // Content is CLIPPED to the content rect: the export composites
+        // overlays per-clip (before Presentation), so nothing may bleed into
+        // the letterbox bars in either path (parity contract — see
+        // docs/PREVIEW_EXPORT_PARITY.md). Editor chrome (pass 2) is NOT
+        // clipped — handles may overflow the bounds.
+        clipRect(0f, 0f, size.width, size.height) {
+            placements.forEach { placed -> drawPlaced(placed) }
         }
+        // Pass 2 — chrome: drawn separately, ONLY for the selected overlay,
+        // AFTER all content so the handles sit on top of everything.
+        placements.firstOrNull { it.selected }?.let { drawSelectionChrome(it) }
     }
 }
 

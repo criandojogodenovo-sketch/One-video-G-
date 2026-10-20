@@ -80,6 +80,43 @@ cannot sit in the letterbox bars in either path (Media3 1.4.1 composites
 overlays per-clip, before `Presentation`; composition-level
 `setEffects` supports only `Presentation`).
 
+## Overlay renderer split (v0.3.1 — device-reported fix)
+
+Device evidence (v0.3.0): text/image overlays were invisible in the preview
+unless the overlay was selected/manipulated, while the export showed them
+correctly. Root cause: preview overlay pixels were produced by the ExoPlayer
+GL pipeline (`OverlayEffect` textures via `setVideoEffects`), which did not
+composite on the affected device's GL stack; the Compose canvas only drew
+content as a fallback (no clip / player not ready) or during a live gesture.
+
+v0.3.1 contract:
+
+1. **The preview has ONE overlay renderer: the Compose layer**
+   (`OverlayLayer`). It draws the content of EVERY overlay active at the
+   current playhead (`startMs <= playheadMs < endMs`, visible), always, on
+   top of the PlayerView. Selection chrome (frame, rotate knob, delete chip,
+   scale corner) is a separate pass drawn only for the selected overlay, on
+   top of all content.
+2. **The preview GL effect list is video-only** (speed + colour +
+   Presentation). `ClipEffectsFactory.effectsFor(forPreview = true)` attaches
+   NO `OverlayEffect` — otherwise overlays would double-render where the GL
+   pipeline does work.
+3. **The export path is unchanged**: Transformer still composites overlays
+   through `KeyframedOverlay` textures (`effectsFor(forPreview = false)`),
+   which was verified working on device.
+4. Both renderers evaluate the same normalized model (0..1 positions, width-
+   fraction scale, clockwise-positive rotation) through `KeyframeEvaluator`
+   and `OverlayLayout`, so the preview shows exactly what the export
+   composes.
+5. Preview content is clipped to the content rect (`clipRect`) so overlays
+   never bleed into the letterbox bars — matching the export's per-clip
+   compositing.
+6. `ClipEffectPlan.effectiveSignature` (preview effects-rebuild key) no
+   longer includes overlays: an overlay edit re-renders the Compose layer
+   directly and must NOT re-prepare the decoder (previously every overlay
+   edit paid one decoder init + frame flash). Clip identity/trim/speed/
+   colour/aspect remain rebuild inputs; a playhead move still never rebuilds.
+
 ## Known, documented limitations
 
 1. **Colour space difference.** Media3 applies `RgbMatrix` in linear RGB;

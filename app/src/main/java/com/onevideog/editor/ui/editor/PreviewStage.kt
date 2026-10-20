@@ -59,19 +59,25 @@ private fun playbackStateName(state: Int): String = when (state) {
 /**
  * Real-time composition preview.
  *
- * Rendering pipeline (v0.2.2): the active clip's video AND its overlays and
- * colour adjustments are rendered by the Media3 GL pipeline through
- * `ExoPlayer.setVideoEffects(...)` with the SAME effect list the export
+ * Rendering pipeline (v0.3.1): the active clip's video, speed and colour
+ * adjustments are rendered by the Media3 GL pipeline through
+ * `ExoPlayer.setVideoEffects(...)` from the SAME factory the export
  * composition builds ([ClipEffectsFactory]) — one shared implementation, no
- * duplicated timeline/effect math. The Compose overlay canvas draws only
- * editor chrome + live gesture previews, plus a fallback content render when
- * there is no active video (overlays over black) or the player is not ready.
+ * duplicated timeline/effect math. Overlay pixels are drawn by the Compose
+ * [OverlayLayer] on top of the PlayerView, ALWAYS visible for every overlay
+ * active at the current playhead (v0.3.1 device fix — the ExoPlayer GL
+ * pipeline did not composite overlay textures on the affected device, so
+ * overlays only appeared while selected/manipulated; the export path was
+ * unaffected). Both renderers share the normalized-position model, so the
+ * preview matches the exported frame.
  *
  * Effects lifecycle (verified against Media3 1.4.1 sources):
  *  - `setVideoEffects` MUST be called before `prepare` for the first item;
  *  - a changed effect list applies at the NEXT input stream, so after any
- *    overlay/colour/speed edit the list is rebuilt and the current item is
+ *    colour/speed/aspect edit the list is rebuilt and the current item is
  *    re-prepared at the current position (one decoder init per commit).
+ *    v0.3.1: overlay edits do NOT rebuild — the preview list has no
+ *    OverlayEffect and the Compose layer re-renders from project state.
  *
  * Playback contract (unchanged from v0.2.1):
  * - The ViewModel owns ONE authoritative playhead (`state.playheadMs`).
@@ -151,9 +157,6 @@ fun PreviewStage(viewModel: EditorViewModel) {
         }
     }
 
-    // Player readiness drives the canvas fallback (overlays must stay visible
-    // during media switches and for overlay-only projects over black).
-    var playerReady by remember { mutableStateOf(false) }
     // v0.2.5 geometry evidence: the three REAL dimension sources are tracked
     // separately (master-prompt item 2 — "PREVIEW_RENDER w=0 h=0"):
     //   video  = decoder output geometry (onVideoSizeChanged)
@@ -167,7 +170,9 @@ fun PreviewStage(viewModel: EditorViewModel) {
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
-                playerReady = playbackState == Player.STATE_READY
+                // Keep the icon/state and the player in lock-step: STATE_ENDED
+                // flips `isPlaying` off so the UI never shows a phantom
+                // "playing" (and pressing play can restart the item).
                 if (playbackState == Player.STATE_ENDED) viewModel.setPlaying(false)
             }
 
@@ -514,7 +519,6 @@ fun PreviewStage(viewModel: EditorViewModel) {
                 contentHeightPx = { fitted.height },
                 selectedOverlayId = { state.selectedOverlayId },
                 gestureOverride = { gestureState },
-                renderContentFallback = { currentClip == null || !playerReady },
                 onTap = { overlay ->
                     // Clear any stale gesture override (a tap ends the
                     // gesture without committing a transform).
