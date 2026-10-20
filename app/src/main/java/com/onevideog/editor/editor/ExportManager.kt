@@ -63,6 +63,17 @@ import kotlinx.coroutines.withContext
 class ExportManager(
     private val context: Context,
     private val scope: CoroutineScope,
+    /**
+     * The single thread Media3 Transformer operations run on (v0.2.4).
+     * Media3 1.4.1 captures Util.getCurrentOrMainLooper() at build time and
+     * throws "Transformer is accessed on the wrong thread" when start /
+     * getProgress / cancel happen elsewhere — the export coroutine used to
+     * run on Dispatchers.Default (no Looper), which is exactly the device
+     * failure. Injectable for JVM tests.
+     */
+    private val transformerThread: TransformerThread = MainTransformerThread(),
+    /** Per-manager concurrency gate (v0.2.4). Injectable for JVM tests. */
+    private val gate: ExportGate = ExportGate(),
 ) {
 
     enum class Phase { IDLE, QUEUED, RUNNING, FINALIZING, DONE, FAILED, CANCELLED }
@@ -159,9 +170,27 @@ class ExportManager(
         quality: Quality,
         destinationUri: Uri,
     ) {
-        if (isRunning) return
+        // v0.2.4: atomic single-export gate, claimed BEFORE any slow work.
+        // The old `if (isRunning) return` raced (job was only assigned after
+        // slow main-thread preflight), letting two near-simultaneous requests
+        // start two Transformers (device ops exp-b7bf477d / exp-b96c0125).
+        if (!gate.tryBegin()) {
+            DiagnosticsLogger.w(
+                "export", "START_REJECTED", op?.opId,
+                "export start rejected: another export is already in flight",
+                meta = listOf(
+                    "thread" to Thread.currentThread().name,
+                    "gate" to "manager",
+                ),
+            )
+            return
+        }
         val exportOp = ExportOp(OpRegistry.newOpId("exp"), opRegistry)
         op = exportOp
+        // Cheap, pure validation stays synchronous; ALL I/O (source media,
+        // StatFs, stale cleanup) moved inside the coroutine below so the gate
+        // is never held open by slow main-thread work and duplicate requests
+        // are rejected immediately.
         val problem = ExportConfig.validateForExport(project)
         DiagnosticsLogger.i(
             "export", ExportOp.Stages.VALIDATE, exportOp.opId,
@@ -173,9 +202,11 @@ class ExportManager(
                 "overlays" to project.overlays.size.toString(),
                 "audio" to project.audioClips.size.toString(),
                 "resolution" to resolution.name, "quality" to quality.name,
+                "thread" to Thread.currentThread().name,
             ),
         )
         if (problem != null) {
+            gate.end()
             exportOp.fail(Failure.VALIDATION_FAILED.name, problem.name)
             DiagnosticsLogger.noteExportState(
                 exportOp.opId,
@@ -185,40 +216,6 @@ class ExportManager(
             return
         }
         val durationMs = ProjectMath.projectDurationMs(project)
-
-        // Source media validation (stage C): every URI must still open.
-        checkSourceMedia(project, exportOp)
-
-        // Preflight: drop stale output from earlier crashed/cancelled runs.
-        val removed = ExportPreflight.cleanupStaleFiles(exportsDir())
-        val required = ExportPreflight.requiredBytes(resolution, quality, durationMs)
-        val stat = StatFs(context.cacheDir.absolutePath)
-        DiagnosticsLogger.i(
-            "export", ExportOp.Stages.PREFLIGHT, exportOp.opId,
-            "storage preflight",
-            meta = listOf(
-                "neededBytes" to required.toString(),
-                "freeBytes" to stat.availableBytes.toString(),
-                "removedStale" to removed.toString(),
-            ),
-        )
-        if (stat.availableBytes < required) {
-            writeDiagnostics(
-                phase = "preflight",
-                failure = Failure.INSUFFICIENT_STORAGE,
-                detail = "needed=$required free=${stat.availableBytes} removedStale=$removed",
-                durationMs = durationMs,
-                resolution = resolution,
-                quality = quality,
-            )
-            exportOp.fail(Failure.INSUFFICIENT_STORAGE.name, "needed=$required free=${stat.availableBytes}")
-            DiagnosticsLogger.noteExportState(
-                exportOp.opId,
-                "state=FAILED stage=PREFLIGHT cat=INSUFFICIENT_STORAGE needed=$required free=${stat.availableBytes}",
-            )
-            emit(State.Failed(Failure.INSUFFICIENT_STORAGE, "needed=$required"))
-            return
-        }
 
         cancelled = false
         exportStartedMs = System.currentTimeMillis()
@@ -231,6 +228,43 @@ class ExportManager(
         completion = completionDeferred
 
         job = scope.launch {
+            // Stage C + storage preflight now run OFF the main thread.
+            checkSourceMedia(project, exportOp)
+            val removed = withContext(Dispatchers.IO) {
+                ExportPreflight.cleanupStaleFiles(exportsDir())
+            }
+            val required = ExportPreflight.requiredBytes(resolution, quality, durationMs)
+            val stat = withContext(Dispatchers.IO) { StatFs(context.cacheDir.absolutePath) }
+            DiagnosticsLogger.i(
+                "export", ExportOp.Stages.PREFLIGHT, exportOp.opId,
+                "storage preflight",
+                meta = listOf(
+                    "neededBytes" to required.toString(),
+                    "freeBytes" to stat.availableBytes.toString(),
+                    "removedStale" to removed.toString(),
+                ),
+            )
+            if (stat.availableBytes < required) {
+                writeDiagnostics(
+                    phase = "preflight",
+                    failure = Failure.INSUFFICIENT_STORAGE,
+                    detail = "needed=$required free=${stat.availableBytes} removedStale=$removed",
+                    durationMs = durationMs,
+                    resolution = resolution,
+                    quality = quality,
+                )
+                exportOp.fail(Failure.INSUFFICIENT_STORAGE.name, "needed=$required free=${stat.availableBytes}")
+                DiagnosticsLogger.noteExportState(
+                    exportOp.opId,
+                    "state=FAILED stage=PREFLIGHT cat=INSUFFICIENT_STORAGE needed=$required free=${stat.availableBytes}",
+                )
+                emit(State.Failed(Failure.INSUFFICIENT_STORAGE, "needed=$required"))
+                // Terminal path before the try/finally — the gate MUST be
+                // released here too, otherwise every later start would be
+                // rejected forever.
+                gate.end()
+                return@launch
+            }
             var plan: CompositionFactory.Plan? = null
             try {
                 emit(State.Running(0))
@@ -384,9 +418,10 @@ class ExportManager(
             } finally {
                 // Release pipeline state if the coroutine dies abnormally
                 // (e.g. scope cancellation); cancel() is a no-op when the
-                // transformer already completed.
+                // transformer already completed. The cancel is POSTED to the
+                // transformer application thread (Media3 1.4.1 enforces it).
                 if (!completionDeferred.isCompleted) {
-                    runCatching { transformer?.cancel() }
+                    cancelTransformerOnApplicationThread()
                     completionDeferred.complete(false)
                 }
                 transformer = null
@@ -394,6 +429,9 @@ class ExportManager(
                 SilenceWav.cleanup(workDir)
                 plan?.tempFiles?.forEach { it.delete() }
                 job = null
+                // v0.2.4: the single-export gate is ALWAYS released, on every
+                // terminal path (done/failed/cancelled/exception/scope death).
+                gate.end()
             }
         }
     }
@@ -405,13 +443,34 @@ class ExportManager(
             "export", "CANCEL_REQUESTED", op?.opId,
             "user requested export cancellation",
         )
-        runCatching { transformer?.cancel() }
+        cancelTransformerOnApplicationThread()
         completion?.complete(false)
+    }
+
+    /**
+     * Cancels the Transformer on its application thread. Safe from ANY
+     * caller thread: ExportService.onStartCommand / onDestroy arrive on the
+     * main thread (direct call would be legal), but the coroutine finally
+     * block runs on Dispatchers.Default — posting keeps every access on the
+     * thread Media3 1.4.1 requires. Captures the reference first so a late
+     * post cannot miss the instance before it is nulled in the finally.
+     */
+    private fun cancelTransformerOnApplicationThread() {
+        val current = transformer
+        transformerThread.post {
+            runCatching { current?.cancel() }
+                .onFailure {
+                    DiagnosticsLogger.w(
+                        "export", "TRANSFORMER_CANCEL", op?.opId,
+                        "transformer cancel threw (recorded, not fatal)",
+                    )
+                }
+        }
     }
 
     // ------------------------------------------------------------------ engine
 
-    private fun startTransformer(
+    private suspend fun startTransformer(
         plan: CompositionFactory.Plan,
         resolution: ExportResolutionEnum,
         quality: Quality,
@@ -484,18 +543,28 @@ class ExportManager(
         }
 
         try {
-            transformer = Transformer.Builder(context)
-                .setVideoMimeType(MimeTypes.VIDEO_H264)
-                .setAudioMimeType(MimeTypes.AUDIO_AAC)
-                .setTransformationRequest(TransformationRequest.Builder().build())
-                .setEncoderFactory(
-                    DefaultEncoderFactory.Builder(context)
-                        .setRequestedVideoEncoderSettings(encoderSettings)
-                        .build(),
-                )
-                .addListener(listener)
-                .build()
-            transformer?.start(plan.composition, outputPath.absolutePath)
+            // v0.2.4: build AND start run on the ONE transformer application
+            // thread (EngineLauncher) — Media3 1.4.1 captures the looper at
+            // build time and enforces it on start/getProgress/cancel. The
+            // ORIGINAL synchronous failure propagates unchanged into the
+            // catch below (real exception preserved, never replaced).
+            transformer = EngineLauncher.launchOn(
+                thread = transformerThread,
+                factory = {
+                    Transformer.Builder(context)
+                        .setVideoMimeType(MimeTypes.VIDEO_H264)
+                        .setAudioMimeType(MimeTypes.AUDIO_AAC)
+                        .setTransformationRequest(TransformationRequest.Builder().build())
+                        .setEncoderFactory(
+                            DefaultEncoderFactory.Builder(context)
+                                .setRequestedVideoEncoderSettings(encoderSettings)
+                                .build(),
+                        )
+                        .addListener(listener)
+                        .build()
+                },
+                starter = { it.start(plan.composition, outputPath.absolutePath) },
+            )
             // Durable "export in flight" marker: if the process dies before
             // a terminal state clears it, the next launch reports the export
             // as INTERRUPTED (distinct from a confirmed failure).
@@ -507,11 +576,14 @@ class ExportManager(
                     "plannedDurationMs" to plan.plannedDurationMs.toString(),
                     "outputFile" to DiagSanitizer.sanitizeFileName(outputPath.name),
                     "memoryFreeMb" to freeMemoryMb().toString(),
+                    "engineThread" to transformerThread.description,
                 ),
             )
         } catch (t: Throwable) {
-            // Synchronous start failures (no decoder surface, invalid
-            // composition, codec init) must not leave a zombie state.
+            // Synchronous start failures (wrong thread, no decoder surface,
+            // invalid composition, codec init) must not leave a zombie state.
+            // The ORIGINAL exception is logged with its full nested cause
+            // chain — never replaced by a generic one.
             val failure = ExportFailure.fromThrowable(t)
             pendingDetail = "start: ${t.javaClass.simpleName} ${(t.message ?: "").take(200)}"
             writeDiagnostics(
@@ -545,7 +617,10 @@ class ExportManager(
         var lastLoggedStep = -10
         while (currentCoroutineContext().isActive && !completionDeferred.isCompleted) {
             val t = transformer ?: break
-            val progressState = t.getProgress(holder)
+            // v0.2.4: getProgress is a Transformer application-thread method
+            // (verifyApplicationThread in Media3 1.4.1) — route it, do not
+            // call it from the Dispatchers.Default worker.
+            val progressState = transformerThread.run { t.getProgress(holder) }
             val pct = when (progressState) {
                 Transformer.PROGRESS_STATE_AVAILABLE -> holder.progress.coerceIn(0, 100)
                 Transformer.PROGRESS_STATE_NO_TRANSFORMATION -> 100

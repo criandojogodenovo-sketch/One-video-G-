@@ -24,6 +24,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.ExoPlayer
 import com.onevideog.editor.R
 import com.onevideog.editor.data.OverlayTransform
@@ -36,10 +37,13 @@ import com.onevideog.editor.editor.AudioPreviewController
 import com.onevideog.editor.editor.ClipEffectsFactory
 import com.onevideog.editor.editor.EditorViewModel
 import com.onevideog.editor.editor.OverlayLayout
+import com.onevideog.editor.editor.PlayheadGate
 import com.onevideog.editor.editor.ProjectMath
 import com.onevideog.editor.editor.TimelineLogic
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
 
 /**
  * Real-time composition preview.
@@ -97,15 +101,41 @@ fun PreviewStage(viewModel: EditorViewModel) {
     }
 
     // ------------------------------ video player ------------------------------
+    // v0.2.4: the surface detach timeout is raised from the 2 s default for
+    // this device class. Media3 1.4.1 (ExoPlayerImpl.setVideoOutputInternal)
+    // blocks up to detachSurfaceTimeoutMs waiting for the playback thread to
+    // detach the TextureView; the GL effects pipeline re-init on a Unisoc
+    // T612 can exceed 2 s, which produced the reported
+    // ExoTimeoutException("Detaching surface timed out.") via onPlayerError.
     val player = remember {
-        ExoPlayer.Builder(context).build().apply { repeatMode = Player.REPEAT_MODE_OFF }
+        ExoPlayer.Builder(context)
+            .setDetachSurfaceTimeoutMs(10_000)
+            .build()
+            .apply { repeatMode = Player.REPEAT_MODE_OFF }
     }
     // One preview correlation id per composition instance: every effect
     // rebuild / player error / activation event of this session shares it.
     val previewOpId = remember { OpRegistry.newOpId("pvw") }
     DisposableEffect(Unit) {
         onDispose {
-            player.release()
+            // v0.2.4 dispose sequence: quiesce BEFORE release so the playback
+            // thread is not mid-frame when the surface detaches (reduces the
+            // detach-timeout window), then release. A release failure on a
+            // slow GL pipeline is RECORDED with full detail and must not
+            // crash composition teardown — the player keeps releasing in the
+            // background; rethrowing here would kill the editor AFTER the
+            // player is already gone. Not a silent swallow: it is logged.
+            runCatching { player.playWhenReady = false }
+            try {
+                player.release()
+            } catch (t: Throwable) {
+                DiagnosticsLogger.e(
+                    "playback", "PLAYER_RELEASE", previewOpId,
+                    "player release threw (surface detach timed out; " +
+                        "release continues in background)",
+                    t,
+                )
+            }
             audioController.release()
         }
     }
@@ -120,6 +150,23 @@ fun PreviewStage(viewModel: EditorViewModel) {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 playerReady = playbackState == Player.STATE_READY
                 if (playbackState == Player.STATE_ENDED) viewModel.setPlaying(false)
+            }
+
+            override fun onVideoSizeChanged(size: VideoSize) {
+                // v0.2.4: real-render evidence — this fires when the decoder
+                // has output configured for the surface, distinguishing
+                // "frame actually produced" from "item prepared/effects list
+                // attached". Bounds the next report away from the previous
+                // ambiguity (decode OK / overlay OK / render unknown).
+                DiagnosticsLogger.d(
+                    "preview", "PREVIEW_RENDER", previewOpId,
+                    "decoder produced output geometry",
+                    meta = listOf(
+                        "w" to size.width.toString(),
+                        "h" to size.height.toString(),
+                        "pixelWH" to (size.pixelWidthHeightRatio.toString()),
+                    ),
+                )
             }
 
             override fun onPlayerError(error: PlaybackException) {
@@ -168,16 +215,23 @@ fun PreviewStage(viewModel: EditorViewModel) {
 
     // Effect application — MUST run before the media-load effect below so the
     // first prepare() happens with the effects already set.
+    // v0.2.4: the effect list build DECODES images (1024x1024 JPEG ≈ 4 MB
+    // bitmap) and renders text bitmaps. That heavy work used to run on the
+    // MAIN thread here, stalling the UI exactly while surface/decoder
+    // operations were pending (the detach-timeout trigger). It now runs on
+    // Dispatchers.Default; only the player calls stay on the main thread.
     LaunchedEffect(effectsRevision) {
         val clip = currentClip ?: return@LaunchedEffect
-        val effects = DiagContext.withOp(previewOpId) {
-            ClipEffectsFactory.effectsFor(
-                context = context,
-                project = project,
-                clip = clip,
-                clipStartMs = clipStart,
-                forPreview = true,
-            )
+        val effects = withContext(Dispatchers.Default) {
+            DiagContext.withOp(previewOpId) {
+                ClipEffectsFactory.effectsFor(
+                    context = context,
+                    project = project,
+                    clip = clip,
+                    clipStartMs = clipStart,
+                    forPreview = true,
+                )
+            }
         }
         player.setVideoEffects(effects)
         DiagnosticsLogger.i(
@@ -253,7 +307,12 @@ fun PreviewStage(viewModel: EditorViewModel) {
     // throttled to ~30fps to stay light on 4 GB devices). Guards:
     // - `state.isScrubbing`: the finger owns the playhead;
     // - `!player.isPlaying`: seeking/buffering/ended — publishing the stale
-    //   player position here is exactly the "scrub reverts" bug.
+    //   player position here is exactly the "scrub reverts" bug;
+    // - v0.2.4 [PlayheadGate]: even when the player reports playing, a pending
+    //   async seek leaves currentPosition at the OLD position (device evidence:
+    //   scrub ended at 120 ms, playhead snapped back to ~10163 ms). Publishing
+    //   is skipped while the mapped position is far from the authoritative
+    //   playhead — it resumes once the seek lands.
     LaunchedEffect(state.isPlaying, loadedClipId) {
         var lastPublish = 0L
         while (isActive && state.isPlaying) {
@@ -262,6 +321,8 @@ fun PreviewStage(viewModel: EditorViewModel) {
             val clip = currentClip ?: break
             if (!player.isPlaying) continue
             val pos = player.currentPosition
+            val projectPos = clipStart + ProjectMath.itemLocalToProjectMs(clip, pos)
+            if (!PlayheadGate.shouldPublish(state.playheadMs, projectPos)) continue
             val windowDur = clip.effectiveDurationMs
             if (pos >= windowDur - 40) {
                 if (clipIndex < project.clips.lastIndex) {

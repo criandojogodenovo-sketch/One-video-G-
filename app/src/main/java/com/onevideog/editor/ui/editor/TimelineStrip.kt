@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntOffset
@@ -127,12 +128,18 @@ fun TimelineStrip(
 
         val scroll = rememberScrollState()
         val vScroll = rememberScrollState()
+        // Real viewport width in px (v0.2.4): the auto-follow window was a
+        // hard-coded 600 px — wrong at any density, thrash-prone on 720 px
+        // devices like the realme C33. Now the follow window is the actual
+        // container width.
+        var viewportPx by remember { mutableStateOf(0f) }
         // Keep the playhead visible while playing (instant follow; scrubs do
         // not auto-scroll — the finger owns the viewport while dragging).
         LaunchedEffect(state.playheadMs, state.isPlaying) {
             if (state.isPlaying && !state.isScrubbing) {
                 val targetPx = scale.timeToPx(state.playheadMs).toInt()
-                if (targetPx < scroll.value || targetPx > scroll.value + 600) {
+                val window = (viewportPx.takeIf { it > 0f } ?: 600f) * 0.8f
+                if (targetPx < scroll.value || targetPx > scroll.value + window) {
                     scroll.scrollTo(targetPx.coerceAtLeast(0))
                 }
             }
@@ -141,7 +148,8 @@ fun TimelineStrip(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(220.dp),
+                .height(220.dp)
+                .onGloballyPositioned { viewportPx = it.size.width.toFloat() },
         ) {
             Column(
                 modifier = Modifier
@@ -153,7 +161,13 @@ fun TimelineStrip(
                 // Scrub ruler: tap or drag ANYWHERE on it to move the
                 // playhead. The one authoritative scrub target — works
                 // paused or playing, at any zoom, over any track.
-                ScrubRuler(durationMs = durationMs, scale = scale, viewModel = viewModel)
+                ScrubRuler(
+                    durationMs = durationMs,
+                    scale = scale,
+                    viewModel = viewModel,
+                    zoom = state.zoom,
+                    scrollPx = { scroll.value },
+                )
                 // Video track
                 Row {
                     project.clips.forEachIndexed { index, clip ->
@@ -251,6 +265,8 @@ private fun ScrubRuler(
     durationMs: Long,
     scale: TimelineScale,
     viewModel: EditorViewModel,
+    zoom: Float,
+    scrollPx: () -> Int,
 ) {
     val density = LocalDensity.current
     // Ruler covers the project plus 4 s of trailing space.
@@ -270,11 +286,37 @@ private fun ScrubRuler(
             .pointerInput(durationMs, scale.zoom, density.density) {
                 detectDragGestures(
                     onDragStart = { offset ->
-                        viewModel.beginScrub()
-                        viewModel.scrubTo(scale.pxToTimeClamped(offset.x, durationMs))
+                        val mapped = scale.pxToTimeClamped(offset.x, durationMs)
+                        // v0.2.4: full coordinate evidence — px, mapped time,
+                        // scroll, zoom, density — so a device report can
+                        // conclusively show whether the mapping or the finger
+                        // produced a playhead position.
+                        viewModel.beginScrub(
+                            pointerXpx = offset.x,
+                            mappedMs = mapped,
+                            scrollPx = scrollPx(),
+                            zoom = zoom,
+                            density = density.density,
+                            durationMs = durationMs,
+                        )
+                        viewModel.scrubTo(mapped)
                     },
-                    onDragEnd = { viewModel.endScrub() },
-                    onDragCancel = { viewModel.endScrub() },
+                    onDragEnd = {
+                        viewModel.endScrub(
+                            scrollPx = scrollPx(),
+                            zoom = zoom,
+                            density = density.density,
+                            durationMs = durationMs,
+                        )
+                    },
+                    onDragCancel = {
+                        viewModel.endScrub(
+                            scrollPx = scrollPx(),
+                            zoom = zoom,
+                            density = density.density,
+                            durationMs = durationMs,
+                        )
+                    },
                 ) { change, _ ->
                     change.consume()
                     // Absolute position (not accumulated deltas) so a fast
