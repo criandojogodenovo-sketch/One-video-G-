@@ -18,29 +18,42 @@ call the same functions — neither has a second implementation:
 Timeline, clip labels, preview and export all read duration from
 `ProjectMath.projectDurationMs`. There is no other duration calculation.
 
-## Project duration rule (v0.2.5 — authoritative)
+## Project duration rule (v0.3.0 — authoritative)
 
 1. **With video present**, the project duration is the **video sequence
-   length, extended to the latest overlay end**. **Audio NEVER extends the
-   project duration.** Media3 1.4.1 compositions are video-length: audio
-   sequences are clamped to the video duration (`AudioTimeline.exportPlan`),
-   and overlays only render inside clips. An audio clip longer than the video
-   is therefore audible/visible exactly up to the video end in BOTH preview
-   (`AudioTimeline.sourcePositionAt` clamps at the video end) and export.
-   This rule fixes the v0.2.4 device report where importing a long audio
-   stretched the editor timeline (and the export plan) while the exported
-   file stayed video-length — `ExportManager.verifyPlayable` then rejected
-   the VALID file.
-2. **Audio-only projects** (no video clips) keep an element-driven duration
-   (longest audio/overlay), so such projects remain playable.
-3. Overlay windows may extend past the video end in the editor timeline
-   (playhead range), but the exported file ends with the video — documented
-   editor-only extension.
+   length — period. NOTHING extends it.** Media3 1.4.1 compositions are
+   video-length: audio sequences are clamped to the video duration
+   (`AudioTimeline.exportPlan`) and overlay windows only render inside clips
+   (`ClipEffectPlan.overlayWindowsForClip`), so any editor timeline longer
+   than the video describes time the exported file does not contain.
+   - v0.2.4 device report: importing a long audio stretched the editor
+     timeline while the exported file stayed video-length — fixed in
+     v0.2.5 (audio never extends).
+   - v0.3.0 device report: an image bar dragged past the video end still
+     stretched the timeline (65 s on a 54.9 s video); playback beyond the
+     video end then froze (player STATE_ENDED + frozen playhead) and
+     diagnostics logged misleading `video=none` / `videoW=0` events. Fixed
+     by making the video define the duration; overlays no longer extend it
+     either.
+2. **Elements outside the video range are never discarded.** An overlay or
+   audio bar placed past the video end (or before a later clip's start)
+   persists, stays selectable and draggable in the timeline, and renders
+   nothing — in preview AND export (one rule, one implementation). The
+   timeline shades the region past the video end and dims such bars; the
+   playhead range (`projectDurationMs`) never enters that region.
+3. **Audio-only projects** (no video clips) keep an element-driven duration
+   (longest audio/overlay), so such projects remain playable. v0.3.0 adds a
+   clip-less playback driver so the playhead advances in real time there
+   (previously it froze at 0 while audio stuttered against the drift
+   corrector).
 
-Preview and export read the SAME values from the SAME functions; the export
-plan (`CompositionFactory.Plan.plannedDurationMs`) uses the video sequence
-length for projects with video, so duration validation matches the produced
-file.
+Preview and export read the SAME values from the SAME function
+(`ProjectMath.projectDurationMs`); the export plan
+(`CompositionFactory.Plan.plannedDurationMs`) and
+`ExportManager.verifyPlayable` use the same number, so duration validation,
+storage preflight and the reported output duration all match the produced
+file. `ProjectMath.timelineSpanMs` (widest element) exists ONLY for laying
+out the editor timeline surface.
 
 ## Time base (important)
 

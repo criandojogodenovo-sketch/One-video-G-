@@ -86,6 +86,12 @@ fun TimelineStrip(
     val density = LocalDensity.current
     val scale = remember(density.density, state.zoom) { TimelineScale(density.density, state.zoom) }
     val durationMs = com.onevideog.editor.editor.ProjectMath.projectDurationMs(project)
+    // v0.3.0: the timeline renders out to the widest element so bars placed
+    // past the video end stay visible and draggable (they render nothing in
+    // preview/export — the ruler shades that region). The PLAYHEAD range
+    // stays the project duration (video length): the two numbers are
+    // intentionally different.
+    val spanMs = com.onevideog.editor.editor.ProjectMath.timelineSpanMs(project)
 
     Column(
         modifier = Modifier
@@ -163,6 +169,7 @@ fun TimelineStrip(
                 // paused or playing, at any zoom, over any track.
                 ScrubRuler(
                     durationMs = durationMs,
+                    spanMs = spanMs,
                     scale = scale,
                     viewModel = viewModel,
                     zoom = state.zoom,
@@ -197,6 +204,8 @@ fun TimelineStrip(
                     Spacer(Modifier.width(240.dp))
                 }
                 // Audio tracks
+                val videoEndMs = com.onevideog.editor.editor.ProjectMath
+                    .videoDurationMs(project.clips)
                 project.audioClips.take(4).forEach { audioClip ->
                     AudioTrackRow(
                         audioClip = audioClip,
@@ -204,6 +213,7 @@ fun TimelineStrip(
                         selected = audioClip.id == state.selectedAudioClipId,
                         viewModel = viewModel,
                         onOpenTool = onOpenTool,
+                        videoEndMs = videoEndMs,
                     )
                 }
                 if (project.audioClips.isEmpty()) {
@@ -259,18 +269,25 @@ fun TimelineStrip(
  * goes through the ViewModel scrub protocol ([EditorViewModel.beginScrub] /
  * [scrubTo] / [endScrub]) so the playhead can never be dragged back by
  * player updates.
+ *
+ * v0.3.0: the ruler spans [0, spanMs + 4 s] ([spanMs] = widest element) and
+ * shades [durationMs, spanMs] as the INACTIVE region — elements placed there
+ * persist but render nothing, so the user can see why and drag them back.
+ * Scrubbing still clamps to [durationMs] (the playhead never enters the
+ * inactive region — there is nothing to preview there).
  */
 @Composable
 private fun ScrubRuler(
     durationMs: Long,
+    spanMs: Long,
     scale: TimelineScale,
     viewModel: EditorViewModel,
     zoom: Float,
     scrollPx: () -> Int,
 ) {
     val density = LocalDensity.current
-    // Ruler covers the project plus 4 s of trailing space.
-    val widthDp = with(density) { scale.timeToPx(durationMs + 4_000L).toDp() }
+    // Ruler covers the widest element plus 4 s of trailing space.
+    val widthDp = with(density) { scale.timeToPx(spanMs + 4_000L).toDp() }
     Box(
         modifier = Modifier
             .width(widthDp)
@@ -327,10 +344,37 @@ private fun ScrubRuler(
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val pxPerSecond = scale.timeToPx(1_000L)
+            // v0.3.0: inactive-region shading — from the video end to the
+            // widest element, elements placed there render nothing.
+            if (spanMs > durationMs) {
+                val deadStart = scale.timeToPx(durationMs)
+                drawRect(
+                    color = androidx.compose.ui.graphics.Color(0x33F98A0B),
+                    topLeft = Offset(deadStart, 0f),
+                    size = androidx.compose.ui.geometry.Size(
+                        size.width - deadStart,
+                        size.height,
+                    ),
+                )
+                // Diagonal hatch marks the region as inactive.
+                val step = (6 * density.density)
+                var hx = deadStart
+                var guard = 0
+                while (hx < size.width && guard < 600) {
+                    drawLine(
+                        color = androidx.compose.ui.graphics.Color(0x55F98A0B),
+                        start = Offset(hx, size.height),
+                        end = Offset(hx + size.height, 0f),
+                        strokeWidth = 1f,
+                    )
+                    hx += step
+                    guard++
+                }
+            }
             // Tick every second when zoomed in, every 5 s when zoomed out.
             val stepSeconds = if (pxPerSecond >= 10f) 1 else 5
             val labelStepSeconds = stepSeconds * 5
-            val totalSeconds = (durationMs / 1000L).toInt() + 4
+            val totalSeconds = (spanMs / 1000L).toInt() + 4
             var s = 0
             while (s <= totalSeconds) {
                 val x = scale.timeToPx(s * 1000L * stepSeconds)
@@ -350,7 +394,7 @@ private fun ScrubRuler(
         // label's width is the px-consistent span of 5 seconds.
         if (scale.timeToPx(1_000L) >= 12f) {
             Row(modifier = Modifier.fillMaxHeight()) {
-                val labelCount = ((durationMs / 1000L).toInt() + 4) / 5 + 1
+                val labelCount = ((spanMs / 1000L).toInt() + 4) / 5 + 1
                 repeat(labelCount.coerceAtMost(600)) { i ->
                     Text(
                         formatDuration(i * 5_000L),

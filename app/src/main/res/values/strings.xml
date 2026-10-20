@@ -203,6 +203,12 @@
     <string name="timeline_add_audio_hint">+ Add an audio track</string>
     <string name="timeline_more_audio">+%1$d more audio tracks</string>
     <string name="timeline_image_marker">Image</string>
+    <string name="timeline_outside_video">outside video</string>
+    <string name="layer_show">Show layer</string>
+    <string name="layer_hide">Hide layer</string>
+    <string name="layer_lock">Lock layer against edits</string>
+    <string name="layer_unlock">Unlock layer</string>
+    <string name="layer_locked_hint">Layer locked: unlock it to edit</string>
 
     <!-- Preview -->
     <string name="preview_audio_active">%1$d audio track(s)</string>

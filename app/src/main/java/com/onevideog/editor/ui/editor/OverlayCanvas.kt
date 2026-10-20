@@ -65,7 +65,9 @@ internal fun computePlacements(
 ): List<PlacedOverlay> {
     if (contentWidth <= 0f || contentHeight <= 0f) return emptyList()
     return overlays
-        .filter { it.startMs <= playheadMs && playheadMs < it.endMs }
+        // v0.3.0: hidden layers render nothing (same rule as the export
+        // pipeline — see ClipEffectPlan.overlayWindowsForClip).
+        .filter { it.startMs <= playheadMs && playheadMs < it.endMs && it.visible }
         .sortedBy { it.zOrder }
         .mapNotNull { overlay ->
             val transform = KeyframeEvaluator.evaluate(overlay, playheadMs)
@@ -213,8 +215,14 @@ internal fun OverlayLayer(
                     var moved = false
                     var gestureTarget: OverlayItem? = null
 
-                    if (hit != null && hit.id == currentSelected.value() && selectedPlacement != null) {
-                        // The touched overlay is already selected: check handles.
+                    if (hit != null && hit.id == currentSelected.value() &&
+                        selectedPlacement != null && !hit.locked
+                    ) {
+                        // The touched overlay is already selected AND not
+                        // locked: check handles. Locked overlays stay
+                        // selectable (tap falls through to selection below)
+                        // but never start a transform/delete gesture —
+                        // v0.3.0 layer lock.
                         // The pointerInput scope is a Density — resolve zones in px.
                         val zoneR = 24.dp.toPx()
                         gestureTarget = hit

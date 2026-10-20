@@ -224,6 +224,17 @@ private fun OverlayDetailEditor(viewModel: EditorViewModel, overlay: OverlayItem
     SheetTitle(
         stringResource(if (overlay.isText) R.string.text_edit else R.string.image_edit),
     )
+    if (overlay.locked) {
+        // v0.3.0 layer lock: the ViewModel rejects every edit for a locked
+        // layer — show WHY the controls do nothing instead of a dead panel.
+        Text(
+            stringResource(R.string.layer_locked_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
+        return
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()

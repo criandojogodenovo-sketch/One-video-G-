@@ -475,8 +475,45 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun updateOverlay(overlayId: String, transform: (OverlayItem) -> OverlayItem) {
         commitProjectOrNull { project ->
             val overlays = project.overlays
-            if (overlays.none { it.id == overlayId }) return@commitProjectOrNull null
+            val target = overlays.firstOrNull { it.id == overlayId }
+                ?: return@commitProjectOrNull null
+            // v0.3.0 layer lock: every transform/keyframe write on a locked
+            // layer is rejected without an undo step. UI affordances disable
+            // themselves too; this is the single authoritative guard.
+            if (!OverlayEditing.isEditable(target.locked)) return@commitProjectOrNull null
             project.copy(overlays = overlays.map { if (it.id == overlayId) transform(it) else it })
+        }
+    }
+
+    /** v0.3.0: shows/hides a layer. Allowed even while locked (no edit). */
+    fun setOverlayVisible(overlayId: String, visible: Boolean) {
+        commitProjectOrNull { project ->
+            if (project.overlays.none { it.id == overlayId }) return@commitProjectOrNull null
+            project.copy(
+                overlays = project.overlays.map {
+                    if (it.id == overlayId && it.visible != visible) {
+                        it.copy(visible = visible)
+                    } else {
+                        it
+                    }
+                },
+            )
+        }
+    }
+
+    /** v0.3.0: locks/unlocks a layer against editing gestures. */
+    fun setOverlayLocked(overlayId: String, locked: Boolean) {
+        commitProjectOrNull { project ->
+            if (project.overlays.none { it.id == overlayId }) return@commitProjectOrNull null
+            project.copy(
+                overlays = project.overlays.map {
+                    if (it.id == overlayId && it.locked != locked) {
+                        it.copy(locked = locked)
+                    } else {
+                        it
+                    }
+                },
+            )
         }
     }
 
@@ -491,6 +528,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         commitProjectOrNull { project ->
             val overlay = project.overlays.firstOrNull { it.id == overlayId }
                 ?: return@commitProjectOrNull null
+            // v0.3.0 layer lock: moving an overlay bar in time is an edit.
+            if (!OverlayEditing.isEditable(overlay.locked)) return@commitProjectOrNull null
             val start = OverlayEditing.clampMove(newStartMs)
             val delta = start - overlay.startMs
             if (delta == 0L) return@commitProjectOrNull null
@@ -519,6 +558,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         commitProjectOrNull { project ->
             val overlay = project.overlays.firstOrNull { it.id == overlayId }
                 ?: return@commitProjectOrNull null
+            if (!OverlayEditing.isEditable(overlay.locked)) return@commitProjectOrNull null
             val start = OverlayEditing.clampTrimStart(
                 newStartMs,
                 overlay.endMs,
@@ -538,6 +578,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         commitProjectOrNull { project ->
             val overlay = project.overlays.firstOrNull { it.id == overlayId }
                 ?: return@commitProjectOrNull null
+            if (!OverlayEditing.isEditable(overlay.locked)) return@commitProjectOrNull null
             val end = OverlayEditing.clampTrimEnd(
                 overlay.startMs,
                 newEndMs,
@@ -556,7 +597,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun sendOverlayToBack(id: String) {
         commitProjectOrNull { project ->
             val bottom = (project.overlays.minOfOrNull { it.zOrder } ?: 0) - 1
-            if (project.overlays.none { it.id == id }) null
+            val target = project.overlays.firstOrNull { it.id == id }
+            if (target == null || !OverlayEditing.isEditable(target.locked)) null
             else project.copy(
                 overlays = project.overlays.map {
                     if (it.id == id) it.copy(zOrder = bottom) else it
@@ -566,6 +608,21 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun removeOverlay(id: String) {
+        // v0.3.0 layer lock: a locked layer cannot be deleted from the
+        // timeline/canvas; the layers sheet keeps the delete button enabled
+        // only for unlocked layers, so this guard is the authoritative one.
+        if (run {
+                val overlay = _ui.value.project?.overlays?.firstOrNull { it.id == id }
+                overlay != null && overlay.locked
+            }
+        ) {
+            DiagnosticsLogger.w(
+                "timeline", "OVERLAY_REMOVE_REJECTED", null,
+                "overlay delete rejected: layer locked",
+                meta = listOf("ovId" to DiagSanitizer.fingerprint(id)),
+            )
+            return
+        }
         DiagnosticsLogger.i(
             "timeline", "OVERLAY_REMOVE", null,
             "overlay removed",
@@ -580,7 +637,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun bringOverlayToFront(id: String) {
         commitProjectOrNull { project ->
             val top = (project.overlays.maxOfOrNull { it.zOrder } ?: 0) + 1
-            if (project.overlays.none { it.id == id }) null
+            val target = project.overlays.firstOrNull { it.id == id }
+            if (target == null || !OverlayEditing.isEditable(target.locked)) null
             else project.copy(
                 overlays = project.overlays.map {
                     if (it.id == id) it.copy(zOrder = top) else it

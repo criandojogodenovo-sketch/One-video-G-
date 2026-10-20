@@ -27,20 +27,22 @@ object ProjectMath {
         audioClips.maxOfOrNull { it.endMs } ?: 0L
 
     /**
-     * Authoritative project duration — THE documented project rule (v0.2.5):
+     * Authoritative project duration — THE documented project rule (v0.3.0):
      *
      *  - When the project has video clips, the duration is the VIDEO
-     *    timeline, extended to cover any overlay window that ends later.
-     *    AUDIO NEVER EXTENDS THE PROJECT DURATION: the Media3 1.4.1
-     *    composition is video-length (audio sequences are clamped to the
-     *    video duration — [AudioTimeline.exportPlan]), so an audio clip
-     *    longer than the video must not stretch the timeline, the playhead
-     *    range or the export plan. This is the device-reported
-     *    "durationMs changed after importing audio" bug (v0.2.4 report):
-     *    with a 3-minute song on a 30-second video the editor showed a
-     *    3-minute timeline while the exported file stayed 30 s — and
-     *    `verifyPlayable` then rejected the VALID file against the wrong
-     *    planned duration.
+     *    timeline — period. NOTHING extends it. The Media3 1.4.1 export
+     *    composition is exactly video-length (audio sequences are clamped
+     *    to the video duration — [AudioTimeline.exportPlan] — and overlay
+     *    windows only render inside clips), so the editor timeline, the
+     *    playhead range and the reported export duration must all equal the
+     *    video length or the user is shown a duration the exported file
+     *    does not have (v0.3.0 device-reported temporal bug: an image bar
+     *    dragged past the video end stretched the timeline while the export
+     *    stayed video-length, and playback beyond the video end froze the
+     *    UI). Elements whose windows fall outside the video range are NOT
+     *    discarded — they persist, stay editable in the timeline and simply
+     *    render nothing outside the active range (identical rule in preview
+     *    and export, see [ClipEffectPlan.overlayWindowsForClip]).
      *  - When the project has NO video clips (audio/overlay-only project),
      *    the duration is the longest element, so such projects stay usable.
      *
@@ -52,9 +54,21 @@ object ProjectMath {
         return if (project.clips.isEmpty()) {
             maxOf(overlayEndMs(project.overlays), audioEndMs(project.audioClips))
         } else {
-            maxOf(video, overlayEndMs(project.overlays))
+            video
         }
     }
+
+    /**
+     * Widest timeline extent of ANY element (video length, overlay bars,
+     * audio bars). The timeline UI renders out to this so bars placed past
+     * the video end remain visible and draggable (they render nothing, but
+     * the user can always move them back into the active range).
+     */
+    fun timelineSpanMs(project: OvgProject): Long = maxOf(
+        projectDurationMs(project),
+        overlayEndMs(project.overlays),
+        audioEndMs(project.audioClips),
+    )
 
     /** Start position of clip [index] on the video timeline. */
     fun clipStartMs(clips: List<Clip>, index: Int): Long =
