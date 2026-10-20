@@ -105,12 +105,30 @@ data class OverlayTransform(
     val rotationDeg: Float = 0f,
     val opacity: Float = 1f,
 ) {
+    /**
+     * v0.4.0 (E1 validation): non-finite values (NaN / ±Inf) fall back to the
+     * field default instead of poisoning the model — `coerceIn` passes NaN
+     * through unchanged (all comparisons against NaN are false), so a single
+     * bad value would disable every downstream clamp. Finite values keep
+     * their existing clamp behaviour; rotation is normalized for finiteness
+     * only (NOT wrapped to ±180 — wrapping would corrupt intentional
+     * multi-turn keyframe interpolation).
+     */
     fun withClampedValues(): OverlayTransform = copy(
-        x = x.coerceIn(0f, 1f),
-        y = y.coerceIn(0f, 1f),
-        scale = scale.coerceIn(0.05f, 1.6f),
-        opacity = opacity.coerceIn(0f, 1f),
+        x = x.finiteOrElse(0.5f).coerceIn(0f, 1f),
+        y = y.finiteOrElse(0.8f).coerceIn(0f, 1f),
+        scale = scale.finiteOrElse(0.6f).coerceIn(0.05f, 1.6f),
+        opacity = opacity.finiteOrElse(1f).coerceIn(0f, 1f),
+        rotationDeg = rotationDeg.finiteOrElse(0f),
     )
+
+    /** True when any component is non-finite (NaN or ±Inf). */
+    val hasNonFinite: Boolean
+        get() = !(x.isFinite() && y.isFinite() && scale.isFinite() &&
+            opacity.isFinite() && rotationDeg.isFinite())
+
+    private fun Float.finiteOrElse(fallback: Float): Float =
+        if (isFinite()) this else fallback
 }
 
 /**

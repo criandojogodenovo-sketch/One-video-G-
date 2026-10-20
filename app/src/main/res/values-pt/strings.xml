@@ -209,6 +209,11 @@
     <string name="layer_lock">Bloquear edição da camada</string>
     <string name="layer_unlock">Desbloquear camada</string>
     <string name="layer_locked_hint">Camada bloqueada: desbloqueie para editar</string>
+    <!-- v0.4.0 contextual transform quick panel (Etapa E) -->
+    <string name="quick_expand">Mostrar controlos de transformação</string>
+    <string name="quick_collapse">Ocultar controlos de transformação</string>
+    <string name="quick_open_editor">Abrir o editor completo da camada</string>
+    <string name="quick_deselect">Desmarcar camada</string>
 
     <!-- Pré-visualização -->
     <string name="preview_audio_active">%1$d faixa(s) de áudio</string>

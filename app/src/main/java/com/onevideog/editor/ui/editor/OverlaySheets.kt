@@ -365,17 +365,32 @@ private fun TransformSection(viewModel: EditorViewModel, overlay: OverlayItem) {
             it.copy(transform = it.transform.copy(y = value))
         }
     }
-    LabeledSlider(stringResource(R.string.transform_scale), t.scale, 0.05f..1.6f) { value ->
+    LabeledSlider(
+        stringResource(R.string.transform_scale),
+        t.scale,
+        0.05f..1.6f,
+        format = { v -> "${(v * 100).roundToInt()}%" },
+    ) { value ->
         viewModel.updateOverlay(overlay.id) {
             it.copy(transform = it.transform.copy(scale = value))
         }
     }
-    LabeledSlider(stringResource(R.string.transform_rotation), t.rotationDeg, -180f..180f) { value ->
+    LabeledSlider(
+        stringResource(R.string.transform_rotation),
+        t.rotationDeg,
+        -180f..180f,
+        format = { v -> "${v.roundToInt()}\u00b0" },
+    ) { value ->
         viewModel.updateOverlay(overlay.id) {
             it.copy(transform = it.transform.copy(rotationDeg = value))
         }
     }
-    LabeledSlider(stringResource(R.string.transform_opacity), t.opacity, 0f..1f) { value ->
+    LabeledSlider(
+        stringResource(R.string.transform_opacity),
+        t.opacity,
+        0f..1f,
+        format = { v -> "${(v * 100).roundToInt()}%" },
+    ) { value ->
         viewModel.updateOverlay(overlay.id) {
             it.copy(transform = it.transform.copy(opacity = value))
         }
@@ -387,18 +402,21 @@ private fun TransformSection(viewModel: EditorViewModel, overlay: OverlayItem) {
     )
 }
 
-/** Slider with local drag state and a single commit on release (undo-friendly). */
+/** Slider with local drag state, a single commit on release (undo-friendly)
+ *  and a per-property display format (v0.4.0: % for scale/opacity, ° for
+ *  rotation — model units are unchanged). */
 @Composable
 private fun LabeledSlider(
     label: String,
     value: Float,
     range: ClosedFloatingPointRange<Float>,
+    format: (Float) -> String = { v -> String.format("%.2f", v) },
     onCommit: (Float) -> Unit,
 ) {
     var dragValue by remember(label, value) { mutableStateOf<Float?>(null) }
     val shown = dragValue ?: value
     Text(
-        label + " " + String.format("%.2f", shown),
+        label + " " + format(shown.coerceIn(range.start, range.endInclusive)),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurface,
     )

@@ -35,6 +35,7 @@ import kotlin.math.sin
 import com.onevideog.editor.data.OverlayItem
 import com.onevideog.editor.data.OverlayKind
 import com.onevideog.editor.data.OverlayTransform
+import com.onevideog.editor.editor.GizmoMath
 import com.onevideog.editor.editor.KeyframeEvaluator
 import com.onevideog.editor.editor.OverlayBitmapRenderer
 import com.onevideog.editor.editor.OverlayLayout
@@ -225,6 +226,24 @@ internal fun OverlayLayer(
                     var base: OverlayTransform? = null
                     var moved = false
                     var gestureTarget: OverlayItem? = null
+                    // v0.4.0 incremental rotation state (D4): the handle angle
+                    // is accumulated per event via [GizmoMath.angleDelta] so
+                    // crossing the atan2 ±180° seam can never flip the model
+                    // rotation by a full turn (the old absolute-delta formula
+                    // jumped ~360° — device-visible quadrant jump).
+                    var rotateAccum = 0f
+                    var lastHandleAngle = 0f
+                    // v0.4.0 two-finger pinch/twist state (D3/D4): the touch
+                    // hint always advertised "pinch to resize, twist to
+                    // rotate" — now it actually works. Rebased from the
+                    // in-flight gesture so one-finger → two-finger transitions
+                    // never snap the overlay.
+                    var pinching = false
+                    var pinchStartDist = 0f
+                    var pinchBase: OverlayTransform? = null
+                    var pinchStartCentroid = Offset.Zero
+                    var lastPinchAngle = 0f
+                    var pinchRotateAccum = 0f
 
                     if (hit != null && hit.id == currentSelected.value() &&
                         selectedPlacement != null && !hit.locked
@@ -244,47 +263,103 @@ internal fun OverlayLayer(
                             selectedPlacement.isInScaleZone(down.position, zoneR) -> GestureMode.SCALE
                             else -> GestureMode.MOVE
                         }
+                        if (mode == GestureMode.ROTATE) {
+                            lastHandleAngle = angleDeg(
+                                selectedPlacement.centerX,
+                                selectedPlacement.centerY,
+                                down.position,
+                            )
+                        }
                         currentOnGesture.value(hit, base)
                     }
-                    val rotateStart = selectedPlacement?.let {
-                        angleDeg(it.centerX, it.centerY, down.position)
-                    } ?: 0f
                     val scaleStart = selectedPlacement?.let {
                         distance(it.centerX, it.centerY, down.position)
                     } ?: 1f
-
                     while (true) {
                         val event = awaitPointerEvent()
-                        val pressed = event.changes.any { it.pressed }
+                        val pressedPointers = event.changes.filter { it.pressed }
+                        val pressed = pressedPointers.isNotEmpty()
                         val pan = event.calculatePan()
                         if (base != null && gestureTarget != null && mode != GestureMode.DELETE) {
-                            val pointer = event.changes.firstOrNull { it.pressed }?.position
-                                ?: down.position
-                            val next = when (mode) {
-                                GestureMode.MOVE -> base.copy(
-                                    x = (base.x + pan.x / w).coerceIn(0f, 1f),
-                                    y = (base.y + pan.y / h).coerceIn(0f, 1f),
+                            // ---- two-finger pinch/twist upgrade (v0.4.0) ----
+                            // Only while the FIRST finger is moving the
+                            // already-selected, unlocked overlay (mode ==
+                            // MOVE): a second finger upgrades the drag to a
+                            // simultaneous move+scale+rotate around the
+                            // finger centroid.
+                            if (mode == GestureMode.MOVE && pressedPointers.size >= 2 && !pinching) {
+                                val (a, b) = pressedPointers.take(2).map { it.position }
+                                pinching = true
+                                pinchBase = base
+                                pinchStartDist = twoFingerDistance(a, b)
+                                lastPinchAngle = twoFingerAngle(a, b)
+                                pinchStartCentroid = Offset(
+                                    (a.x + b.x) / 2f,
+                                    (a.y + b.y) / 2f,
                                 )
-                                GestureMode.SCALE -> {
-                                    val dist = distance(
-                                        selectedPlacement!!.centerX,
-                                        selectedPlacement.centerY,
-                                        pointer,
+                                pinchRotateAccum = 0f
+                            }
+                            if (pinching && pressedPointers.size < 2) {
+                                // Back to one finger: continue as a plain
+                                // move from the pinch-accumulated state.
+                                pinching = false
+                            }
+                            val next = if (pinching && pressedPointers.size >= 2) {
+                                val (a, b) = pressedPointers.take(2).map { it.position }
+                                val nowDist = twoFingerDistance(a, b)
+                                val nowCentroid = Offset((a.x + b.x) / 2f, (a.y + b.y) / 2f)
+                                val nowAngle = twoFingerAngle(a, b)
+                                pinchRotateAccum += GizmoMath.angleDelta(lastPinchAngle, nowAngle)
+                                lastPinchAngle = nowAngle
+                                val pb = pinchBase ?: base
+                                pb.copy(
+                                    x = (pb.x + (nowCentroid.x - pinchStartCentroid.x) / w)
+                                        .coerceIn(0f, 1f),
+                                    y = (pb.y + (nowCentroid.y - pinchStartCentroid.y) / h)
+                                        .coerceIn(0f, 1f),
+                                    scale = GizmoMath.pinchScale(
+                                        pb.scale,
+                                        pinchStartDist,
+                                        nowDist,
+                                    ),
+                                    rotationDeg = pb.rotationDeg + pinchRotateAccum,
+                                )
+                            } else {
+                                val pointer = pressedPointers.firstOrNull()?.position
+                                    ?: down.position
+                                when (mode) {
+                                    GestureMode.MOVE -> base.copy(
+                                        x = (base.x + pan.x / w).coerceIn(0f, 1f),
+                                        y = (base.y + pan.y / h).coerceIn(0f, 1f),
                                     )
-                                    base.copy(
-                                        scale = (base.scale * (dist / scaleStart.coerceAtLeast(1f)))
-                                            .coerceIn(0.05f, 1.6f),
-                                    )
+                                    GestureMode.SCALE -> {
+                                        val dist = distance(
+                                            selectedPlacement!!.centerX,
+                                            selectedPlacement.centerY,
+                                            pointer,
+                                        )
+                                        base.copy(
+                                            scale = (base.scale * (dist / scaleStart.coerceAtLeast(1f)))
+                                                .coerceIn(0.05f, 1.6f),
+                                        )
+                                    }
+                                    GestureMode.ROTATE -> {
+                                        val angle = angleDeg(
+                                            selectedPlacement!!.centerX,
+                                            selectedPlacement.centerY,
+                                            pointer,
+                                        )
+                                        // Incremental, seam-safe accumulation
+                                        // (v0.4.0 — no quadrant jumps).
+                                        rotateAccum += GizmoMath.angleDelta(
+                                            lastHandleAngle,
+                                            angle,
+                                        )
+                                        lastHandleAngle = angle
+                                        base.copy(rotationDeg = base.rotationDeg + rotateAccum)
+                                    }
+                                    else -> null
                                 }
-                                GestureMode.ROTATE -> {
-                                    val angle = angleDeg(
-                                        selectedPlacement!!.centerX,
-                                        selectedPlacement.centerY,
-                                        pointer,
-                                    )
-                                    base.copy(rotationDeg = base.rotationDeg + (angle - rotateStart))
-                                }
-                                else -> null
                             }
                             if (next != null) {
                                 moved = true
@@ -349,8 +424,12 @@ internal fun OverlayLayer(
             placements.forEach { placed -> drawPlaced(placed) }
         }
         // Pass 2 — chrome: drawn separately, ONLY for the selected overlay,
-        // AFTER all content so the handles sit on top of everything.
-        placements.firstOrNull { it.selected }?.let { drawSelectionChrome(it) }
+        // AFTER all content so the handles sit on top of everything. A LOCKED
+        // layer draws bounds-only chrome (no handles): the handles would be
+        // inert and only invite dead taps (v0.4.0 — E3).
+        placements.firstOrNull { it.selected }?.let {
+            drawSelectionChrome(it, interactive = !it.overlay.locked)
+        }
     }
 }
 
@@ -358,6 +437,19 @@ private enum class GestureMode { IDLE, MOVE, SCALE, ROTATE, DELETE }
 
 private fun distance(x: Float, y: Float, point: Offset): Float =
     kotlin.math.hypot((point.x - x).toDouble(), (point.y - y).toDouble()).toFloat()
+
+/** Distance between two touch points (two-finger spread — v0.4.0 pinch). */
+private fun twoFingerDistance(a: Offset, b: Offset): Float =
+    kotlin.math.hypot(
+        (b.x - a.x).toDouble(),
+        (b.y - a.y).toDouble(),
+    ).toFloat()
+
+/** Clockwise-positive screen angle (y-down) of the a→b vector. */
+private fun twoFingerAngle(a: Offset, b: Offset): Float =
+    Math.toDegrees(
+        kotlin.math.atan2((b.y - a.y).toDouble(), (b.x - a.x).toDouble()).toDouble(),
+    ).toFloat()
 
 /** Clockwise-positive screen angle (y-down) of [point] around (x, y). */
 private fun angleDeg(x: Float, y: Float, point: Offset): Float =
@@ -398,8 +490,12 @@ private fun PlacedOverlay.distanceTo(point: Offset): Float =
 /**
  * Selection chrome: bounds, rotation stem + knob (top-centre), delete chip
  * (top-right) and scale corner (bottom-right). Editor-only — never exported.
+ *
+ * v0.4.0: [interactive] == false (locked layer) draws ONLY the bounds, in a
+ * dimmed accent, without the handles — a locked layer rejects every gesture,
+ * so dead handles would only invite taps that do nothing.
  */
-private fun DrawScope.drawSelectionChrome(placed: PlacedOverlay) {
+private fun DrawScope.drawSelectionChrome(placed: PlacedOverlay, interactive: Boolean) {
     val accent = Color(0xFFF98A0B)
     val zone = 24.dp.toPx()
     val handleR = zone * 0.5f
@@ -409,13 +505,14 @@ private fun DrawScope.drawSelectionChrome(placed: PlacedOverlay) {
         rotate(degrees = placed.transform.rotationDeg, pivot = Offset(placed.centerX, placed.centerY))
     }) {
         drawRoundRect(
-            color = accent,
+            color = if (interactive) accent else accent.copy(alpha = 0.5f),
             topLeft = Offset(left, top),
             size = Size(placed.widthPx, placed.heightPx),
             cornerRadius = CornerRadius(8f, 8f),
             style = Stroke(width = 2.5f),
         )
     }
+    if (!interactive) return
     // Rotation stem + knob (above the top edge centre, rotates with the box).
     val knob = placed.rotateHandlePos(zone)
     val topCenter = placed.toCanvas(Offset(0f, -placed.heightPx / 2f))

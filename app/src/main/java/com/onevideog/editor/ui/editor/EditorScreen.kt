@@ -182,6 +182,16 @@ fun EditorScreen(
             }
         }
 
+        // v0.4.0 (Etapa E1/E4): contextual transform panel for the selected
+        // text/image layer. Inline (not modal) so the preview element stays
+        // visible and touchable; collapsed to one row until expanded; its
+        // commits go through the same updateOverlay path as the gizmos (one
+        // undo step per control) and never rebuild the player or effects.
+        TransformQuickPanel(
+            viewModel = viewModel,
+            onOpenEditor = { activeTool = it },
+        )
+
         // Transport bar: play/pause + seek + project time, BELOW the canvas.
         // The preview area stays free for selecting/manipulating overlays.
         TransportBar(viewModel = viewModel)
