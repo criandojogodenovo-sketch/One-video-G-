@@ -65,6 +65,10 @@ object AudioTimeline {
     ): Long? {
         val duration = clip.trimmedDurationMs
         if (duration <= 0 || clip.sourceDurationMs <= 0) return null
+        // Project rule (v0.2.5): with video present, audio never sounds past
+        // the video end — identical to the export clamp ([exportPlan]).
+        // The videoDurationMs > 0 condition keeps audio-only projects usable.
+        if (videoDurationMs > 0 && playheadMs >= videoDurationMs) return null
         val local = playheadMs - clip.startMs
         if (local < 0) return null
         val sourceOffset: Long = if (clip.loop) {

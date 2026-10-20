@@ -16,8 +16,31 @@ call the same functions — neither has a second implementation:
 | Audio placement          | `AudioTimeline.segmentsFor`              | `AudioPreviewController`          | audio `EditedMediaItemSequence` builder    |
 
 Timeline, clip labels, preview and export all read duration from
-`ProjectMath.projectDurationMs` (video sequence, extended to the latest
-audio/overlay end). There is no other duration calculation.
+`ProjectMath.projectDurationMs`. There is no other duration calculation.
+
+## Project duration rule (v0.2.5 — authoritative)
+
+1. **With video present**, the project duration is the **video sequence
+   length, extended to the latest overlay end**. **Audio NEVER extends the
+   project duration.** Media3 1.4.1 compositions are video-length: audio
+   sequences are clamped to the video duration (`AudioTimeline.exportPlan`),
+   and overlays only render inside clips. An audio clip longer than the video
+   is therefore audible/visible exactly up to the video end in BOTH preview
+   (`AudioTimeline.sourcePositionAt` clamps at the video end) and export.
+   This rule fixes the v0.2.4 device report where importing a long audio
+   stretched the editor timeline (and the export plan) while the exported
+   file stayed video-length — `ExportManager.verifyPlayable` then rejected
+   the VALID file.
+2. **Audio-only projects** (no video clips) keep an element-driven duration
+   (longest audio/overlay), so such projects remain playable.
+3. Overlay windows may extend past the video end in the editor timeline
+   (playhead range), but the exported file ends with the video — documented
+   editor-only extension.
+
+Preview and export read the SAME values from the SAME functions; the export
+plan (`CompositionFactory.Plan.plannedDurationMs`) uses the video sequence
+length for projects with video, so duration validation matches the produced
+file.
 
 ## Time base (important)
 

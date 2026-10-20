@@ -147,4 +147,49 @@ class DiagLogStoreTest {
         repeat(5) { store.append(event(it)) }
         assertTrue(store.approximateTotalBytes() > 0)
     }
+
+    @Test
+    fun `restart recount restores the persisted event count (v0_2_5)`() {
+        // Root cause of the device report's events_recorded=0: count was
+        // RAM-only while files persisted. A NEW store over the SAME dir must
+        // recover the real count from disk.
+        val dir = tmp.newFolder()
+        val first = DiagLogStore(dir)
+        first.setEnabled(true)
+        repeat(7) { first.append(event(it)) }
+        assertEquals(7, first.eventCount())
+        // "Process restart": fresh instance, same directory (settings are
+        // restored from prefs in production before any append — mirror that).
+        val second = DiagLogStore(dir)
+        second.setEnabled(true)
+        assertEquals(0, second.eventCount()) // RAM counter starts at 0
+        second.recountFromDisk()
+        assertEquals(7, second.eventCount())
+        // Counting continues from the restored value.
+        assertTrue(second.append(event(100)))
+        assertEquals(8, second.eventCount())
+    }
+
+    @Test
+    fun `restart recount reports rotation from persisted files`() {
+        val dir = tmp.newFolder()
+        val tiny = DiagLogStore(dir, maxFileBytes = 64, keepPrevious = 1)
+        tiny.setEnabled(true)
+        repeat(30) { tiny.append(event(it, "message-with-some-length-$it")) }
+        assertTrue(tiny.hasRotated())
+        // Fresh instance: rotation flag is restored by the recount too.
+        val second = DiagLogStore(dir, maxFileBytes = 64, keepPrevious = 1)
+        assertFalse(second.hasRotated())
+        second.recountFromDisk()
+        assertTrue(second.hasRotated())
+        assertTrue(second.eventCount() > 0)
+    }
+
+    @Test
+    fun `recount on an empty directory keeps zero`() {
+        val store = DiagLogStore(tmp.newFolder())
+        store.recountFromDisk()
+        assertEquals(0, store.eventCount())
+        assertFalse(store.hasRotated())
+    }
 }

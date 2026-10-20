@@ -34,12 +34,14 @@ import com.onevideog.editor.diag.DiagSanitizer
 import com.onevideog.editor.diag.DiagnosticsLogger
 import com.onevideog.editor.diag.OpRegistry
 import com.onevideog.editor.editor.AudioPreviewController
+import com.onevideog.editor.editor.ClipEffectPlan
 import com.onevideog.editor.editor.ClipEffectsFactory
 import com.onevideog.editor.editor.EditorViewModel
 import com.onevideog.editor.editor.OverlayLayout
 import com.onevideog.editor.editor.PlayheadGate
 import com.onevideog.editor.editor.ProjectMath
 import com.onevideog.editor.editor.TimelineLogic
+import com.onevideog.editor.editor.ViewportGeometryTracker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -143,6 +145,14 @@ fun PreviewStage(viewModel: EditorViewModel) {
     // Player readiness drives the canvas fallback (overlays must stay visible
     // during media switches and for overlay-only projects over black).
     var playerReady by remember { mutableStateOf(false) }
+    // v0.2.5 geometry evidence: the three REAL dimension sources are tracked
+    // separately (master-prompt item 2 — "PREVIEW_RENDER w=0 h=0"):
+    //   video  = decoder output geometry (onVideoSizeChanged)
+    //   surface= the TextureView/PlayerView layout size
+    //   viewport = the fitted content box inside the stage container
+    var videoSize by remember { mutableStateOf(VideoSize.UNKNOWN) }
+    var surfaceSize by remember { mutableStateOf(0 to 0) }
+    val geometryTracker = remember { ViewportGeometryTracker() }
     // Keep the icon/state and the player in lock-step: STATE_ENDED and decode
     // errors flip `isPlaying` off so the UI never shows a phantom "playing".
     DisposableEffect(player) {
@@ -156,17 +166,28 @@ fun PreviewStage(viewModel: EditorViewModel) {
                 // v0.2.4: real-render evidence — this fires when the decoder
                 // has output configured for the surface, distinguishing
                 // "frame actually produced" from "item prepared/effects list
-                // attached". Bounds the next report away from the previous
-                // ambiguity (decode OK / overlay OK / render unknown).
-                DiagnosticsLogger.d(
-                    "preview", "PREVIEW_RENDER", previewOpId,
-                    "decoder produced output geometry",
-                    meta = listOf(
-                        "w" to size.width.toString(),
-                        "h" to size.height.toString(),
-                        "pixelWH" to (size.pixelWidthHeightRatio.toString()),
-                    ),
-                )
+                // attached". v0.2.5: a 0x0 callback is NO LONGER reported as
+                // geometry (it means no video track was decoded for this
+                // item — e.g. an audio-only item) so the report cannot
+                // misread w=0 as a decode failure without evidence.
+                videoSize = size
+                if (size.width <= 0 || size.height <= 0) {
+                    DiagnosticsLogger.d(
+                        "preview", "PREVIEW_RENDER", previewOpId,
+                        "no video track geometry for this item (video=none)",
+                        meta = listOf("video" to "none"),
+                    )
+                } else {
+                    DiagnosticsLogger.d(
+                        "preview", "PREVIEW_RENDER", previewOpId,
+                        "decoder produced output geometry",
+                        meta = listOf(
+                            "w" to size.width.toString(),
+                            "h" to size.height.toString(),
+                            "pixelWH" to (size.pixelWidthHeightRatio.toString()),
+                        ),
+                    )
+                }
             }
 
             override fun onPlayerError(error: PlaybackException) {
@@ -185,20 +206,19 @@ fun PreviewStage(viewModel: EditorViewModel) {
     }
 
     // ------------------- shared effect pipeline (preview) ---------------------
-    // Revision key: clip identity + every project input the effect list
-    // depends on. Any overlay add/delete/edit, colour, speed or aspect change
-    // rebuilds the list and forces a new input stream so Media3 applies it.
-    val effectsRevision = remember(currentClip, project.aspect, project.overlays) {
-        listOf(
-            currentClip?.id,
-            currentClip?.trimStartMs,
-            currentClip?.trimEndMs,
-            currentClip?.speed,
-            currentClip?.color,
-            project.aspect,
-            project.overlays.hashCode(),
-        ).hashCode()
-    }
+    // v0.2.5 revision key: the EFFECTIVE signature for THIS clip
+    // ([ClipEffectPlan.effectiveSignature]) — clip identity/trim/speed/colour
+    // + aspect + only the overlays whose windows intersect the clip. The
+    // previous key was project.overlays.hashCode(), so ANY overlay edit
+    // anywhere (even an overlay on another clip or a completely different
+    // time window) rebuilt this clip's effect list and re-prepared the
+    // decoder — one avoidable decoder init per unrelated edit. The playhead
+    // is not an input: a playhead move alone can never rebuild.
+    // Recomputed every recomposition (cheap; overlay counts are small) so a
+    // new project snapshot with an unchanged effective config keeps the same
+    // Int key and LaunchedEffect does NOT restart.
+    val effectsRevision =
+        ClipEffectPlan.effectiveSignature(project, currentClip, clipStart)
 
     fun mediaItemFor(clip: com.onevideog.editor.data.Clip): MediaItem =
         MediaItem.Builder()
@@ -373,9 +393,16 @@ fun PreviewStage(viewModel: EditorViewModel) {
         ) {
             AndroidView(
                 factory = { ctx ->
-                    android.view.LayoutInflater.from(ctx)
+                    (android.view.LayoutInflater.from(ctx)
                         .inflate(R.layout.view_player_texture, null, false) as
-                        androidx.media3.ui.PlayerView
+                        androidx.media3.ui.PlayerView).apply {
+                        // v0.2.5: surface target dimensions (the view that
+                        // hosts the TextureView) tracked for the geometry
+                        // evidence event.
+                        addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+                            surfaceSize = v.width to v.height
+                        }
+                    }
                 },
                 update = { view ->
                     view.player = player
@@ -386,6 +413,40 @@ fun PreviewStage(viewModel: EditorViewModel) {
             var gestureState by remember {
                 mutableStateOf<Pair<String, OverlayTransform>?>(null)
             }
+            // v0.2.5: one bounded evidence event whenever ANY of the three
+            // dimension sources changes (deduped by the tracker — layout
+            // passes fire far more often than the geometry actually moves).
+            LaunchedEffect(videoSize, surfaceSize, containerW, containerH, fitted.width, fitted.height, contentAspect) {
+                if (geometryTracker.shouldLog(
+                        ViewportGeometryTracker.Geometry(
+                            videoW = videoSize.width,
+                            videoH = videoSize.height,
+                            surfaceW = surfaceSize.first,
+                            surfaceH = surfaceSize.second,
+                            viewportW = fitted.width.toInt(),
+                            viewportH = fitted.height.toInt(),
+                            contentAspect = contentAspect,
+                        ),
+                    )
+                ) {
+                    DiagnosticsLogger.i(
+                        "preview", "VIEWPORT_GEOMETRY", previewOpId,
+                        "video vs surface vs viewport dimensions",
+                        meta = listOf(
+                            "videoW" to videoSize.width.toString(),
+                            "videoH" to videoSize.height.toString(),
+                            "surfaceW" to surfaceSize.first.toString(),
+                            "surfaceH" to surfaceSize.second.toString(),
+                            "viewportW" to fitted.width.toInt().toString(),
+                            "viewportH" to fitted.height.toInt().toString(),
+                            "contentAspect" to contentAspect.toString(),
+                            "containerW" to containerW.toInt().toString(),
+                            "containerH" to containerH.toInt().toString(),
+                        ),
+                    )
+                }
+            }
+
             OverlayLayer(
                 overlays = project.overlays,
                 playheadMs = { state.playheadMs },

@@ -939,6 +939,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private fun commitProjectOrNull(transform: (OvgProject) -> OvgProject?) {
         val current = _ui.value.project ?: return
         val next = transform(current) ?: return
+        // v0.2.5 no-op guard: a transform that produces an identical snapshot
+        // (e.g. a tap-gesture "commit" with unchanged transform) must not
+        // create an undo step, an autosave, or a new project reference — the
+        // same reference keeps downstream recomposition/effects keys stable.
+        if (next == current) return
         history.commit(next)
         _ui.value = _ui.value.copy(
             project = next,

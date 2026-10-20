@@ -81,6 +81,23 @@ class AudioTimelineTest {
     }
 
     @Test
+    fun `non-loop audio is silent at and past the video end (v0_2_5 rule)`() {
+        // Preview/export parity: with video present, an audio clip whose trim
+        // window extends past the video end must not be audible there — the
+        // export clamps it ([AudioTimeline.exportPlan]).
+        val c = clip(5_000, 0, 20_000) // 20 s of audio placed at 5 s on a 10 s video
+        assertEquals(4_999L, AudioTimeline.sourcePositionAt(c, 9_999, 10_000))
+        assertNull(AudioTimeline.sourcePositionAt(c, 10_000, 10_000))
+        assertNull(AudioTimeline.sourcePositionAt(c, 12_000, 10_000))
+    }
+
+    @Test
+    fun `audio-only project (no video) is never clamped by the video end`() {
+        val c = clip(0, 0, 20_000)
+        assertEquals(19_999L, AudioTimeline.sourcePositionAt(c, 19_999, 0))
+    }
+
+    @Test
     fun `source position never exceeds the source duration`() {
         val c = AudioClipItem(
             id = "a", uri = "u", displayName = "d", sourceDurationMs = 5_000,

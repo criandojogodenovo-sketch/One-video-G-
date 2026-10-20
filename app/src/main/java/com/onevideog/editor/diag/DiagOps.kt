@@ -192,3 +192,83 @@ object ImageImportStages {
     const val ACTIVATION = "ACTIVATION"                // K
     const val RENDER_FAIL = "RENDER_FAIL"              // L
 }
+
+/**
+ * Rebuilds op summaries in [registry] from PERSISTED log lines (v0.2.5).
+ *
+ * Root cause fixed here: [OpRegistry] is in-memory by design, so after a
+ * process restart the clipboard report showed a real log tail but
+ * "Recent operations: none recorded". The persisted one-line format
+ * ([EventFormatter]) is deterministic and field-safe (pipe characters are
+ * flattened at write time), so the tail can be replayed: the registry is
+ * reconstructed with the same op ids, kinds, stages, severities and event
+ * counts the session would have produced.
+ *
+ * Pure and line-oriented — malformed lines are skipped, never thrown.
+ */
+object DiagRegistryReplay {
+
+    private const val SEP = " | "
+
+    fun replay(lines: List<String>, registry: OpRegistry) {
+        for (line in lines) {
+            val parsed = parse(line) ?: continue
+            registry.record(
+                opId = parsed.opId,
+                kind = kindFor(parsed.subsystem),
+                stage = parsed.stage,
+                severity = parsed.severity,
+                atMs = parsed.epochMs,
+                finalState = finalStateFor(parsed.stage, parsed.severity),
+            )
+        }
+    }
+
+    internal data class ParsedLine(
+        val epochMs: Long,
+        val severity: Severity,
+        val subsystem: String,
+        val stage: String,
+        val opId: String,
+    )
+
+    internal fun parse(line: String): ParsedLine? {
+        val parts = line.split(SEP)
+        // Minimal shape: ts | SEVERITY | subsystem | stage (op optional but
+        // required for replay — app-level lines without op= carry no op).
+        if (parts.size < 4) return null
+        val severity = Severity.entries.firstOrNull { it.name == parts[1].trim() }
+            ?: return null
+        val subsystem = parts[2].trim()
+        val stage = parts[3].trim()
+        if (subsystem.isEmpty() || stage.isEmpty()) return null
+        // op= is the 5th field when present (never inside meta: field-safe
+        // formatter flattens '|' in keys/values/messages).
+        if (parts.size < 5) return null
+        val opField = parts[4].trim()
+        if (!opField.startsWith("op=")) return null
+        val opId = opField.substring(3).trim()
+        if (opId.isEmpty()) return null
+        val epochMs = parseTimestamp(parts[0].trim())
+        return ParsedLine(epochMs, severity, subsystem, stage, opId)
+    }
+
+    /** Mirrors [EventFormatter] timestamp; unparsable stamps count as 0. */
+    internal fun parseTimestamp(raw: String): Long = runCatching {
+        java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.US)
+            .parse(raw)?.time
+    }.getOrNull() ?: 0L
+
+    internal fun kindFor(subsystem: String): String = when (subsystem) {
+        "import" -> OpRegistry.KIND_IMAGE_IMPORT
+        "export" -> OpRegistry.KIND_EXPORT
+        else -> subsystem
+    }
+
+    /** Mirrors the write-time final-state mapping. */
+    internal fun finalStateFor(stage: String, severity: Severity): String? = when {
+        stage == "DONE" || stage == "COMPLETED_OK" -> "success"
+        stage == "FAILED" || severity == Severity.ERROR -> "failure"
+        else -> null
+    }
+}
