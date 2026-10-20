@@ -20,6 +20,7 @@ import com.onevideog.editor.data.ProjectRepository
 import com.onevideog.editor.diag.DiagSanitizer
 import com.onevideog.editor.diag.DiagnosticsLogger
 import com.onevideog.editor.editor.ExportConfig.Quality
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -45,6 +46,15 @@ class ExportService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var manager: ExportManager? = null
+
+    /**
+     * v0.2.4 process-wide single-export guard. Every ACTION_START used to
+     * create a NEW ExportManager (line below), so two near-simultaneous
+     * service starts produced TWO Transformers and two export ops
+     * (device evidence: exp-b7bf477d / exp-b96c0125). Now the second request
+     * is logged and rejected while one is in flight.
+     */
+    private val exportInFlight = AtomicBoolean(false)
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -78,6 +88,19 @@ class ExportService : Service() {
         val qualityName = intent.getStringExtra(EXTRA_QUALITY) ?: Quality.MEDIUM.name
         val destination = intent.getStringExtra(EXTRA_DESTINATION_URI) ?: run { stopSelf(); return }
 
+        // v0.2.4: reject accidental concurrent exports BEFORE any work.
+        if (!exportInFlight.compareAndSet(false, true)) {
+            DiagnosticsLogger.w(
+                "export", "DUPLICATE_REQUEST", null,
+                "duplicate ACTION_START ignored: an export is already in flight",
+                meta = listOf(
+                    "projectId" to DiagSanitizer.fingerprint(projectId),
+                ),
+            )
+            stopSelf()
+            return
+        }
+
         DiagnosticsLogger.i(
             "export", "SERVICE_START", null,
             "export service received START",
@@ -97,6 +120,7 @@ class ExportService : Service() {
                 meta = listOf("projectId" to DiagSanitizer.fingerprint(projectId)),
             )
             ExportBus.update(projectId, null, ExportManager.State.Failed(ExportManager.Failure.VALIDATION_FAILED))
+            exportInFlight.set(false)
             stopSelf()
             return
         }
@@ -145,6 +169,7 @@ class ExportService : Service() {
 
     private fun finish() {
         manager = null
+        exportInFlight.set(false)
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH)
         stopSelf()
     }
@@ -162,6 +187,7 @@ class ExportService : Service() {
         }
         manager?.cancel()
         manager = null
+        exportInFlight.set(false)
         serviceScope.cancel()
         super.onDestroy()
     }

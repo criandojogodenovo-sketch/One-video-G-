@@ -2,6 +2,7 @@ package com.onevideog.editor
 
 import com.onevideog.editor.editor.TimelineScale
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
 
@@ -81,5 +82,54 @@ class TimelineScaleTest {
             0.01f,
         )
         assert(abs(long - short * 10f) < 0.5f)
+    }
+
+    /**
+     * v0.2.4 regression: device-evidence positions (start / middle / end)
+     * must round-trip through the ruler mapping at the reporting device's
+     * density (realme RMX3624 — 720 px-wide HD+ panel, density 1.65) and at
+     * the other common phone densities, for every zoom step. A mapping bug
+     * would show up as a large px→time error at one of the extremes.
+     */
+    @Test
+    fun `start middle and end scrub positions map correctly at device densities`() {
+        val durationMs = 60_000L
+        val fractions = floatArrayOf(0f, 0.25f, 0.5f, 0.75f, 1f)
+        val zooms = floatArrayOf(0.5f, 1f, 2f, 4f)
+        for (density in floatArrayOf(1f, 1.65f, 2.15f, 2.6f)) {
+            for (zoom in zooms) {
+                val scale = TimelineScale(density = density, zoom = zoom)
+                for (fraction in fractions) {
+                    val targetMs = (durationMs * fraction).toLong()
+                    val px = scale.timeToPx(targetMs)
+                    val back = scale.pxToTimeClamped(px, durationMs)
+                    // Sub-pixel round trip: 1 px of error at zoom 0.5 /
+                    // density 1 is 120 ms; at the tightest zoom the tolerance
+                    // is one design pixel.
+                    val toleranceMs = TimelineScale.DESIGN_MS_PER_PX / zoom * 1.01f
+                    assertEquals(
+                        "density=$density zoom=$zoom fraction=$fraction",
+                        targetMs.toFloat(),
+                        back.toFloat(),
+                        toleranceMs,
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * v0.2.4 regression: the device report showed a scrub ending at 120 ms.
+     * Whatever produced it, the mapping itself must be able to REPRESENT
+     * 120 ms exactly where the finger lands and clamp negative px to 0.
+     */
+    @Test
+    fun `near-zero scrub positions clamp and represent correctly`() {
+        val scale = TimelineScale(density = 1.65f, zoom = 1f)
+        assertEquals(0L, scale.pxToTimeClamped(-50f, 60_000L))
+        assertEquals(0L, scale.pxToTimeClamped(0f, 60_000L))
+        val px120 = scale.timeToPx(120L)
+        assertTrue(px120 >= 0f)
+        assertEquals(120f, scale.pxToTimeClamped(px120, 60_000L).toFloat(), TimelineScale.DESIGN_MS_PER_PX * 1.01f)
     }
 }

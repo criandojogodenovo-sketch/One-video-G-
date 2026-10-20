@@ -791,18 +791,34 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
      * pointer. Playback pauses so the player cannot fight the drag; the
      * previous playing state is restored on [endScrub]. Instrumented (cold:
      * once per gesture) — gesture-correlation evidence for the timeline
-     * touch-reliability problem.
+     * touch-reliability problem. v0.2.4: the gesture now carries full
+     * coordinate evidence (pointer px, mapped time, scroll, zoom, density)
+     * so the next device report can conclusively separate mapping bugs from
+     * user gestures.
      */
-    fun beginScrub() {
+    fun beginScrub(
+        pointerXpx: Float? = null,
+        mappedMs: Long? = null,
+        scrollPx: Int? = null,
+        zoom: Float? = null,
+        density: Float? = null,
+        durationMs: Long? = null,
+    ) {
         if (_ui.value.isScrubbing) return
         wasPlayingBeforeScrub = _ui.value.isPlaying
         _ui.value = _ui.value.copy(isScrubbing = true, isPlaying = false)
         DiagnosticsLogger.d(
             "timeline", "SCRUB_START", null,
             "scrub gesture started",
-            meta = listOf(
+            meta = listOfNotNull(
                 "playheadMs" to _ui.value.playheadMs.toString(),
                 "wasPlaying" to wasPlayingBeforeScrub.toString(),
+                pointerXpx?.let { "pointerXpx" to it.toString() },
+                mappedMs?.let { "mappedMs" to it.toString() },
+                scrollPx?.let { "scrollPx" to it.toString() },
+                zoom?.let { "zoom" to it.toString() },
+                density?.let { "density" to it.toString() },
+                durationMs?.let { "durationMs" to it.toString() },
             ),
         )
     }
@@ -810,17 +826,33 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * End of a scrub: seek the player to the final playhead (async seek —
      * the UI playhead stays where the user left it) and resume playback if
-     * it was running when the drag started.
+     * it was running when the drag started. v0.2.4: the seek happens BEFORE
+     * playback resumes and the preview publisher is gated by [PlayheadGate]
+     * so a stale pre-seek player position can never overwrite the final
+     * playhead (the device "scrub ends at 120 ms and snaps back to 10163" bug).
      */
-    fun endScrub() {
+    fun endScrub(
+        pointerXpx: Float? = null,
+        mappedMs: Long? = null,
+        scrollPx: Int? = null,
+        zoom: Float? = null,
+        density: Float? = null,
+        durationMs: Long? = null,
+    ) {
         if (!_ui.value.isScrubbing) return
         _ui.value = _ui.value.copy(isScrubbing = false)
         DiagnosticsLogger.d(
             "timeline", "SCRUB_END", null,
             "scrub gesture ended",
-            meta = listOf(
+            meta = listOfNotNull(
                 "playheadMs" to _ui.value.playheadMs.toString(),
                 "resumePlaying" to wasPlayingBeforeScrub.toString(),
+                pointerXpx?.let { "pointerXpx" to it.toString() },
+                mappedMs?.let { "mappedMs" to it.toString() },
+                scrollPx?.let { "scrollPx" to it.toString() },
+                zoom?.let { "zoom" to it.toString() },
+                density?.let { "density" to it.toString() },
+                durationMs?.let { "durationMs" to it.toString() },
             ),
         )
         seekTo(_ui.value.playheadMs)

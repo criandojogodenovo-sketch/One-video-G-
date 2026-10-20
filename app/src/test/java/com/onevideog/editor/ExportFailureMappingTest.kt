@@ -2,6 +2,7 @@ package com.onevideog.editor.editor
 
 import androidx.media3.transformer.ExportException
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Test
 
 /** Export error codes map to actionable, user-visible failure categories. */
@@ -76,5 +77,28 @@ class ExportFailureMappingTest {
             ExportManager.Failure.EXPORT_ERROR,
             ExportFailure.fromExportException(exception(9999)),
         )
+    }
+
+    /**
+     * v0.2.4 regression (device evidence): a synchronous `Transformer.start`
+     * failure threw IllegalStateException("Transformer is accessed on the
+     * wrong thread."). The mapping must categorize it as EXPORT_ERROR so the
+     * ORIGINAL exception class/message is preserved in diagnostics and shown
+     * to the user — never swallowed, never replaced by a generic one.
+     */
+    @Test
+    fun `wrong-thread IllegalStateException maps to EXPORT_ERROR`() {
+        val wrongThread = IllegalStateException("Transformer is accessed on the wrong thread.")
+        assertEquals(
+            ExportManager.Failure.EXPORT_ERROR,
+            ExportFailure.fromThrowable(wrongThread),
+        )
+        // Nested cause chain is untouched (the caller logs the full chain).
+        val nested = RuntimeException("muxer died", wrongThread)
+        assertEquals(
+            ExportManager.Failure.GENERIC,
+            ExportFailure.fromThrowable(nested),
+        )
+        assertSame(wrongThread, nested.cause)
     }
 }
