@@ -481,7 +481,17 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             // layer is rejected without an undo step. UI affordances disable
             // themselves too; this is the single authoritative guard.
             if (!OverlayEditing.isEditable(target.locked)) return@commitProjectOrNull null
-            project.copy(overlays = overlays.map { if (it.id == overlayId) transform(it) else it })
+            val next = transform(target)
+            // v0.4.0 (E1 validation): the shared commit boundary for gizmos
+            // AND the properties panel. A transform arriving with non-finite
+            // components (NaN/±Inf) is sanitized to the defaults+clamps
+            // instead of poisoning the model, the renderers and the export.
+            val safe = if (next.transform.hasNonFinite) {
+                next.copy(transform = next.transform.withClampedValues())
+            } else {
+                next
+            }
+            project.copy(overlays = overlays.map { if (it.id == overlayId) safe else it })
         }
     }
 
