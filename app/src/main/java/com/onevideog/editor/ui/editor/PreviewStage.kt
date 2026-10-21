@@ -511,17 +511,29 @@ fun PreviewStage(viewModel: EditorViewModel) {
                 }
             }
 
+            // v0.5.0 (G4): ONE expansion for the preview render list — text
+            // overlays with an entrance animation render as word/letter
+            // segments; everything else passes through unchanged. The build
+            // is memoised per project revision (overlay edits never touch
+            // the decoder — effectiveSignature excludes overlays, v0.3.1).
+            val expanded = remember(project) {
+                com.onevideog.editor.editor.ExpandedOverlays.build(project)
+            }
+
             OverlayLayer(
-                overlays = project.overlays,
+                overlays = expanded.overlays,
                 playheadMs = { state.playheadMs },
                 contentAspect = { contentAspect },
                 contentWidthPx = { fitted.width },
                 contentHeightPx = { fitted.height },
                 selectedOverlayId = { state.selectedOverlayId },
                 gestureOverride = { gestureState },
+                parents = { project.overlays },
                 onTap = { overlay ->
                     // Clear any stale gesture override (a tap ends the
-                    // gesture without committing a transform).
+                    // gesture without committing a transform). The overlay
+                    // here is already the gesture/selection TARGET (the
+                    // parent for animated text segments).
                     gestureState = null
                     viewModel.selectOverlay(overlay?.id)
                     overlay?.let { viewModel.selectClip(null); viewModel.selectAudioClip(null) }
@@ -543,8 +555,12 @@ fun PreviewStage(viewModel: EditorViewModel) {
                             "opacity" to transform.opacity.toString(),
                         ),
                     )
-                    viewModel.updateOverlay(overlay.id) {
-                        it.copy(transform = transform.withClampedValues())
+                    // v0.5.0 (F1): auto-key commit — with keyframes the
+                    // gesture lands on the keyframe at the playhead (or
+                    // creates one); without, it writes the base transform
+                    // exactly as v0.4.0. ONE undo step per gesture.
+                    viewModel.applyTransformEdit(overlay.id) {
+                        transform.withClampedValues()
                     }
                 },
                 onDelete = { overlay ->

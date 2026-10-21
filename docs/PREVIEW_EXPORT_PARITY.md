@@ -14,6 +14,9 @@ call the same functions — neither has a second implementation:
 | Overlay bitmaps          | `OverlayBitmapRenderer` (LruCache)       | same bitmap instance              | same bitmap instance                       |
 | Colour adjustments       | `ColorMatrixMath`                        | hardware-layer `ColorMatrix`      | `ColorAdjustmentEffect` (RgbMatrix)        |
 | Audio placement          | `AudioTimeline.segmentsFor`              | `AudioPreviewController`          | audio `EditedMediaItemSequence` builder    |
+| Auto-key edit (v0.5.0)   | `KeyframeEditing.applyTransformEdit`     | gizmo commit, quick panel, sheet  | (model-level — export reads the result)    |
+| Text segments (v0.5.0)   | `TextSegmentPlanner` + `OverlayBitmapRenderer.textMetrics`/`wrapTextLines` | `computePlacements` render list | `ClipEffectsFactory.overlayTextures` |
+| Text entrance (v0.5.0)   | `TextAnimationPlanner` + `ExpandedOverlays.build` (ONE expansion) | `computePlacements` render list | `ClipEffectsFactory.overlayTextures` |
 
 Timeline, clip labels, preview and export all read duration from
 `ProjectMath.projectDurationMs`. There is no other duration calculation.
@@ -137,6 +140,30 @@ v0.3.1 contract:
    both paths, so wrap points are identical; apparent size relative to a
    differently-shaped *source* clip in `Original` format projects varies per
    clip in both preview and export equally.
+7. **Text animation segment cost (v0.5.0).** Per-word/per-letter entrance
+   animation expands a text overlay into up to 96 segment overlays
+   (`ExpandedOverlays.MAX_SEGMENTS`), each with its own bitmap (≈36 KB for
+   a typical letter, shared per identical word) + one export texture —
+   bounded but real: worst case ≈3.5 MB inside the shared 20 MB LruCache
+   and 96 `KeyframedOverlay` instances in the export effect list. Overlong
+   LETTER texts fall back to WORD; WORD overflow disables the animation
+   (UI warns; diagnostics `TEXT_ANIM_LIMIT`).
+8. **Text animation background pill (v0.5.0).** With a background colour
+   set, each animated segment renders its own pill (per-word karaoke
+   look); without a background the assembled segments are pixel-aligned
+   with the un-animated block (same measureText prefix advances, same
+   baseline stack, same int rounding — `TextSegmentPlanner` shares
+   `OverlayBitmapRenderer.textMetrics`/`wrapTextLines`/`blockSizePx`).
+9. **Composed keyframe interpolation (v0.5.0).** When a parent has BOTH
+   authored keyframes and a text animation, segments carry keyframes
+   composed at the union of authored + entrance times; between two union
+   points the parent's motion is interpolated linearly by the evaluator —
+   exact at every authored time, piecewise-linear between them.
+10. **Segment composition aspect (v0.5.0).** Segment positions are composed
+   against the project-level content aspect (project aspect, else first
+   clip's source aspect). A SOURCE-aspect project whose clips have
+   different resolutions inherits the parent overlay's existing per-clip
+   geometry limitation in both paths equally.
 
 ## What "parity" means here (verification status)
 

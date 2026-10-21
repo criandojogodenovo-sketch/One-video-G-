@@ -389,17 +389,65 @@ private fun OverlayBar(
                 modifier = Modifier.padding(start = 3.dp, end = 20.dp),
             )
         }
-        // Keyframe markers: one dot per keyframe at its time inside the bar.
+        // Keyframe markers (v0.5.0, F2): one dot per keyframe at its time
+        // inside the bar. TAP seeks to it; DRAG moves it in time through
+        // viewModel.moveKeyframe (50 ms snap + nearest-free-slot collision
+        // rule — see KeyframeEditing.resolveMoveTarget). A locked layer's
+        // markers are tap-only (no edits allowed). 18 dp target on an 8 dp
+        // dot — small-screen error rate.
         if (overlay.keyframes.isNotEmpty()) {
-            Row {
-                overlay.keyframes.sortedBy { it.timeMs }.forEach { keyframe ->
-                    val dx = ((keyframe.timeMs - overlay.startMs).coerceAtLeast(0))
+            overlay.keyframes.sortedBy { it.timeMs }.forEach { keyframe ->
+                var liveDx by remember(
+                    overlay.id, keyframe.timeMs,
+                ) { mutableStateOf<Float?>(null) }
+                val baseDx = scale.timeToPx(
+                    (keyframe.timeMs - overlay.startMs).coerceAtLeast(0),
+                )
+                val markerModifier = if (overlay.locked) {
+                    Modifier
+                } else {
+                    Modifier.pointerInput(overlay.id, keyframe.timeMs) {
+                        detectDragGestures(
+                            onDragEnd = {
+                                liveDx?.let { dragged ->
+                                    // pxToTime already returns whole ms.
+                                    val requested = keyframe.timeMs +
+                                        scale.pxToTime(dragged)
+                                    viewModel.moveKeyframe(
+                                        overlay.id, keyframe.timeMs, requested,
+                                    )
+                                }
+                                liveDx = null
+                            },
+                            onDragCancel = { liveDx = null },
+                        ) { change, dragAmount ->
+                            change.consume()
+                            liveDx = (liveDx ?: 0f) + dragAmount.x
+                        }
+                    }
+                }
+                Box(
+                    modifier = Modifier
+                        .offset {
+                            IntOffset(
+                                (baseDx + (liveDx ?: 0f)).roundToInt(),
+                                0,
+                            )
+                        }
+                        .padding(start = 2.dp)
+                        .size(18.dp)
+                        .pointerInput(overlay.id, keyframe.timeMs) {
+                            detectTapGestures(
+                                onTap = { viewModel.seekTo(keyframe.timeMs) },
+                            )
+                        }
+                        .then(markerModifier),
+                    contentAlignment = Alignment.Center,
+                ) {
                     Box(
                         modifier = Modifier
-                            .offset { IntOffset(scale.timeToPx(dx).roundToInt(), 0) }
-                            .padding(start = 2.dp)
-                            .size(6.dp)
-                            .clip(RoundedCornerShape(3.dp))
+                            .size(8.dp)
+                            .clip(RoundedCornerShape(4.dp))
                             .background(MaterialTheme.colorScheme.secondary),
                     )
                 }

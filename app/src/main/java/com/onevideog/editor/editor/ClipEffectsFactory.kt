@@ -146,7 +146,18 @@ object ClipEffectsFactory {
         clip: com.onevideog.editor.data.Clip,
         clipStartMs: Long,
     ): ImmutableList<androidx.media3.effect.TextureOverlay> {
-        val windows = ClipEffectPlan.overlayWindowsForClip(project, clip, clipStartMs)
+        // v0.5.0 (G4): ONE expansion shared with the preview — text overlays
+        // with an entrance animation become one KeyframedOverlay per segment
+        // (same windows, same z-order rule, same composed keyframes).
+        val expanded = ExpandedOverlays.build(project)
+        val windows = ClipEffectPlan.overlayWindowsForClip(
+            overlays = expanded.overlays,
+            clipEndMs = clipStartMs + clip.effectiveDurationMs,
+            frameAspect = clip.sourceAspect
+                ?: project.aspectEnum.ratio()
+                ?: 16f / 9f,
+            clipStartMs = clipStartMs,
+        )
         if (windows.isEmpty()) return ImmutableList.of()
         val builder = ImmutableList.builder<androidx.media3.effect.TextureOverlay>()
         for (window in windows) {
@@ -216,12 +227,29 @@ object ClipEffectPlan {
         project: OvgProject,
         clip: com.onevideog.editor.data.Clip,
         clipStartMs: Long,
-    ): List<OverlayWindow> {
-        val clipEndMs = clipStartMs + clip.effectiveDurationMs
-        val frameAspect = clip.sourceAspect
+    ): List<OverlayWindow> = overlayWindowsForClip(
+        overlays = project.overlays,
+        clipEndMs = clipStartMs + clip.effectiveDurationMs,
+        frameAspect = clip.sourceAspect
             ?: project.aspectEnum.ratio()
-            ?: 16f / 9f
-        return project.overlays
+            ?: 16f / 9f,
+        clipStartMs = clipStartMs,
+    )
+
+    /**
+     * Overlays variant (v0.5.0): the caller may pass an already-expanded
+     * list ([ExpandedOverlays.build]) — the pure window rule is identical
+     * for plain overlays and segments. Segments keep the parent's window
+     * and z-order; the stable sort preserves the segment reading order
+     * inside a z-order (Media3 draws the LAST texture on top).
+     */
+    fun overlayWindowsForClip(
+        overlays: List<OverlayItem>,
+        clipEndMs: Long,
+        frameAspect: Float,
+        clipStartMs: Long = 0,
+    ): List<OverlayWindow> {
+        return overlays
             .filter {
                 it.visible &&
                     it.endMs > clipStartMs && it.startMs < clipEndMs && it.endMs > it.startMs

@@ -495,6 +495,57 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /**
+     * v0.5.0 (Fase F1): THE auto-key transform write path — gizmo gestures
+     * (OverlayCanvas onGestureEnd), the quick-panel sliders and the sheet
+     * TransformSection all commit through here, so there is exactly ONE
+     * auto-key rule and ONE undo step per gesture/slider operation.
+     *
+     * When the overlay has keyframes, the edit lands on the keyframe at the
+     * playhead (± KeyframeEditing.TOLERANCE_MS) or creates one at the
+     * snapped playhead; without keyframes it writes the base transform
+     * exactly like v0.4.0. See [KeyframeEditing.applyTransformEdit].
+     */
+    fun applyTransformEdit(overlayId: String, edit: (OverlayTransform) -> OverlayTransform) {
+        val playhead = _ui.value.playheadMs
+        commitProjectOrNull { project ->
+            val target = project.overlays.firstOrNull { it.id == overlayId }
+                ?: return@commitProjectOrNull null
+            if (!OverlayEditing.isEditable(target.locked)) return@commitProjectOrNull null
+            // The edit starts from what the user SEES at the playhead: the
+            // evaluated transform when keyframes exist (so updating X on a
+            // keyframe keeps the keyframe's other properties), the base
+            // transform otherwise (v0.4.0 behaviour). Gesture commits pass
+            // the full transform and ignore this starting point.
+            val startFrom = if (target.keyframes.isEmpty()) {
+                target.transform
+            } else {
+                KeyframeEvaluator.evaluate(target, playhead)
+            }
+            val edited = edit(startFrom)
+            val safeEdit = if (edited.hasNonFinite) {
+                edited.withClampedValues()
+            } else {
+                edited
+            }
+            val next = KeyframeEditing.applyTransformEdit(target, playhead, safeEdit)
+            if (next == target) return@commitProjectOrNull null
+            project.copy(
+                overlays = project.overlays.map { if (it.id == overlayId) next else it },
+            )
+        }
+    }
+
+    /**
+     * v0.5.0 (G6): sets the text entrance animation. Overlay-level state —
+     * segment expansion happens at render time only, so this (like every
+     * overlay edit) never touches the preview decoder (effectiveSignature
+     * excludes overlays — v0.3.1 contract).
+     */
+    fun setTextAnimation(overlayId: String, animation: com.onevideog.editor.data.TextAnimation) {
+        updateOverlay(overlayId) { it.copy(textAnimation = animation) }
+    }
+
     /** v0.3.0: shows/hides a layer. Allowed even while locked (no edit). */
     fun setOverlayVisible(overlayId: String, visible: Boolean) {
         commitProjectOrNull { project ->
@@ -685,12 +736,20 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun moveKeyframe(overlayId: String, oldTimeMs: Long, newTimeMs: Long) {
-        val snapped = KeyframeEvaluator.snapTime(newTimeMs)
         updateOverlay(overlayId) { overlay ->
-            val others = overlay.keyframes.filterNot { it.timeMs == oldTimeMs || it.timeMs == snapped }
+            // v0.5.0 (F2): collision rule — nearest FREE 50 ms slot inside
+            // the search radius; the move is rejected (no-op, no undo step)
+            // instead of overwriting the keyframe at the target (the old
+            // rule silently DELETED it — data loss).
+            val resolved = KeyframeEditing.resolveMoveTarget(
+                overlay.keyframes, oldTimeMs, newTimeMs,
+            ) ?: return@updateOverlay overlay
+            val others = overlay.keyframes.filterNot {
+                it.timeMs == oldTimeMs || it.timeMs == resolved
+            }
             val moved = overlay.keyframes
                 .firstOrNull { it.timeMs == oldTimeMs }
-                ?.copy(timeMs = snapped) ?: return@updateOverlay overlay
+                ?.copy(timeMs = resolved) ?: return@updateOverlay overlay
             overlay.copy(keyframes = (others + moved).sortedBy { it.timeMs })
         }
     }

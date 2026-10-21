@@ -278,4 +278,25 @@
     <string name="diag_export_saved">Relatório de diagnóstico guardado.</string>
     <string name="diag_export_failed">Não foi possível guardar o relatório de diagnóstico.</string>
     <string name="diag_notice">Os registos ficam neste aparelho, no armazenamento privado da aplicação. Só são copiados ou partilhados quando toca explicitamente nas ações acima. Nada é enviado automaticamente, e os registos nunca contêm o conteúdo dos seus vídeos/áudios, texto renderizado ou nomes de ficheiros.</string>
+
+    <!-- v0.5.0: edição de keyframes (Fase F) -->
+    <string name="kf_state_on">● keyframe</string>
+    <string name="kf_state_between">○ entre</string>
+    <string name="keyframe_prev">Keyframe anterior</string>
+    <string name="keyframe_next">Keyframe seguinte</string>
+    <string name="keyframe_jump">saltar</string>
+
+    <!-- v0.5.0: animação de texto (Fase G) -->
+    <string name="anim_title">Animação de texto</string>
+    <string name="anim_preset_none">Nenhuma</string>
+    <string name="anim_preset_fade">Aparecer</string>
+    <string name="anim_preset_slide_up">Deslizar</string>
+    <string name="anim_preset_pop">Saltar</string>
+    <string name="anim_preset_typewriter">Máquina de escrever</string>
+    <string name="anim_unit">Unidade</string>
+    <string name="anim_unit_word">Palavra</string>
+    <string name="anim_unit_letter">Letra</string>
+    <string name="anim_duration">Duração da entrada: %1$d ms</string>
+    <string name="anim_limit_letter">Este texto tem mais de %1$d letras — a animação passa a palavras inteiras.</string>
+    <string name="anim_limit_word">Este texto tem mais de %1$d palavras — a animação de entrada fica desativada.</string>
 </resources>

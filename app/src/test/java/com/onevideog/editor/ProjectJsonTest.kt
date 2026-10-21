@@ -118,4 +118,51 @@ class ProjectJsonTest {
         assertEquals(true, legacy.overlays[0].visible)
         assertEquals(false, legacy.overlays[0].locked)
     }
+
+    @Test
+    fun `v0_5_0 TextAnimation round-trips (G1)`() {
+        val animated = project.copy(
+            overlays = listOf(
+                com.onevideog.editor.data.OverlayItem(
+                    id = "a1", kind = com.onevideog.editor.data.OverlayKind.TEXT,
+                    startMs = 0, endMs = 5_000, text = "Olá mundo",
+                    textAnimation = com.onevideog.editor.data.TextAnimation(
+                        preset = com.onevideog.editor.data.TextAnimPreset.POP,
+                        unit = com.onevideog.editor.data.TextAnimUnit.LETTER,
+                        durationMs = 450,
+                    ),
+                ),
+            ),
+        )
+        val restored = projectJson
+            .decodeFromString<OvgProject>(projectJson.encodeToString(animated))
+        val anim = restored.overlays[0].textAnimation
+        assertEquals(com.onevideog.editor.data.TextAnimPreset.POP, anim.preset)
+        assertEquals(com.onevideog.editor.data.TextAnimUnit.LETTER, anim.unit)
+        assertEquals(450L, anim.durationMs)
+        assertTrue(anim.isEnabled)
+    }
+
+    @Test
+    fun `documents saved before v0_5_0 (no textAnimation field) load with NONE`() {
+        // The exact JSON a v0.4.0 app writes for a text overlay: no
+        // textAnimation key at all — it must decode to the NONE default and
+        // render exactly as before.
+        val v040Json = """
+            {"id":"x","name":"n","createdAtEpochMs":1,"updatedAtEpochMs":2,
+             "overlays":[{"id":"o","kind":"TEXT","startMs":0,"endMs":1000,
+                          "text":"hi","visible":true,"locked":false}]}
+        """.trimIndent()
+        val legacy = projectJson.decodeFromString<OvgProject>(v040Json)
+        assertEquals(
+            com.onevideog.editor.data.TextAnimPreset.NONE,
+            legacy.overlays[0].textAnimation.preset,
+        )
+        assertEquals(false, legacy.overlays[0].textAnimation.isEnabled)
+        assertEquals(
+            com.onevideog.editor.data.TextAnimUnit.WORD,
+            legacy.overlays[0].textAnimation.unit,
+        )
+        assertEquals(600L, legacy.overlays[0].textAnimation.durationMs)
+    }
 }
