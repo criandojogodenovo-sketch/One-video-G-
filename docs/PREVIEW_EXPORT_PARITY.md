@@ -254,3 +254,25 @@ tick (stutter/silence for any trimmed clip). The export plan is unchanged.
     text stack and the export's `Paint` bitmap (same typeface, same size,
     same line assignment); block geometry, transforms and timing are shared
     and unit-tested.
+14. **The preview stage can no longer collapse; gestures refuse degenerate
+    spaces (v0.5.4).** The editor's fixed chrome could exceed the window
+    height (landscape, or the transform panel expanded) and starve the
+    `weight(1f)` stage down to a 53×30 px sliver — the reported surface
+    change — while the overlay gesture layer kept running there, corrupting
+    saved transforms (deltas divide by the content size) and letting a plain
+    tap classify as DELETE. Guards, in layer order: (a) the expanded
+    transform panel's sliders scroll inside a 240 dp cap; (b) compact
+    windows (< 660 dp) render the editor in a vertically scrollable column
+    with a fixed 200 dp stage; (c) the normal portrait flex layout keeps a
+    140 dp stage floor; (d) `OverlayLayout.isUsableContentSpace` (< 64 px on
+    either axis) makes the gesture layer refuse every interaction and log
+    `OVERLAY_GESTURE_REJECTED`. The coordinate model is untouched — the
+    normalized 0..1 contract with the export is unchanged (device audit:
+    `docs/AUDIT_v0.5.3_problems.md`).
+15. **Image overlays persist their resource app-locally (v0.5.4).** The
+    import copies the validated bitmap (bounded 1024 px decode, JPEG 88)
+    into `files/overlay_media/img_<uuid>.jpg` and the overlay stores the
+    `file://` URI, so grant loss / source deletion can no longer blank the
+    overlay in preview AND export (both read the same stored URI through
+    `contentResolver`; `OverlayBitmapRenderer`/`ClipEffectsFactory` are
+    untouched). Existing projects keep their `content://` URIs.

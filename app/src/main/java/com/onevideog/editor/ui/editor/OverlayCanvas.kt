@@ -482,7 +482,26 @@ internal fun OverlayLayer(
                         val down = awaitFirstDown(requireUnconsumed = false)
                         val w = currentW.value
                         val h = currentH.value
-                        if (w <= 0f || h <= 0f) return@awaitEachGesture
+                        // v0.5.4: a degenerate content space (collapsed stage,
+                        // e.g. the reported 53×30 px surface) must not host
+                        // gestures — deltas divide by the content size, so a
+                        // few px of drag corrupts the saved transform, and the
+                        // 24 dp gizmo zones cover the whole box (a plain tap
+                        // classifies as DELETE). Refuse the whole interaction;
+                        // the layout guards make this unreachable in practice
+                        // (docs/AUDIT_v0.5.3_problems.md §1/§6), this is the
+                        // corruption hard-stop with evidence.
+                        if (!OverlayLayout.isUsableContentSpace(w, h)) {
+                            DiagnosticsLogger.d(
+                                "preview", "OVERLAY_GESTURE_REJECTED", opId,
+                                "overlay gesture rejected: degenerate content space",
+                                meta = listOf(
+                                    "contentW" to w.toString(),
+                                    "contentH" to h.toString(),
+                                ),
+                            )
+                            return@awaitEachGesture
+                        }
                         val layerPlacements = currentPlacements.value
                         // v0.5.0: hit placement -> gesture/selection target
                         // (the PARENT for animated text segments, the overlay

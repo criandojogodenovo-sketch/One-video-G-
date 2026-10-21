@@ -3,14 +3,19 @@ package com.onevideog.editor.ui.editor
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Redo
@@ -152,6 +157,20 @@ fun EditorScreen(
         }
     }
 
+    // v0.5.4 (docs/AUDIT_v0.5.3_problems.md §1): the fixed chrome below the
+    // stage (top bar + transform panel + transport + 220 dp timeline + tool
+    // row ≈ 474 dp collapsed) can exceed the window height — landscape, and
+    // portrait with the transform panel expanded — starving the weight(1f)
+    // stage down to a 53×30 px sliver (the reported surface change) and
+    // corrupting overlay gestures. Two guards:
+    //  - compact windows (< 660 dp tall, e.g. landscape) render the editor
+    //    in a vertically scrollable column with a fixed 200 dp stage — every
+    //    control stays reachable and the preview keeps a usable size;
+    //  - normal portrait keeps the exact v0.5.3 flex layout with a 140 dp
+    //    hard floor so the preview can never collapse again.
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val compactWindow = maxHeight < 660.dp
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -180,12 +199,9 @@ fun EditorScreen(
             return@Column
         }
 
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            contentAlignment = Alignment.Center,
-        ) {
+        // The stage + everything below it. ONE definition of each child so
+        // the compact and flex branches can never drift.
+        val stageContent: @Composable () -> Unit = {
             // v0.5.1: the preview stage (black background + overlay layer +
             // audio preview) exists for EVERY project — empty ones included.
             PreviewStage(viewModel = viewModel)
@@ -206,34 +222,65 @@ fun EditorScreen(
                 }
             }
         }
+        val chromeBelow: @Composable () -> Unit = {
+            // v0.4.0 (Etapa E1/E4): contextual transform panel for the selected
+            // text/image layer. Inline (not modal) so the preview element stays
+            // visible and touchable; collapsed to one row until expanded; its
+            // commits go through the same updateOverlay path as the gizmos (one
+            // undo step per control) and never rebuild the player or effects.
+            TransformQuickPanel(
+                viewModel = viewModel,
+                onOpenEditor = { activeTool = it },
+            )
 
-        // v0.4.0 (Etapa E1/E4): contextual transform panel for the selected
-        // text/image layer. Inline (not modal) so the preview element stays
-        // visible and touchable; collapsed to one row until expanded; its
-        // commits go through the same updateOverlay path as the gizmos (one
-        // undo step per control) and never rebuild the player or effects.
-        TransformQuickPanel(
-            viewModel = viewModel,
-            onOpenEditor = { activeTool = it },
-        )
+            // Transport bar: play/pause + seek + project time, BELOW the canvas.
+            // The preview area stays free for selecting/manipulating overlays.
+            TransportBar(viewModel = viewModel)
 
-        // Transport bar: play/pause + seek + project time, BELOW the canvas.
-        // The preview area stays free for selecting/manipulating overlays.
-        TransportBar(viewModel = viewModel)
+            TimelineStrip(
+                viewModel = viewModel,
+                onAddAudio = { audioLauncher.launch(arrayOf("audio/*")) },
+                onOpenTool = { activeTool = it },
+            )
 
-        TimelineStrip(
-            viewModel = viewModel,
-            onAddAudio = { audioLauncher.launch(arrayOf("audio/*")) },
-            onOpenTool = { activeTool = it },
-        )
+            ToolBarRow(
+                onImport = {
+                    importLauncher.launch(arrayOf("video/*"))
+                },
+                onTool = { activeTool = it },
+                hasContent = com.onevideog.editor.editor.ProjectMath.projectDurationMs(project) > 0,
+            )
+        }
 
-        ToolBarRow(
-            onImport = {
-                importLauncher.launch(arrayOf("video/*"))
-            },
-            onTool = { activeTool = it },
-            hasContent = com.onevideog.editor.editor.ProjectMath.projectDurationMs(project) > 0,
-        )
+        if (compactWindow) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(200.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    stageContent()
+                }
+                chromeBelow()
+            }
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .heightIn(min = 140.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                stageContent()
+            }
+            chromeBelow()
+        }
+    }
     }
 
     activeTool?.let { tool ->
