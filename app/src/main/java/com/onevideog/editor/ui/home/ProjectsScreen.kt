@@ -57,9 +57,6 @@ import com.onevideog.editor.editor.EditorViewModel
 import com.onevideog.editor.ui.common.ConfirmDialog
 import com.onevideog.editor.ui.common.OvgTopBar
 import com.onevideog.editor.ui.common.TextInputDialog
-import com.onevideog.editor.ui.editor.queryDisplayName
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import java.io.File
 import java.text.DateFormat
 import java.util.Date
@@ -99,24 +96,13 @@ fun ProjectsScreen(
     val defaultName = stringResource(R.string.project_default_name, DateFormat.getDateInstance(DateFormat.SHORT).format(Date()))
     val defaultEmptyName = stringResource(R.string.empty_project_name)
 
-    // v0.5.2 "Novo projeto" flow: name -> video picker -> create WITH the
-    // video. The project is created only in THIS callback (never in a
-    // LaunchedEffect, never on screen entry); a cancelled pick (null uri)
-    // creates nothing and simply returns to the list.
-    var newProjectName by remember { mutableStateOf<String?>(null) }
-    val newProjectVideoLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument(),
-    ) { uri ->
-        val name = newProjectName
-        newProjectName = null
-        if (uri != null && name != null && !creating) {
-            creating = true
-            val displayName = queryDisplayName(context, uri) ?: "video"
-            viewModel.newProjectWithVideo(name, uri, displayName) { id ->
-                onOpenProject(id)
-            }
-        }
-    }
+    // v0.5.6 fix: confirming "Novo projeto" now creates the internal project
+    // directly — the SAME creation path and navigation destination already used
+    // by "Projeto vazio" (viewModel.newProject -> onOpenProject -> editor/$id).
+    // The v0.5.2 behaviour (name -> SAF video picker -> newProjectWithVideo)
+    // opened the Android file manager on confirm and is the bug fixed here.
+    // The creating guard still guarantees one creation per confirmation;
+    // navigation replaces this screen, so the guard resets naturally on return.
 
     Scaffold(
         topBar = {
@@ -207,14 +193,11 @@ fun ProjectsScreen(
             initial = defaultName,
             hint = stringResource(R.string.project_name_hint),
             confirmLabel = stringResource(R.string.new_project),
-            // v0.5.2: the confirm does NOT create anything — it opens the
-            // video picker. The project is created (once) only when a video
-            // comes back; cancelling the picker returns to the list empty-handed.
             onConfirm = { name ->
                 showNewDialog = false
                 if (!creating) {
-                    newProjectName = name
-                    newProjectVideoLauncher.launch(arrayOf("video/*"))
+                    creating = true
+                    viewModel.newProject(name) { id -> onOpenProject(id) }
                 }
             },
             onDismiss = { showNewDialog = false },
