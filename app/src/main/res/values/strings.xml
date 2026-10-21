@@ -236,6 +236,7 @@
     <string name="a11y_zoom_in">Zoom in timeline</string>
     <string name="a11y_zoom_out">Zoom out timeline</string>
     <string name="a11y_import_video">Import video</string>
+    <string name="a11y_add_video">Add video</string>
     <string name="a11y_undo">Undo</string>
     <string name="a11y_redo">Redo</string>
     <string name="a11y_settings">Settings</string>

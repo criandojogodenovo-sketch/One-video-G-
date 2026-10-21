@@ -236,6 +236,7 @@
     <string name="a11y_zoom_in">Ampliar linha temporal</string>
     <string name="a11y_zoom_out">Reduzir linha temporal</string>
     <string name="a11y_import_video">Importar vídeo</string>
+    <string name="a11y_add_video">Adicionar vídeo</string>
     <string name="a11y_undo">Anular</string>
     <string name="a11y_redo">Refazer</string>
     <string name="a11y_settings">Definições</string>

@@ -29,7 +29,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.TextFields
-import androidx.compose.material.icons.filled.VideocamOff
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -71,7 +71,6 @@ fun EditorScreen(
     viewModel: EditorViewModel,
     onBack: () -> Unit,
     onExport: (String) -> Unit,
-    onOpenProject: (String) -> Unit = {},
 ) {
     val state by viewModel.ui.collectAsState()
     val context = LocalContext.current
@@ -223,11 +222,6 @@ fun EditorScreen(
             onImport = {
                 importLauncher.launch(arrayOf("video/*"))
             },
-            onEmptyProject = {
-                viewModel.newProject(context.getString(R.string.empty_project_name)) { id ->
-                    onOpenProject(id)
-                }
-            },
             onTool = { activeTool = it },
             hasContent = com.onevideog.editor.editor.ProjectMath.projectDurationMs(project) > 0,
         )
@@ -370,7 +364,6 @@ private fun TransportBar(viewModel: EditorViewModel) {
 @Composable
 private fun ToolBarRow(
     onImport: () -> Unit,
-    onEmptyProject: () -> Unit,
     onTool: (Tool) -> Unit,
     hasContent: Boolean,
 ) {
@@ -402,13 +395,17 @@ private fun ToolBarRow(
                 tint = MaterialTheme.colorScheme.primary,
             )
         }
-        // v0.5.1: "Projeto vazio" — a video-less timeline (black background,
-        // 5 s starting duration that grows with the clips) alongside the
-        // video import button.
-        IconButton(onClick = onEmptyProject, modifier = Modifier.size(44.dp)) {
+        // v0.5.2: the camera button IS "Adicionar vídeo" — always active,
+        // opens the video selector on the CURRENT project. The imported video
+        // becomes the base of a video-less project (duration = video length,
+        // existing overlays kept) through the one shared [importVideo] path.
+        // The v0.5.1 behaviour (create a NEW empty project from inside the
+        // editor) is intentionally gone — projects are only created on the
+        // home screen ("Novo projeto" / "Projeto vazio").
+        IconButton(onClick = onImport, modifier = Modifier.size(44.dp)) {
             Icon(
-                Icons.Filled.VideocamOff,
-                contentDescription = stringResource(R.string.a11y_empty_project),
+                Icons.Filled.Videocam,
+                contentDescription = stringResource(R.string.a11y_add_video),
                 tint = MaterialTheme.colorScheme.primary,
             )
         }
