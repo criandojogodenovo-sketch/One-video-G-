@@ -436,18 +436,24 @@ internal fun OverlayLayer(
             DiagnosticsLogger.d(
                 "preview", ImageImportStages.OVERLAY_DRAW, opId,
                 "overlay rendered by compose layer",
-                meta = listOf(
-                    "ovId" to DiagSanitizer.fingerprint(p.overlay.id),
-                    "kind" to p.overlay.kind.name,
-                    "x" to p.transform.x.toString(),
-                    "y" to p.transform.y.toString(),
-                    "scale" to p.transform.scale.toString(),
-                    "rotDeg" to p.transform.rotationDeg.toString(),
-                    "opacity" to p.transform.opacity.toString(),
-                    "visible" to p.overlay.visible.toString(),
-                    "boxPx" to "${p.widthPx.roundToInt()}x${p.heightPx.roundToInt()}",
-                    "content" to contentMeta,
-                ),
+                meta = buildList {
+                    // v0.5.5: parent-first id — OVERLAY_ADD/OVERLAY_TRANSFORM log
+                    // the parent, so the report trail joins only if the draw
+                    // does too. The segment id (animated text) rides in `seg`.
+                    add("ovId" to DiagSanitizer.fingerprint(p.parentId ?: p.overlay.id))
+                    if (p.parentId != null) {
+                        add("seg" to DiagSanitizer.fingerprint(p.overlay.id))
+                    }
+                    add("kind" to p.overlay.kind.name)
+                    add("x" to p.transform.x.toString())
+                    add("y" to p.transform.y.toString())
+                    add("scale" to p.transform.scale.toString())
+                    add("rotDeg" to p.transform.rotationDeg.toString())
+                    add("opacity" to p.transform.opacity.toString())
+                    add("visible" to p.overlay.visible.toString())
+                    add("boxPx" to "${p.widthPx.roundToInt()}x${p.heightPx.roundToInt()}")
+                    add("content" to contentMeta)
+                },
             )
         }
     }

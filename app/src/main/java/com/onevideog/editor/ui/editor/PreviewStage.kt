@@ -506,6 +506,14 @@ fun PreviewStage(viewModel: EditorViewModel) {
                         meta = listOf(
                             "videoW" to videoSize.width.toString(),
                             "videoH" to videoSize.height.toString(),
+                            // v0.5.5 (docs/AUDIT_v0.5.4_report_followup.md §5):
+                            // the 2026-10-21 report had videoW=0 in EVERY
+                            // geometry event, even for projects with clips,
+                            // and no PREVIEW_RENDER with w>0 — the decoder
+                            // never reported a size. playerState at log time
+                            // distinguishes "player not prepared yet" from
+                            // "prepared but the size callback never fired".
+                            "playerState" to playbackStateName(player.playbackState),
                             "surfaceW" to surfaceSize.first.toString(),
                             "surfaceH" to surfaceSize.second.toString(),
                             "viewportW" to fitted.width.toInt().toString(),
