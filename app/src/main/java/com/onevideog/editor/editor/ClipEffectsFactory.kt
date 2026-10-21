@@ -151,7 +151,12 @@ object ClipEffectsFactory {
         // (same windows, same z-order rule, same composed keyframes).
         val expanded = ExpandedOverlays.build(project)
         val windows = ClipEffectPlan.overlayWindowsForClip(
-            expanded.overlays, clip, clipStartMs,
+            overlays = expanded.overlays,
+            clipEndMs = clipStartMs + clip.effectiveDurationMs,
+            frameAspect = clip.sourceAspect
+                ?: project.aspectEnum.ratio()
+                ?: 16f / 9f,
+            clipStartMs = clipStartMs,
         )
         if (windows.isEmpty()) return ImmutableList.of()
         val builder = ImmutableList.builder<androidx.media3.effect.TextureOverlay>()

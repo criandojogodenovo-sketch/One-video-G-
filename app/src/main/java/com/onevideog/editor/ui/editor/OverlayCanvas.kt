@@ -227,7 +227,7 @@ internal fun OverlayLayer(
     /** Maps a hit placement back to its gesture/selection target. */
     fun targetFor(placement: PlacedOverlay): OverlayItem? {
         val wantedId = placement.parentId ?: placement.overlay.id
-        return currentParents.value.firstOrNull { it.id == wantedId }
+        return currentParents.value().firstOrNull { it.id == wantedId }
             ?: placement.overlay.takeIf { it.id == wantedId }
     }
 
@@ -455,7 +455,7 @@ internal fun OverlayLayer(
             },
     ) {
         val override = currentOverride.value()
-        val parentsList = currentParents.value
+        val parentsList = currentParents.value()
         val rawPlacements = computePlacements(
             overlays = currentOverlays.value,
             playheadMs = currentPlayhead.value(),
