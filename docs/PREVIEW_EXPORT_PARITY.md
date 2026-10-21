@@ -223,3 +223,16 @@ tick (stutter/silence for any trimmed clip). The export plan is unchanged.
   physical device. `docs/DEVICE_TEST_PLAN.md` defines the exact procedure
   (including exporting a test project and comparing representative frames).
   **Parity must not be claimed as device-verified until that plan is run.**
+12. **Video-less export base frame rate (v0.5.2).** The black base
+    image item now carries `EditedMediaItem.setFrameRate(30)` in addition
+    to `setDurationUs`. Media3 1.4.1's `ImageAssetLoader` constructor
+    checks BOTH (`checkState(durationUs != TIME_UNSET)` and
+    `checkState(frameRate != RATE_UNSET_INT)`); v0.5.1 set only the
+    duration, so every video-less export threw IllegalStateException at
+    Transformer start. `setFrameRate` is ignored for inputs with an
+    implicit frame rate (video), so with-video exports are untouched.
+    The duration is confirmed on both levels (EditedMediaItem durationUs
+    for the composition sequence, MediaItem.setImageDurationMs for image
+    playback), and a failed black-PNG write is now diagnosed explicitly
+    (`BLACK_BASE_MISSING`) instead of surfacing as an opaque empty-sequence
+    composition error.
