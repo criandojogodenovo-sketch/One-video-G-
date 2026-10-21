@@ -22,6 +22,26 @@ import kotlin.math.abs
  */
 object OverlayLayout {
 
+    /**
+     * v0.5.4: minimum preview content space (px) that can host overlay
+     * gestures safely (either axis). Below it the model is corruptible:
+     * gesture deltas divide by the content size (a ~20 px drag becomes a
+     * 0.38 normalized jump on a 53 px-wide stage) and the 24 dp gizmo zones
+     * cover the whole box (a plain tap classifies as DELETE). Device audit:
+     * docs/AUDIT_v0.5.3_problems.md §1 — the stage could collapse to
+     * 53×30 px and the gesture layer kept running there.
+     */
+    const val MIN_USABLE_CONTENT_PX = 64f
+
+    /**
+     * True when [widthPx]×[heightPx] is a usable overlay-gesture space.
+     * Pure — unit-tested; the preview gesture layer refuses to start ANY
+     * interaction (move/scale/rotate/DELETE and tap classification included)
+     * while this returns false, and logs OVERLAY_GESTURE_REJECTED instead.
+     */
+    fun isUsableContentSpace(widthPx: Float, heightPx: Float): Boolean =
+        widthPx >= MIN_USABLE_CONTENT_PX && heightPx >= MIN_USABLE_CONTENT_PX
+
     data class FittedRect(
         val offsetX: Float,
         val offsetY: Float,

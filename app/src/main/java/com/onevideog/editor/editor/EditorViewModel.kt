@@ -531,7 +531,36 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     )
                     return@launch
                 }
+                // v0.5.4 (docs/AUDIT_v0.5.3_problems.md §3): persist the
+                // resource — copy the validated bitmap into app storage and
+                // reference the LOCAL file so the overlay survives SAF grant
+                // loss and source deletion. Preview and export read the same
+                // stored URI (contentResolver handles file://); the export
+                // path is untouched. Falls back to the SAF uri if the copy
+                // fails (previous behaviour, degraded but working).
+                val storedUri = runCatching {
+                    val dir = OverlayMediaStore.mediaDir(getApplication())
+                    val fileName = OverlayMediaStore.newFileName()
+                    File(dir, fileName).outputStream().use { out ->
+                        probe.compress(android.graphics.Bitmap.CompressFormat.JPEG, 88, out)
+                    }
+                    OverlayMediaStore.toLocalUriString(dir, fileName)
+                }.onFailure {
+                    DiagnosticsLogger.w(
+                        MediaImporter.SUBSYSTEM, "IMAGE_LOCAL_COPY", opId,
+                        "app-local image copy FAILED — overlay keeps the SAF uri", it,
+                    )
+                }.getOrNull()
                 probe.recycle()
+                DiagnosticsLogger.i(
+                    MediaImporter.SUBSYSTEM, "IMAGE_LOCAL_COPY", opId,
+                    if (storedUri != null) {
+                        "image persisted to app storage (grant-loss-proof)"
+                    } else {
+                        "image kept on the SAF uri (copy failed)"
+                    },
+                )
+                val overlayUri = storedUri ?: uri.toString()
                 // v0.5.1: identity minted before the commit; the overlay is
                 // APPENDED and becomes the selected clip immediately.
                 val newId = TimelineLogic.newId()
@@ -545,7 +574,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         endMs = duration,
                         transform = OverlayTransform(x = 0.5f, y = 0.5f, scale = 0.4f),
                         zOrder = nextZ,
-                        uri = uri.toString(),
+                        uri = overlayUri,
                     )
                     created = true
                     p.copy(overlays = p.overlays + overlay)

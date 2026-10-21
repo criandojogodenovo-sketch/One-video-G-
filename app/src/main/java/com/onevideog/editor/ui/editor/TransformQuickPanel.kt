@@ -6,8 +6,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
@@ -174,6 +177,17 @@ internal fun TransformQuickPanel(
             return@Column
         }
 
+        // v0.5.4: the five sliders stack ≈ 330 dp — expanded, they consumed
+        // the whole editor column and starved the preview stage down to a
+        // 53×30 px sliver (device audit docs/AUDIT_v0.5.3_problems.md §1).
+        // The sliders block now scrolls within a 240 dp cap: the panel keeps
+        // every control reachable while the stage keeps a usable height.
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 240.dp)
+                .verticalScroll(rememberScrollState()),
+        ) {
         // v0.5.0: sliders show the EVALUATED transform at the playhead (what
         // is actually on screen for a keyframed overlay); edits still commit
         // through the auto-key path below.
@@ -213,6 +227,7 @@ internal fun TransformQuickPanel(
             format = { v -> "${(v * 100).roundToInt()}%" },
         ) { value ->
             viewModel.applyTransformEdit(overlay.id) { it.copy(opacity = value) }
+        }
         }
     }
 }

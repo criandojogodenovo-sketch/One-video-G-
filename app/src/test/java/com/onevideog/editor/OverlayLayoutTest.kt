@@ -42,6 +42,37 @@ class OverlayLayoutTest {
         assertEquals(1080f, fit2.height, 0.5f)
     }
 
+    // ---- v0.5.4: degenerate-space gesture guard (device audit §1) ----------
+
+    @Test
+    fun `degenerate content space reproduces the device report and is rejected`() {
+        // The reported collapsed surface: fitRect into a ~30 px tall stage
+        // on a 720 px-wide device yields exactly 53x30 px. That space must
+        // be classified as UNUSABLE so the gesture layer refuses it.
+        val fit = OverlayLayout.fitRect(720f, 30f, 16f / 9f)
+        assertEquals(53.3f, fit.width, 0.5f)
+        assertEquals(30f, fit.height, 0.5f)
+        assertEquals(
+            false,
+            OverlayLayout.isUsableContentSpace(fit.width, fit.height),
+        )
+    }
+
+    @Test
+    fun `healthy preview spaces pass the usability gate`() {
+        // The same device's healthy viewport (720x405 px) and the smallest
+        // layout-guarded stage floor (140 dp at 1.75 density = 245 px).
+        assertTrue(OverlayLayout.isUsableContentSpace(720f, 405f))
+        assertTrue(OverlayLayout.isUsableContentSpace(245f, 245f))
+        // Exactly at the threshold is usable (inclusive), one px below is not.
+        val min = OverlayLayout.MIN_USABLE_CONTENT_PX
+        assertTrue(OverlayLayout.isUsableContentSpace(min, min))
+        assertEquals(false, OverlayLayout.isUsableContentSpace(min - 1f, min))
+        assertEquals(false, OverlayLayout.isUsableContentSpace(min, min - 1f))
+        // Zero-size (no layout yet) is rejected.
+        assertEquals(false, OverlayLayout.isUsableContentSpace(0f, 0f))
+    }
+
     @Test
     fun `export scale settings and preview size agree`() {
         // A bitmap of aspect 2:1 placed at 0.3 width fraction on a 16:9 frame.
