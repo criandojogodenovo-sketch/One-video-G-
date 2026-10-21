@@ -17,6 +17,7 @@ import com.onevideog.editor.data.Clip
 import com.onevideog.editor.data.ExportResolutionEnum
 import com.onevideog.editor.data.OvgProject
 import com.onevideog.editor.data.ProjectAspect
+import com.onevideog.editor.diag.DiagnosticsLogger
 import java.io.File
 
 /**
@@ -84,8 +85,17 @@ object CompositionFactory {
         // 16:9, fixed aspect -> the project ratio), so normalized overlay
         // positions are identical in preview and export (parity).
         if (project.clips.isEmpty() && plannedDurationMs > 0) {
-            buildBlackBaseItem(context, project, plannedDurationMs, workDir)?.let {
-                videoItems.add(it)
+            val base = buildBlackBaseItem(context, project, plannedDurationMs, workDir)
+            if (base == null) {
+                // Without the base item the video sequence is EMPTY and the
+                // Transformer fails with an opaque composition error — record
+                // the real reason (PNG write failed) for the diagnostics.
+                DiagnosticsLogger.e(
+                    "export", "BLACK_BASE_MISSING", null,
+                    "empty-project export: black base item could not be created",
+                )
+            } else {
+                videoItems.add(base)
             }
         }
 
@@ -161,12 +171,22 @@ object CompositionFactory {
                 androidx.media3.effect.OverlayEffect(overlayTextures),
             )
         }
-        // Media3 1.4.1: EditedMediaItem does NOT derive a duration from the
-        // image MediaItem (EditedMediaItem.Builder.setImageDurationMs only
-        // exists since 1.5.0) — the sequence item duration MUST be set
-        // explicitly via setDurationUs (ImageAssetLoader reads it). The
-        // MediaItem-level setImageDurationMs documents the same duration for
-        // any playback path and is the 1.4.1-correct API on MediaItem.
+        // Media3 1.4.1 (ImageAssetLoader constructor — verified against the
+        // 1.4.1 sources):
+        //   checkState(editedMediaItem.durationUs != C.TIME_UNSET);
+        //   checkState(editedMediaItem.frameRate != C.RATE_UNSET_INT);
+        // BOTH must be set on the image EditedMediaItem or the asset loader
+        // throws IllegalStateException the moment the Transformer starts
+        // (the v0.5.1 empty-project export failed exactly here — duration was
+        // set, frame rate was not). setFrameRate documents 30 as the
+        // recommended value for inputs without an implicit frame rate
+        // (images); it is IGNORED for video inputs, so this cannot touch the
+        // with-video export path — the change is scoped to the no-video base.
+        // The duration is set on BOTH levels:
+        //  - EditedMediaItem.setDurationUs — what ImageAssetLoader reports to
+        //    the composition (the sequence item duration);
+        //  - MediaItem.setImageDurationMs — the 1.4.1-correct MediaItem-level
+        //    duration for image playback paths.
         val durationUs = durationMs * 1_000L
         return EditedMediaItem.Builder(
             MediaItem.Builder()
@@ -176,6 +196,7 @@ object CompositionFactory {
                 .build(),
         )
             .setDurationUs(durationUs)
+            .setFrameRate(30)
             .setEffects(Effects(emptyList(), videoEffects))
             .build()
     }
