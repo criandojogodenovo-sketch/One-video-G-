@@ -191,6 +191,16 @@ object ImageImportStages {
     const val EFFECT_ATTACH = "EFFECT_ATTACH"          // J
     const val ACTIVATION = "ACTIVATION"                // K
     const val RENDER_FAIL = "RENDER_FAIL"              // L
+    /**
+     * v0.5.3: evidence that the Compose overlay layer actually RENDERED an
+     * active overlay (id, kind, x, y, scale, rotation, opacity, visible,
+     * bitmap/text size). Fired per active overlay when the drawn set changes
+     * or at most once per second for the same set (live transform evidence
+     * while playing). This is the missing "did the pixels get drawn?" signal
+     * between ACTIVATION (time logic) and the frame: the device reports that
+     * produced this fix showed activeOverlays=1 with no draw evidence at all.
+     */
+    const val OVERLAY_DRAW = "OVERLAY_DRAW"
 }
 
 /**

@@ -536,6 +536,7 @@ fun PreviewStage(viewModel: EditorViewModel) {
                 selectedOverlayId = { state.selectedOverlayId },
                 gestureOverride = { gestureState },
                 parents = { project.overlays },
+                opId = previewOpId,
                 onTap = { overlay ->
                     // Clear any stale gesture override (a tap ends the
                     // gesture without committing a transform). The overlay
