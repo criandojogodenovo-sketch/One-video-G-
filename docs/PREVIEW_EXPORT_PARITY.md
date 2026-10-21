@@ -276,3 +276,34 @@ tick (stutter/silence for any trimmed clip). The export plan is unchanged.
     overlay in preview AND export (both read the same stored URI through
     `contentResolver`; `OverlayBitmapRenderer`/`ClipEffectsFactory` are
     untouched). Existing projects keep their `content://` URIs.
+16. **Un-expanded overlays pass through the shared render list (v0.5.5).**
+    Since v0.5.0 `ExpandedOverlays.build()` dropped every overlay that needs
+    no expansion — ALL image overlays and every text overlay without an
+    entrance animation — from the ONE render list both pipelines consume: the
+    preview never drew them (no placement → no pixels, no hit-test, no
+    gizmos) and the export composition built zero overlay textures for them
+    (device report 2026-10-21: a project with `overlays=1` exported with
+    `effects=0 textures=0`). `expandOverlay()` now passes such overlays
+    through unchanged (hidden layers still render nothing in both pipelines;
+    blank animated text and the >96-segment fallback render un-animated
+    instead of vanishing). The export engine is untouched — it already called
+    the shared expansion; the fix restores what it receives
+    (`docs/AUDIT_v0.5.4_report_followup.md` §1). Locked by the pure
+    `ExpandedOverlaysTest` (7 tests).
+17. **The preview stage floor holds by construction (v0.5.5).** The v0.5.4
+    `heightIn(min = 140.dp)` chained AFTER `weight(1f)` was a no-op exactly
+    in the starvation case (weight measures the child with min = max =
+    leftover, so the floor coerced into `[leftover, leftover]`) — the 53×30
+    sliver recurred on v0.5.4 at 16:00:17 with the transform panel expanded.
+    The flex branch now caps the chrome BELOW the stage
+    (`heightIn(max = window − 212.dp)` = window − top-bar reserve − floor)
+    and scrolls it internally, so the weighted stage always receives
+    ≥ 140 dp; normal portrait (chrome ≈ 420 dp < cap) is layout-identical.
+    Compact windows and the gesture hard-stop are unchanged
+    (`docs/AUDIT_v0.5.4_report_followup.md` §2).
+18. **Evidence joinability (v0.5.5).** `OVERLAY_DRAW` logs the parent-first
+    overlay id (`parent#sN` segments also carry `seg`), matching what
+    `OVERLAY_ADD` / `OVERLAY_TRANSFORM` log, and `VIEWPORT_GEOMETRY` adds
+    `playerState` so the next report can distinguish "decoder never reported
+    a size" (videoW=0 with `playerState=ready`) from "player not prepared
+    yet" (`idle`/`buffering`). Log meta only — zero behaviour change.
