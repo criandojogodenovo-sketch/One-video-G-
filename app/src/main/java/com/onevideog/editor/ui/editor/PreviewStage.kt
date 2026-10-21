@@ -418,6 +418,13 @@ fun PreviewStage(viewModel: EditorViewModel) {
     if (project.clips.isEmpty()) {
         LaunchedEffect(state.isPlaying, durationMs) {
             if (!state.isPlaying || durationMs <= 0L) return@LaunchedEffect
+            // v0.5.2 replay-after-end (same rule as the video path's v0.3.0
+            // fix): a play request while parked AT the end must restart from
+            // 0 — otherwise the clock's very next frame sees
+            // next >= durationMs and stops again, so play appears dead.
+            if (viewModel.ui.value.playheadMs >= durationMs) {
+                viewModel.setPlayhead(0)
+            }
             var lastFrame = 0L
             while (isActive) {
                 val now = withFrameNanos { it }
