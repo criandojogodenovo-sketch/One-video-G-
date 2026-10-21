@@ -57,6 +57,9 @@ import com.onevideog.editor.editor.EditorViewModel
 import com.onevideog.editor.ui.common.ConfirmDialog
 import com.onevideog.editor.ui.common.OvgTopBar
 import com.onevideog.editor.ui.common.TextInputDialog
+import com.onevideog.editor.ui.editor.queryDisplayName
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import java.io.File
 import java.text.DateFormat
 import java.util.Date
@@ -81,6 +84,12 @@ fun ProjectsScreen(
     var renameTarget by remember { mutableStateOf<OvgProject?>(null) }
     var deleteTarget by remember { mutableStateOf<OvgProject?>(null) }
 
+    // v0.5.2 anti-duplication: set on the FIRST creation trigger (empty-project
+    // tap or a picked video) and never reset while this screen stays composed —
+    // a second tap cannot create a second project. Navigation replaces this
+    // screen, so the guard resets naturally on return.
+    var creating by remember { mutableStateOf(false) }
+
     suspend fun reload() {
         projects = withContext(Dispatchers.IO) { repository.list() }
     }
@@ -89,6 +98,25 @@ fun ProjectsScreen(
 
     val defaultName = stringResource(R.string.project_default_name, DateFormat.getDateInstance(DateFormat.SHORT).format(Date()))
     val defaultEmptyName = stringResource(R.string.empty_project_name)
+
+    // v0.5.2 "Novo projeto" flow: name -> video picker -> create WITH the
+    // video. The project is created only in THIS callback (never in a
+    // LaunchedEffect, never on screen entry); a cancelled pick (null uri)
+    // creates nothing and simply returns to the list.
+    var newProjectName by remember { mutableStateOf<String?>(null) }
+    val newProjectVideoLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        val name = newProjectName
+        newProjectName = null
+        if (uri != null && name != null && !creating) {
+            creating = true
+            val displayName = queryDisplayName(context, uri) ?: "video"
+            viewModel.newProjectWithVideo(name, uri, displayName) { id ->
+                onOpenProject(id)
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -105,17 +133,21 @@ fun ProjectsScreen(
             Column(horizontalAlignment = Alignment.End) {
                 // v0.5.1: "Projeto vazio" — a video-less project (black
                 // background timeline, 5 s starting duration) next to the
-                // regular new-project action.
+                // regular new-project action. v0.5.2: guarded — disabled on
+                // the first touch so a double tap can never create twice.
                 ExtendedFloatingActionButton(
                     onClick = {
-                        viewModel.newProject(defaultEmptyName) { id -> onOpenProject(id) }
+                        if (!creating) {
+                            creating = true
+                            viewModel.newProject(defaultEmptyName) { id -> onOpenProject(id) }
+                        }
                     },
                     icon = { Icon(Icons.Filled.VideocamOff, contentDescription = null) },
                     text = { Text(stringResource(R.string.empty_project)) },
                     modifier = Modifier.padding(bottom = 10.dp),
                 )
                 ExtendedFloatingActionButton(
-                    onClick = { showNewDialog = true },
+                    onClick = { if (!creating) showNewDialog = true },
                     icon = { Icon(Icons.Filled.Add, contentDescription = null) },
                     text = { Text(stringResource(R.string.new_project)) },
                 )
@@ -175,10 +207,14 @@ fun ProjectsScreen(
             initial = defaultName,
             hint = stringResource(R.string.project_name_hint),
             confirmLabel = stringResource(R.string.new_project),
+            // v0.5.2: the confirm does NOT create anything — it opens the
+            // video picker. The project is created (once) only when a video
+            // comes back; cancelling the picker returns to the list empty-handed.
             onConfirm = { name ->
                 showNewDialog = false
-                viewModel.newProject(name) { id ->
-                    onOpenProject(id)
+                if (!creating) {
+                    newProjectName = name
+                    newProjectVideoLauncher.launch(arrayOf("video/*"))
                 }
             },
             onDismiss = { showNewDialog = false },

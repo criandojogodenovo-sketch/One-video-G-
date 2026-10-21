@@ -135,6 +135,29 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /**
+     * v0.5.2 — the "Novo projeto" flow: name -> video picker -> create WITH
+     * the chosen video. The project is created EXACTLY once, only after the
+     * user picked a video (the picker result is the single trigger — never a
+     * LaunchedEffect, never a screen-entry side effect); a cancelled or
+     * failed pick creates NOTHING. The video becomes the project base through
+     * the ONE shared import path ([importVideo] — appended clip, duration =
+     * video length, thumbnails, diagnostics), never a per-flow copy.
+     */
+    fun newProjectWithVideo(
+        name: String,
+        videoUri: Uri,
+        displayName: String,
+        onCreated: (String) -> Unit,
+    ) {
+        newProject(name) { id ->
+            onCreated(id)
+            // Runs after the state/navigation are in place; failures surface
+            // through importError exactly like the in-editor import.
+            importVideo(videoUri, displayName)
+        }
+    }
+
     // region video clips ------------------------------------------------------
 
     fun importVideo(uri: Uri, displayName: String) {
