@@ -42,9 +42,12 @@ import kotlin.math.sin
  *     authored keyframe time and interpolates the entrance between its own
  *     times (linear/ease per the overlay's interpolation setting).
  *
- * visible=false and locked keep applying to the WHOLE overlay: hidden
- * parents are not expanded at all (render nothing in both pipelines), and
- * segment items inherit the parent's locked flag.
+ * visible=false keeps applying to the WHOLE overlay: hidden parents are not
+ * expanded and render nothing in both pipelines. Every other overlay that
+ * needs no expansion (images, plain text) passes through as itself — since
+ * v0.5.5 this is explicit and unit-tested; v0.5.0-v0.5.4 silently dropped it
+ * from both pipelines (docs/AUDIT_v0.5.4_report_followup.md §1). Locked
+ * parents keep the flag on every segment item.
  */
 object ExpandedOverlays {
 
@@ -153,24 +156,40 @@ object ExpandedOverlays {
     // ------------------------------------------------------------- internals
 
     /**
-     * Expands one overlay into its segments (empty when no expansion
-     * applies: non-text, no animation, hidden, blank text, or the G5 limit
-     * fell back).
+     * Expands one overlay into its segments. Overlays that need NO expansion
+     * are passed through UNCHANGED (v0.5.5, see the docs/Audit reference in
+     * the guard below); only HIDDEN overlays expand to nothing.
      */
     private fun expandOverlay(
         overlay: OverlayItem,
         contentAspect: Float,
         limited: MutableSet<String>,
     ): List<OverlayItem> {
+        // v0.5.5 (docs/AUDIT_v0.5.4_report_followup.md §1): overlays that need
+        // no expansion must still RENDER. Since v0.5.0 this path returned
+        // emptyList() and build() only appended segments, so EVERY image
+        // overlay and every text overlay without an entrance animation was
+        // dropped from the ONE render list both pipelines consume: the preview
+        // never drew them (no placement -> no pixels, no hit-test, no gizmos)
+        // and the export composition built zero overlay textures for them
+        // (device report 2026-10-21: a project with overlays=1 exported with
+        // effects=0 textures=0). Hidden layers stay dropped — the v0.3.0 rule
+        // (render nothing in preview AND export) is unchanged.
+        if (!overlay.visible) return emptyList()
         val anim = overlay.textAnimation
-        if (overlay.kind != OverlayKind.TEXT || !anim.isEnabled || !overlay.visible) {
-            return emptyList()
+        if (overlay.kind != OverlayKind.TEXT || !anim.isEnabled) {
+            return listOf(overlay)
         }
         val metrics = OverlayBitmapRenderer.textMetrics(overlay)
         val measurer = paintMeasurer(overlay, metrics)
         var unit = anim.unit
         var geoms = TextSegmentPlanner.plan(overlay.text, unit, metrics, measurer)
-        if (geoms.isEmpty()) return emptyList()
+        if (geoms.isEmpty()) {
+            // Blank text cannot be segmented — render the (empty) block as a
+            // regular overlay exactly like the pre-v0.5.0 pipeline did, instead
+            // of dropping the overlay from both pipelines.
+            return listOf(overlay)
+        }
         if (geoms.size > MAX_SEGMENTS) {
             // G5: LETTER on a long text overflows -> fall back to WORD
             // (coarser granularity, far fewer segments).
@@ -190,7 +209,10 @@ object ExpandedOverlays {
                     ),
                 )
                 limited += overlay.id
-                return emptyList()
+                // G5 fallback: render the block UN-ANIMATED rather than making
+                // the overlay vanish from both pipelines (the UI surfaces
+                // `limited` as a warning — G6).
+                return listOf(overlay)
             }
         }
         val frame = TextSegmentPlanner.blockFrame(overlay.text, metrics, measurer)

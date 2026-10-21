@@ -168,8 +168,17 @@ fun EditorScreen(
     //    control stays reachable and the preview keeps a usable size;
     //  - normal portrait keeps the exact v0.5.3 flex layout with a 140 dp
     //    hard floor so the preview can never collapse again.
+    // v0.5.5: the second guard's floor was a no-op (weight measured the stage
+    // with min=max=leftover, so heightIn could not lift it — the 53×30 sliver
+    // recurred at 16:00:17 on v0.5.4). The flex branch now caps the chrome
+    // below the stage (see the Ponto 2 comment at the cap); the floor holds
+    // by construction. The v0.5.4 gesture hard-stop stays as defence-in-depth.
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val compactWindow = maxHeight < 660.dp
+        // Captured for the flex-branch chrome cap: BoxWithConstraintsScope
+        // members are not readable through the outer Column's implicit
+        // receiver (compiler: "cannot be called in this context").
+        val windowMaxHeight = maxHeight
 
     Column(
         modifier = Modifier
@@ -278,7 +287,28 @@ fun EditorScreen(
             ) {
                 stageContent()
             }
-            chromeBelow()
+            // v0.5.5 (docs/AUDIT_v0.5.4_report_followup.md §2): the v0.5.4
+            // `heightIn(min = 140.dp)` above is a NO-OP exactly when it
+            // matters — `weight(1f)` measures this Box with min = max = the
+            // leftover space, so the heightIn min is coerced INTO
+            // [leftover, leftover] and can never lift it (device evidence
+            // 2026-10-21 16:00:17: containerH=30 px with the floor in the
+            // build). Instead of fighting the weight, the chrome below is
+            // CAPPED so the weighted stage always receives at least the
+            // floor: non-weighted children are measured first, so the stage
+            // gets `maxHeight - topBar - cap >= 140 dp` by construction. When
+            // the chrome content (expanded quick panel + timeline + tool row)
+            // exceeds the cap it scrolls internally — the same pattern the
+            // compact branch already ships. Normal portrait (chrome ~ 420 dp
+            // < cap ~ 590 dp) is layout-identical to v0.5.4.
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = windowMaxHeight - 212.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                chromeBelow()
+            }
         }
     }
     }
