@@ -359,7 +359,12 @@ data class OvgProject(
         val migratedAudio = audioClips.toMutableList()
         music?.let { m ->
             migratedAudio += AudioClipItem(
-                id = "music_" + m.uri.hashCode().toString(16),
+                // v0.5.1: a fresh UUID instead of the old derived
+                // "music_" + uri.hashCode() fixed id — every clip in the
+                // project must have a unique random identity. Safe for
+                // migration idempotency: the legacy fields are cleared in
+                // the same pass, so this runs at most once per document.
+                id = java.util.UUID.randomUUID().toString(),
                 uri = m.uri,
                 displayName = m.displayName,
                 sourceDurationMs = m.durationMs,

@@ -131,8 +131,21 @@ class ProjectMathTest {
     }
 
     @Test
-    fun `empty project has zero duration`() {
-        assertEquals(0L, ProjectMath.projectDurationMs(project()))
+    fun `fully empty project has the 5 s empty-project floor (v0_5_1)`() {
+        // v0.5.1: a project without base video starts at 5 s so the timeline
+        // is scrubbable and the black-background export has a real duration
+        // from the first element. The pre-v0.5.1 contract (zero duration)
+        // made a video-less project impossible to export or scrub.
+        assertEquals(ProjectMath.MIN_EMPTY_DURATION_MS, ProjectMath.projectDurationMs(project()))
+        assertEquals(5_000L, ProjectMath.projectDurationMs(project()))
+    }
+
+    @Test
+    fun `empty project grows with its clips beyond the 5 s floor`() {
+        val audioOnly = project(audio = listOf(audio(0, 0, 12_000)))
+        assertEquals(12_000L, ProjectMath.projectDurationMs(audioOnly))
+        val overlayOnly = project(overlays = listOf(overlay(0, 8_000)))
+        assertEquals(8_000L, ProjectMath.projectDurationMs(overlayOnly))
     }
 }
 // v0.2.1 regression: the single clamp used by every playhead writer

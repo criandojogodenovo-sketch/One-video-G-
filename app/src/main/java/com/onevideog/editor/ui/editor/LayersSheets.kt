@@ -133,9 +133,9 @@ internal fun LayersPanel(viewModel: EditorViewModel, onOpenTool: (Tool) -> Unit)
                 modifier = Modifier
                     .weight(1f)
                     .clickable {
-                        viewModel.selectClip(clip.id)
-                        viewModel.selectOverlay(null)
-                        viewModel.selectAudioClip(null)
+                        viewModel.selectTimelineClip(
+                            com.onevideog.editor.editor.ClipKind.VIDEO, clip.id,
+                        )
                         viewModel.seekTo(TimelineLogic.clipStartMs(project.clips, index))
                         onOpenTool(Tool.TRIM)
                     },
@@ -192,9 +192,9 @@ internal fun LayersPanel(viewModel: EditorViewModel, onOpenTool: (Tool) -> Unit)
                 modifier = Modifier
                     .weight(1f)
                     .clickable {
-                        viewModel.selectAudioClip(audioClip.id)
-                        viewModel.selectClip(null)
-                        viewModel.selectOverlay(null)
+                        viewModel.selectTimelineClip(
+                            com.onevideog.editor.editor.ClipKind.AUDIO, audioClip.id,
+                        )
                         viewModel.seekTo(audioClip.startMs)
                         onOpenTool(Tool.AUDIO)
                     },
@@ -251,16 +251,28 @@ internal fun LayersPanel(viewModel: EditorViewModel, onOpenTool: (Tool) -> Unit)
                     .weight(1f)
                     .padding(start = 6.dp)
                     .clickable {
-                        viewModel.selectOverlay(overlay.id)
-                        viewModel.selectClip(null)
-                        viewModel.selectAudioClip(null)
+                        viewModel.selectTimelineClip(
+                            if (overlay.isText) {
+                                com.onevideog.editor.editor.ClipKind.TEXT
+                            } else {
+                                com.onevideog.editor.editor.ClipKind.IMAGE
+                            },
+                            overlay.id,
+                        )
                         viewModel.seekTo(overlay.startMs)
                         onOpenTool(if (overlay.isText) Tool.TEXT else Tool.IMAGE)
                     },
             )
             IconButton(
                 onClick = {
-                    viewModel.selectOverlay(overlay.id)
+                    viewModel.selectTimelineClip(
+                        if (overlay.isText) {
+                            com.onevideog.editor.editor.ClipKind.TEXT
+                        } else {
+                            com.onevideog.editor.editor.ClipKind.IMAGE
+                        },
+                        overlay.id,
+                    )
                     onOpenTool(Tool.KEYFRAMES)
                 },
                 modifier = Modifier.size(32.dp),

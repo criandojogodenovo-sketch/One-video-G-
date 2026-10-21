@@ -49,6 +49,10 @@
     <string name="editor_import_music">Importar áudio</string>
     <string name="editor_empty_title">A linha temporal está vazia</string>
     <string name="editor_empty_body">Importe um vídeo para começar a editar. Pode cortar, dividir, reordenar e exportar offline.</string>
+    <!-- v0.5.1: projetos sem vídeo (fundo preto, duração inicial de 5 s). -->
+    <string name="empty_project">Projeto vazio</string>
+    <string name="empty_project_name">Projeto vazio</string>
+    <string name="a11y_empty_project">Novo projeto sem vídeo base</string>
     <string name="editor_clip_missing">Ficheiro em falta</string>
     <string name="editor_missing_media_body">O ficheiro original deste clipe já não está acessível. Reassocie-o ou apague o clipe.</string>
     <string name="editor_relink">Reassociar ficheiro</string>
@@ -169,6 +173,8 @@
     <string name="export_start">Exportar vídeo</string>
     <string name="export_select_location">Escolha onde guardar</string>
     <string name="export_need_clips">Adicione pelo menos um clipe antes de exportar.</string>
+    <!-- v0.5.1: projetos sem vídeo exportam sobre um fundo preto gerado. -->
+    <string name="export_black_bg_note">Projeto sem vídeo base: a exportação renderiza um fundo preto com os seus clipes de texto, imagem e áudio.</string>
     <string name="export_preparing">A preparar a exportação…</string>
     <string name="export_queued">Exportação em fila…</string>
     <string name="export_running">A exportar… %1$d%%</string>

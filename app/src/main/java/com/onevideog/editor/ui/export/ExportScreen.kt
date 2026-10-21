@@ -224,8 +224,19 @@ fun ExportScreen(
             val busy = busState is ExportManager.State.Queued ||
                 busState is ExportManager.State.Running ||
                 busState is ExportManager.State.Finalizing
-            val canStart = project != null && project.clips.isNotEmpty() && !busy
-            if (project != null && project.clips.isEmpty()) {
+            // v0.5.1: a project WITHOUT base video is exportable — the
+            // composition renders a black background (initial 5 s, growing
+            // with the clips). Only a zero-duration project blocks.
+            val exportable = project != null &&
+                com.onevideog.editor.editor.ProjectMath.projectDurationMs(project) > 0
+            val canStart = exportable && !busy
+            if (project != null && project.clips.isEmpty() && exportable) {
+                Text(
+                    stringResource(R.string.export_black_bg_note),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            } else if (project != null && !exportable) {
                 Text(
                     stringResource(R.string.export_need_clips),
                     color = MaterialTheme.colorScheme.error,

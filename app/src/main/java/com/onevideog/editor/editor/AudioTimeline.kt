@@ -82,6 +82,32 @@ object AudioTimeline {
         return sourceOffset.coerceIn(clip.trimStartMs, clip.sourceDurationMs)
     }
 
+    /**
+     * v0.5.1 — WINDOW-LOCAL position of the preview player for project time
+     * [playheadMs], or null when the clip is silent there.
+     *
+     * The preview ExoPlayer is created with ClippingConfiguration
+     * (trimStartMs..trimEndMs); Media3 rebases item timestamps to 0 at the
+     * clip window start, so `player.currentPosition` and `player.seekTo`
+     * are 0-BASED WITHIN THE WINDOW — exactly like the video preview path
+     * (ProjectMath.projectToItemLocalMs + "Media3 resets timestamps at the
+     * clipping start"). [sourcePositionAt] returns ABSOLUTE source ms; the
+     * scheduler MUST subtract the trim start before comparing/seeking, or
+     * every tick computes a false drift of trimStartMs and re-seeks the
+     * player into silence (the device "audio stutters / never plays after
+     * moving the bar" bug). Pure — unit-tested.
+     */
+    fun windowPositionAt(
+        clip: AudioClipItem,
+        playheadMs: Long,
+        videoDurationMs: Long,
+    ): Long? {
+        val absolute = sourcePositionAt(clip, playheadMs, videoDurationMs) ?: return null
+        val local = absolute - clip.trimStartMs
+        val windowDuration = clip.trimmedDurationMs
+        return local.coerceIn(0L, (windowDuration - 1).coerceAtLeast(0L))
+    }
+
     // ---------------------------------------------------------------- export
 
     /**

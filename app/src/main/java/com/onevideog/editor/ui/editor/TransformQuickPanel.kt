@@ -151,7 +151,7 @@ internal fun TransformQuickPanel(
                 )
             }
             IconButton(
-                onClick = { viewModel.selectOverlay(null) },
+                onClick = { viewModel.clearSelection() },
                 modifier = Modifier.size(36.dp),
             ) {
                 Icon(

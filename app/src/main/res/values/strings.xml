@@ -49,6 +49,10 @@
     <string name="editor_import_music">Import music</string>
     <string name="editor_empty_title">Your timeline is empty</string>
     <string name="editor_empty_body">Import a video to start editing. You can trim, split, reorder and export offline.</string>
+    <!-- v0.5.1: video-less projects (black background, 5 s starting duration). -->
+    <string name="empty_project">Empty project</string>
+    <string name="empty_project_name">Empty project</string>
+    <string name="a11y_empty_project">New project without base video</string>
     <string name="editor_clip_missing">File missing</string>
     <string name="editor_missing_media_body">The original file of this clip is no longer accessible. Relink it or remove the clip.</string>
     <string name="editor_relink">Relink file</string>
@@ -169,6 +173,8 @@
     <string name="export_start">Export video</string>
     <string name="export_select_location">Choose where to save</string>
     <string name="export_need_clips">Add at least one clip before exporting.</string>
+    <!-- v0.5.1: video-less projects export on a generated black background. -->
+    <string name="export_black_bg_note">Project without base video: the export renders a black background with your text, image and audio clips.</string>
     <string name="export_preparing">Preparing export…</string>
     <string name="export_queued">Export queued…</string>
     <string name="export_running">Exporting… %1$d%%</string>

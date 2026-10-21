@@ -75,13 +75,31 @@ object CompositionFactory {
             clipStart += clip.effectiveDurationMs
         }
 
+        // v0.5.1 (empty project): with NO base video the composition still
+        // needs a video track — an empty sequence makes the Transformer
+        // fail/produce nothing. A generated BLACK frame image item spans
+        // the whole planned duration (>= 5 s by [ProjectMath]) and carries
+        // the overlay textures exactly like a video clip would. The frame
+        // aspect matches the preview's clip-less contentAspect (SOURCE ->
+        // 16:9, fixed aspect -> the project ratio), so normalized overlay
+        // positions are identical in preview and export (parity).
+        if (project.clips.isEmpty() && plannedDurationMs > 0) {
+            buildBlackBaseItem(context, project, plannedDurationMs, workDir)?.let {
+                videoItems.add(it)
+            }
+        }
+
         val sequences = ImmutableList.builder<EditedMediaItemSequence>()
         sequences.add(EditedMediaItemSequence(videoItems.build()))
 
         // ---- independent audio sequences ----
+        // v0.5.1: with no base video, audio is clamped to the PROJECT
+        // duration (>= 5 s) instead of a zero-length video timeline, so
+        // audio-only projects export exactly what the preview plays.
+        val audioFillMs = if (project.clips.isEmpty()) plannedDurationMs else videoDurationMs
         val tempFiles = mutableListOf<File>()
         for (audioClip in project.audioClips) {
-            val sequence = buildAudioSequence(audioClip, videoDurationMs, workDir, tempFiles)
+            val sequence = buildAudioSequence(audioClip, audioFillMs, workDir, tempFiles)
             if (sequence != null) sequences.add(sequence)
         }
 
@@ -109,6 +127,84 @@ object CompositionFactory {
     }
 
     // ------------------------------------------------------------------ video
+
+    /**
+     * v0.5.1: the empty-project base "clip" — a solid black image spanning
+     * [durationMs], carrying the overlay textures for the whole project
+     * window through the SAME [ClipEffectsFactory.texturesForWindows] the
+     * per-clip path uses (one overlay implementation, preview/export parity).
+     * The frame aspect equals the preview's clip-less contentAspect.
+     */
+    private fun buildBlackBaseItem(
+        context: Context,
+        project: OvgProject,
+        durationMs: Long,
+        workDir: File,
+    ): EditedMediaItem? {
+        val aspect = when (val a = project.aspectEnum) {
+            ProjectAspect.SOURCE -> 16f / 9f
+            else -> a.ratio() ?: 16f / 9f
+        }
+        val blackPng = blackFrameFile(workDir, aspect) ?: return null
+        val expanded = ExpandedOverlays.build(project)
+        val windows = ClipEffectPlan.overlayWindowsForClip(
+            overlays = expanded.overlays,
+            clipEndMs = durationMs,
+            frameAspect = aspect,
+            clipStartMs = 0L,
+        )
+        val overlayTextures = ClipEffectsFactory.texturesForWindows(context, windows, 0L)
+        val videoEffects = if (overlayTextures.isEmpty()) {
+            emptyList<androidx.media3.common.Effect>()
+        } else {
+            listOf<androidx.media3.common.Effect>(
+                androidx.media3.effect.OverlayEffect(overlayTextures),
+            )
+        }
+        // Media3 1.4.1: EditedMediaItem does NOT derive a duration from the
+        // image MediaItem (EditedMediaItem.Builder.setImageDurationMs only
+        // exists since 1.5.0) — the sequence item duration MUST be set
+        // explicitly via setDurationUs (ImageAssetLoader reads it). The
+        // MediaItem-level setImageDurationMs documents the same duration for
+        // any playback path and is the 1.4.1-correct API on MediaItem.
+        val durationUs = durationMs * 1_000L
+        return EditedMediaItem.Builder(
+            MediaItem.Builder()
+                .setUri(Uri.fromFile(blackPng))
+                .setMimeType(MimeTypes.IMAGE_PNG)
+                .setImageDurationMs(durationMs)
+                .build(),
+        )
+            .setDurationUs(durationUs)
+            .setEffects(Effects(emptyList(), videoEffects))
+            .build()
+    }
+
+    /**
+     * Writes (or reuses) the black PNG used as the no-video export base.
+     * Size: short side 720 px at [aspect] — above every export target height
+     * after the composition Presentation scales it, tiny in memory. The
+     * content never varies with duration, so one file per workDir.
+     */
+    private fun blackFrameFile(workDir: File, aspect: Float): File? = runCatching {
+        val file = File(workDir, "black_base.png")
+        if (!file.isFile || file.length() == 0L) {
+            val shortSide = 720
+            val (w, h) = if (aspect >= 1f) {
+                Math.round(shortSide * aspect).coerceAtLeast(2) to shortSide
+            } else {
+                shortSide to Math.round(shortSide / aspect).coerceAtLeast(2)
+            }
+            val bitmap = android.graphics.Bitmap
+                .createBitmap(w, h, android.graphics.Bitmap.Config.RGB_565)
+            bitmap.eraseColor(android.graphics.Color.BLACK)
+            file.outputStream().use {
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+            }
+            bitmap.recycle()
+        }
+        file
+    }.getOrNull()
 
     private fun buildClipItem(
         context: Context,

@@ -82,7 +82,12 @@ internal fun AudioPanel(viewModel: EditorViewModel) {
                         (if (clip.loop) " · ∞" else ""),
                     modifier = Modifier
                         .weight(1f)
-                        .clickable { viewModel.selectAudioClip(clip.id) },
+                        .clickable {
+                            // v0.5.1: unified exclusive selection.
+                            viewModel.selectTimelineClip(
+                                com.onevideog.editor.editor.ClipKind.AUDIO, clip.id,
+                            )
+                        },
                     maxLines = 1,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface,

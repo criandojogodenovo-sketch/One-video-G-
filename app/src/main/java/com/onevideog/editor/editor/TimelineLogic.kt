@@ -86,7 +86,14 @@ object TimelineLogic {
     fun remove(clips: List<Clip>, id: String): List<Clip>? =
         if (clips.any { it.id == id }) clips.filterNot { it.id == id } else null
 
-    fun newId(): String = java.util.UUID.randomUUID().toString().replace("-", "").take(16)
+    /**
+     * Identity of every new timeline element (video clip, text/image overlay,
+     * audio clip, split halves). v0.5.1: a FULL random UUID — the previous
+     * 16-char truncation worked in practice but is not a UUID and needlessly
+     * narrowed the id space. One generator for ALL clip kinds: no per-type
+     * id scheme exists anywhere else in the app.
+     */
+    fun newId(): String = java.util.UUID.randomUUID().toString()
 }
 
 /**

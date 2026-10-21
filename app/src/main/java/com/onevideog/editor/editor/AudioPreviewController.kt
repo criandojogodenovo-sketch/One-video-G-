@@ -77,20 +77,30 @@ class AudioPreviewController(context: Context) {
 
         for (clip in audioClips) {
             if (clip.uri.isBlank() || clip.id in failedClips) continue
-            val sourcePositionMs = AudioTimeline.sourcePositionAt(
+            // v0.5.1: window-local coordinates. The player is created with
+            // ClippingConfiguration (trimStart..trimEnd) and Media3 rebases
+            // item timestamps to 0 at the window start, so currentPosition
+            // and seekTo are 0-based within the window — the same contract
+            // the video preview path relies on. The previous code compared
+            // currentPosition against the ABSOLUTE source position
+            // (sourcePositionAt), so any clip with trimStartMs > 0 computed
+            // a permanent false drift of trimStartMs and was re-seeked
+            // every sync tick (stutter / silence whenever the bar was
+            // dragged). AudioTimeline.windowPositionAt does the conversion.
+            val windowPositionMs = AudioTimeline.windowPositionAt(
                 clip, playheadMs, videoDurationMs,
             )
             val player = players[clip.id]
-            if (sourcePositionMs == null) {
+            if (windowPositionMs == null) {
                 player?.let { if (it.isPlaying) it.pause() }
                 continue
             }
             val active = player ?: createPlayer(clip)?.also { players[clip.id] = it } ?: continue
             if (active.playbackState == Player.STATE_IDLE) active.prepare()
             active.volume = clip.volume.coerceIn(0f, 1f)
-            val drift = kotlin.math.abs(active.currentPosition - sourcePositionMs)
+            val drift = kotlin.math.abs(active.currentPosition - windowPositionMs)
             if (drift > DRIFT_TOLERANCE_MS) {
-                active.seekTo(sourcePositionMs)
+                active.seekTo(windowPositionMs)
             }
             if (playing) {
                 if (!active.isPlaying) active.play()

@@ -72,14 +72,18 @@ class ExportConfigTest {
     }
 
     @Test
-    fun `validation rejects empty projects and tiny clips`() {
+    fun `validation rejects tiny clips and accepts video-less projects (v0_5_1)`() {
         val empty = OvgProject(
             id = "p",
             name = "p",
             createdAtEpochMs = 0,
             updatedAtEpochMs = 0,
         )
-        assertEquals(ExportConfig.ExportProblem.NO_CLIPS, ExportConfig.validateForExport(empty))
+        // v0.5.1: a project without base video is EXPORTABLE — the
+        // composition renders a generated black background for the 5 s
+        // floor duration. The old NO_CLIPS gate made "Projeto vazio"
+        // impossible to export.
+        assertEquals(null, ExportConfig.validateForExport(empty))
 
         val tiny = empty.copy(
             clips = listOf(

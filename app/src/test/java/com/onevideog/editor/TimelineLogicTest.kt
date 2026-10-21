@@ -163,4 +163,21 @@ class TimelineLogicTest {
         while (manager.undo() != null) count++
         return count
     }
+
+    // ------------------------------------------------------------------
+    // v0.5.1: identity of every new timeline element — a FULL UUID minted
+    // by ONE generator shared by ALL clip kinds (video, text, image, audio,
+    // split halves). Pins uniqueness and UUID-ness so no call site can
+    // quietly regress to a fixed or derived id (the "music_<uri-hash>" bug
+    // class this release removes).
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `newId mints unique parseable UUIDs`() {
+        val ids = List(1_000) { TimelineLogic.newId() }
+        assertEquals(1_000, ids.toSet().size)
+        ids.forEach { java.util.UUID.fromString(it) } // throws when not a UUID
+        // The legacy 16-char truncation is intentionally gone.
+        assertTrue(ids.all { it.length == 36 })
+    }
 }

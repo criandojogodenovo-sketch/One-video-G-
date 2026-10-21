@@ -158,6 +158,21 @@ object ClipEffectsFactory {
                 ?: 16f / 9f,
             clipStartMs = clipStartMs,
         )
+        return texturesForWindows(context, windows, clipStartMs)
+    }
+
+    /**
+     * v0.5.1: window -> textures, the ONE builder for every export surface
+     * (per-clip video items AND the empty-project black base item). Same
+     * bitmaps, same z-order, same [KeyframedOverlay] math — no per-surface
+     * duplication. [surfaceStartProjectMs] is the project time of the item's
+     * local t=0 (the video clip's timeline start, or 0 for the black base).
+     */
+    fun texturesForWindows(
+        context: Context,
+        windows: List<ClipEffectPlan.OverlayWindow>,
+        surfaceStartProjectMs: Long,
+    ): ImmutableList<androidx.media3.effect.TextureOverlay> {
         if (windows.isEmpty()) return ImmutableList.of()
         val builder = ImmutableList.builder<androidx.media3.effect.TextureOverlay>()
         for (window in windows) {
@@ -185,7 +200,7 @@ object ClipEffectsFactory {
                     contentBitmap = bitmap,
                     windowStartLocalMs = window.windowStartLocalMs,
                     windowEndLocalMs = window.windowEndLocalMs,
-                    clipStartMs = clipStartMs,
+                    clipStartMs = surfaceStartProjectMs,
                     frameAspect = window.frameAspect,
                 ),
             )

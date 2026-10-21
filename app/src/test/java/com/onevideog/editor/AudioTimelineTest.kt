@@ -113,4 +113,47 @@ class AudioTimelineTest {
         val c = clip(0, 2_000, 2_000)
         assertNull(AudioTimeline.sourcePositionAt(c, 0, 10_000))
     }
+
+    // ------------------------------------------------------------------
+    // v0.5.1: windowPositionAt — the preview player coordinates. The
+    // ExoPlayer is created with ClippingConfiguration (trimStart..trimEnd)
+    // and Media3 rebases item timestamps to 0 at the window start, so the
+    // scheduler must compare/seek in WINDOW-LOCAL ms. The old code compared
+    // against the ABSOLUTE source position and computed a permanent false
+    // drift of trimStartMs (device bug: re-seek every sync tick → stutter /
+    // silence for any clip with trimStartMs > 0).
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `window position is null where the clip is silent`() {
+        val c = clip(1_000, 500, 3_500)
+        assertNull(AudioTimeline.windowPositionAt(c, 999, 10_000))
+        assertNull(AudioTimeline.windowPositionAt(c, 4_500, 10_000))
+    }
+
+    @Test
+    fun `window position subtracts the trim start`() {
+        // playhead 1_000 = clip start -> window 0; playhead 1_500 is 500 ms
+        // into the window (absolute source 1_000 - trimStart 500).
+        val c = clip(1_000, 500, 3_500)
+        assertEquals(0L, AudioTimeline.windowPositionAt(c, 1_000, 10_000))
+        assertEquals(500L, AudioTimeline.windowPositionAt(c, 1_500, 10_000))
+        assertEquals(2_999L, AudioTimeline.windowPositionAt(c, 3_999, 10_000))
+    }
+
+    @Test
+    fun `window position never reaches the window duration`() {
+        // Media3 clips [trimStart, trimEnd): the last valid player position
+        // is duration-1; the clamp protects the seek target.
+        val c = clip(0, 0, 2_000)
+        assertEquals(1_999L, AudioTimeline.windowPositionAt(c, 1_999, 10_000))
+    }
+
+    @Test
+    fun `looping clip window position wraps inside the window`() {
+        val c = clip(0, 100, 2_100, loop = true)
+        // Second loop pass (playhead 2_100) lands back at window-local 100.
+        assertEquals(100L, AudioTimeline.windowPositionAt(c, 100, 10_000))
+        assertEquals(100L, AudioTimeline.windowPositionAt(c, 2_100, 10_000))
+    }
 }

@@ -71,7 +71,10 @@ object OverlayBitmapRenderer {
     fun contentKey(overlay: OverlayItem): String = when (overlay.kind) {
         com.onevideog.editor.data.OverlayKind.TEXT -> buildString {
             append("t|")
-            append(overlay.text.hashCode()).append('|')
+            // v0.5.1: the FULL text instead of text.hashCode() — a 32-bit
+            // hash let two DIFFERENT texts (same styling) collide and reuse
+            // the wrong bitmap. Key strings are bounded by the LruCache.
+            append(overlay.text).append('|')
             append(overlay.colorArgb).append('|')
             append(overlay.fontFamily).append('|')
             append(overlay.bold).append(overlay.italic).append('|')

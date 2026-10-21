@@ -71,9 +71,18 @@ object ExportConfig {
         return cleaned.ifBlank { "one-video-g" }
     }
 
-    /** Validates that a project can be exported at all. Returns null when valid. */
+    /**
+     * Validates that a project can be exported at all. Returns null when valid.
+     *
+     * v0.5.1: a project WITHOUT base video is exportable — the composition
+     * renders a generated black background (see
+     * [CompositionFactory.buildBlackBaseItem]). The gate is therefore the
+     * project DURATION (>= 5 s for video-less projects via
+     * [ProjectMath.MIN_EMPTY_DURATION_MS]), not the presence of video clips;
+     * NO_CLIPS remains only for a degenerate zero-duration document.
+     */
     fun validateForExport(project: OvgProject): ExportProblem? {
-        if (project.clips.isEmpty()) return ExportProblem.NO_CLIPS
+        if (ProjectMath.projectDurationMs(project) <= 0L) return ExportProblem.NO_CLIPS
         for (clip in project.clips) {
             if (clip.trimEndMs - clip.trimStartMs < TimelineLogic.MIN_CLIP_SOURCE_MS) {
                 return ExportProblem.CLIP_TOO_SHORT

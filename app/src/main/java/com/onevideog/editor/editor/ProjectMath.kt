@@ -15,6 +15,14 @@ import kotlin.math.roundToLong
  */
 object ProjectMath {
 
+    /**
+     * v0.5.1 (empty project): a project WITHOUT base video is always at
+     * least 5 s long, and grows as clips (text/image/audio) are added.
+     * The initial 5 s gives the timeline a usable scrub range and gives
+     * the black-background export a real duration from the first element.
+     */
+    const val MIN_EMPTY_DURATION_MS = 5_000L
+
     /** Duration of the concatenated video sequence (timeline ms). */
     fun videoDurationMs(clips: List<Clip>): Long = clips.sumOf { it.effectiveDurationMs }
 
@@ -27,7 +35,8 @@ object ProjectMath {
         audioClips.maxOfOrNull { it.endMs } ?: 0L
 
     /**
-     * Authoritative project duration — THE documented project rule (v0.3.0):
+     * Authoritative project duration — THE documented project rule (v0.3.0,
+     * extended v0.5.1 for empty projects):
      *
      *  - When the project has video clips, the duration is the VIDEO
      *    timeline — period. NOTHING extends it. The Media3 1.4.1 export
@@ -43,8 +52,11 @@ object ProjectMath {
      *    discarded — they persist, stay editable in the timeline and simply
      *    render nothing outside the active range (identical rule in preview
      *    and export, see [ClipEffectPlan.overlayWindowsForClip]).
-     *  - When the project has NO video clips (audio/overlay-only project),
-     *    the duration is the longest element, so such projects stay usable.
+     *  - When the project has NO video clips (text/image/audio-only
+     *    project), the duration is at least [MIN_EMPTY_DURATION_MS] (5 s,
+     *    the "empty project" starting length) and grows to the longest
+     *    element — so such projects stay usable and exportable on a black
+     *    background.
      *
      * Preview and export both read the duration from here — what the user
      * sees is exactly what is exported.
@@ -52,7 +64,11 @@ object ProjectMath {
     fun projectDurationMs(project: OvgProject): Long {
         val video = videoDurationMs(project.clips)
         return if (project.clips.isEmpty()) {
-            maxOf(overlayEndMs(project.overlays), audioEndMs(project.audioClips))
+            maxOf(
+                MIN_EMPTY_DURATION_MS,
+                overlayEndMs(project.overlays),
+                audioEndMs(project.audioClips),
+            )
         } else {
             video
         }

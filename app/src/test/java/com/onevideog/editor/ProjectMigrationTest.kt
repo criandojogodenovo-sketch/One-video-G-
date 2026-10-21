@@ -6,6 +6,7 @@ import com.onevideog.editor.data.TextOverlayItem
 import com.onevideog.editor.data.projectJson
 import kotlinx.serialization.encodeToString
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -92,5 +93,34 @@ class ProjectMigrationTest {
         """.trimIndent()
         val decoded = projectJson.decodeFromString<OvgProject>(json)
         assertEquals("p3", decoded.id)
+    }
+
+    @Test
+    fun `migrated music audio gets a fresh UUID id, not a derived one (v0_5_1)`() {
+        val v1Json = """
+            {
+              "schemaVersion": 1,
+              "id": "p4",
+              "name": "Music Legacy",
+              "createdAtEpochMs": 1,
+              "updatedAtEpochMs": 2,
+              "music": {"uri":"content://mp3","displayName":"song.mp3","durationMs":30000,"volume":0.5}
+            }
+        """.trimIndent()
+
+        val migrated = projectJson.decodeFromString<OvgProject>(v1Json).migrated()
+        val audio = migrated.audioClips.single()
+
+        // v0.5.1: the id is a fresh UUID — NOT the legacy derived
+        // "music_<uri-hash>" identity (derived/fixed ids were the bug class
+        // this release removes: different documents could carry the same
+        // clip id, and any new import could collide with it).
+        assertEquals(audio.id, java.util.UUID.fromString(audio.id).toString())
+        assertFalse(audio.id.startsWith("music_"))
+
+        // Migration stays idempotent: the legacy field was cleared in the
+        // same pass, so the UUID is minted at most once per document.
+        assertNull(migrated.music)
+        assertEquals(migrated, migrated.migrated())
     }
 }

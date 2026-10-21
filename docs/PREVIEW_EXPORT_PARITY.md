@@ -17,6 +17,9 @@ call the same functions — neither has a second implementation:
 | Auto-key edit (v0.5.0)   | `KeyframeEditing.applyTransformEdit`     | gizmo commit, quick panel, sheet  | (model-level — export reads the result)    |
 | Text segments (v0.5.0)   | `TextSegmentPlanner` + `OverlayBitmapRenderer.textMetrics`/`wrapTextLines` | `computePlacements` render list | `ClipEffectsFactory.overlayTextures` |
 | Text entrance (v0.5.0)   | `TextAnimationPlanner` + `ExpandedOverlays.build` (ONE expansion) | `computePlacements` render list | `ClipEffectsFactory.overlayTextures` |
+| Unified clip view (v0.5.1) | `TimelineClips` (`ClipKind` + `TimelineClip`) | timeline rows, exclusive selection, creation | (editing-layer model — export unaffected) |
+| Audio preview coords (v0.5.1) | `AudioTimeline.windowPositionAt` | `AudioPreviewController` seek/drift | (export plan unchanged — `AudioTimeline.exportPlan`) |
+| Video-less base (v0.5.1) | `ProjectMath.MIN_EMPTY_DURATION_MS` + `ClipEffectsFactory.texturesForWindows` | black stage + `computePlacements` overlay layer | `CompositionFactory.buildBlackBaseItem` (black PNG item carrying the same textures) |
 
 Timeline, clip labels, preview and export all read duration from
 `ProjectMath.projectDurationMs`. There is no other duration calculation.
@@ -48,7 +51,10 @@ Timeline, clip labels, preview and export all read duration from
    (longest audio/overlay), so such projects remain playable. v0.3.0 adds a
    clip-less playback driver so the playhead advances in real time there
    (previously it froze at 0 while audio stuttered against the drift
-   corrector).
+   corrector). v0.5.1 floors a video-less project at 5 s
+   (`ProjectMath.MIN_EMPTY_DURATION_MS`) so a freshly created "Projeto
+   vazio" is scrubbable and exportable before the first element exists,
+   and grows as text/image/audio clips are added.
 
 Preview and export read the SAME values from the SAME function
 (`ProjectMath.projectDurationMs`); the export plan
@@ -120,6 +126,43 @@ v0.3.1 contract:
    edit paid one decoder init + frame flash). Clip identity/trim/speed/
    colour/aspect remain rebuild inputs; a playhead move still never rebuilds.
 
+## Unified clip identity and the video-less project (v0.5.1)
+
+**Clip identity.** Every new timeline element — video clip, text overlay,
+image overlay, audio clip and split halves — is minted by ONE generator
+(`TimelineLogic.newId`, a full random UUID) and APPENDED to its list; no
+code path replaces or reuses an existing element by kind. The legacy v1
+migration now also mints a fresh UUID for the migrated `music` track
+(previously it derived `"music_" + uri.hashCode()` — a fixed id shared by
+unrelated documents). The bitmap cache key uses the FULL text content
+instead of a 32-bit `hashCode`, so two different texts can no longer share
+a cached bitmap. All of this is pinned by `TimelineLogicTest`
+(uniqueness/UUID-ness), `ProjectMigrationTest` (fresh UUID + idempotency)
+and `TimelineClipsTest` (cross-kind uniqueness).
+
+**Exclusive selection.** Every selection path routes through
+`EditorViewModel.selectTimelineClip(kind, id)` (or `clearSelection`); the
+legacy per-kind setters are thin aliases, so no code path can leave two
+clips of different kinds selected at once.
+
+**Video-less projects.** A project without video clips renders its black
+stage in the preview (Compose overlay layer + `AudioPreviewController` on
+top) and exports a generated black PNG base item spanning the whole
+planned duration (`CompositionFactory.buildBlackBaseItem`). The base item
+carries the overlay textures through the SAME
+`ClipEffectsFactory.texturesForWindows` the per-clip path uses, and its
+frame aspect equals the preview's clip-less `contentAspect` (SOURCE →
+16:9, fixed aspect → the project ratio), so normalized overlay positions
+are identical in both paths by construction.
+
+**Audio preview coordinates.** The preview audio ExoPlayer is created with
+`ClippingConfiguration` (trimStart..trimEnd); Media3 rebases item
+timestamps to 0 at the window start. `AudioTimeline.windowPositionAt`
+converts project time to that window-local coordinate; the pre-v0.5.1
+scheduler compared against the ABSOLUTE source position and computed a
+permanent false drift of `trimStartMs`, re-seeking the player every sync
+tick (stutter/silence for any trimmed clip). The export plan is unchanged.
+
 ## Known, documented limitations
 
 1. **Colour space difference.** Media3 applies `RgbMatrix` in linear RGB;
@@ -164,6 +207,12 @@ v0.3.1 contract:
    clip's source aspect). A SOURCE-aspect project whose clips have
    different resolutions inherits the parent overlay's existing per-clip
    geometry limitation in both paths equally.
+11. **Video-less export base (v0.5.1).** The black background is a single
+   PNG image item spanning the project duration (one decoder init, no
+   per-clip seams — there is no video). Its frame aspect equals the
+   preview's clip-less content aspect; overlay parity holds by
+   construction because both paths read the same normalized model and the
+   same texture builder.
 
 ## What "parity" means here (verification status)
 

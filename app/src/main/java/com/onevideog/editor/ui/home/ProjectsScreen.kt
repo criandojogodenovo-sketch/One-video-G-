@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.VideocamOff
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -87,6 +88,7 @@ fun ProjectsScreen(
     LaunchedEffect(Unit) { reload() }
 
     val defaultName = stringResource(R.string.project_default_name, DateFormat.getDateInstance(DateFormat.SHORT).format(Date()))
+    val defaultEmptyName = stringResource(R.string.empty_project_name)
 
     Scaffold(
         topBar = {
@@ -100,11 +102,24 @@ fun ProjectsScreen(
             )
         },
         floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = { showNewDialog = true },
-                icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                text = { Text(stringResource(R.string.new_project)) },
-            )
+            Column(horizontalAlignment = Alignment.End) {
+                // v0.5.1: "Projeto vazio" — a video-less project (black
+                // background timeline, 5 s starting duration) next to the
+                // regular new-project action.
+                ExtendedFloatingActionButton(
+                    onClick = {
+                        viewModel.newProject(defaultEmptyName) { id -> onOpenProject(id) }
+                    },
+                    icon = { Icon(Icons.Filled.VideocamOff, contentDescription = null) },
+                    text = { Text(stringResource(R.string.empty_project)) },
+                    modifier = Modifier.padding(bottom = 10.dp),
+                )
+                ExtendedFloatingActionButton(
+                    onClick = { showNewDialog = true },
+                    icon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                    text = { Text(stringResource(R.string.new_project)) },
+                )
+            }
         },
     ) { padding ->
         if (projects.isEmpty()) {

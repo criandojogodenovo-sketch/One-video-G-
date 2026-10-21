@@ -110,7 +110,15 @@ internal fun OverlayEditorPanel(viewModel: EditorViewModel, kind: OverlayKind) {
                         modifier = Modifier
                             .weight(1f)
                             .clickable {
-                                viewModel.selectOverlay(overlay.id)
+                                // v0.5.1: unified exclusive selection.
+                                viewModel.selectTimelineClip(
+                                    if (overlay.isText) {
+                                        com.onevideog.editor.editor.ClipKind.TEXT
+                                    } else {
+                                        com.onevideog.editor.editor.ClipKind.IMAGE
+                                    },
+                                    overlay.id,
+                                )
                             },
                         maxLines = 1,
                         style = MaterialTheme.typography.bodySmall,

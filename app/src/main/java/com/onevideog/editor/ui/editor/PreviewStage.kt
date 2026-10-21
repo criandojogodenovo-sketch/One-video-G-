@@ -535,8 +535,20 @@ fun PreviewStage(viewModel: EditorViewModel) {
                     // here is already the gesture/selection TARGET (the
                     // parent for animated text segments).
                     gestureState = null
-                    viewModel.selectOverlay(overlay?.id)
-                    overlay?.let { viewModel.selectClip(null); viewModel.selectAudioClip(null) }
+                    if (overlay == null) {
+                        // v0.5.1: unified exclusive selection (tap on empty
+                        // stage clears every kind).
+                        viewModel.clearSelection()
+                    } else {
+                        viewModel.selectTimelineClip(
+                            if (overlay.isText) {
+                                com.onevideog.editor.editor.ClipKind.TEXT
+                            } else {
+                                com.onevideog.editor.editor.ClipKind.IMAGE
+                            },
+                            overlay.id,
+                        )
+                    }
                 },
                 onGesture = { overlay, transform ->
                     gestureState = overlay.id to transform
@@ -564,7 +576,8 @@ fun PreviewStage(viewModel: EditorViewModel) {
                     }
                 },
                 onDelete = { overlay ->
-                    viewModel.selectOverlay(null)
+                    // v0.5.1: unified selection — deleting deselects every kind.
+                    viewModel.clearSelection()
                     viewModel.removeOverlay(overlay.id)
                 },
             )

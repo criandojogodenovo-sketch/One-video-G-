@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.filled.VideocamOff
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -51,14 +52,18 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import com.onevideog.editor.R
 import com.onevideog.editor.editor.EditorViewModel
-import com.onevideog.editor.editor.TimelineLogic
-import com.onevideog.editor.ui.common.EmptyState
 import com.onevideog.editor.ui.home.formatDuration
 
 /**
  * Editing screen: composition preview ([PreviewStage]), multi-track timeline
  * ([TimelineStrip]) and contextual tool sheets. Designed for one-handed
  * portrait use on phones with 4 GB RAM.
+ *
+ * v0.5.1 (empty project): the preview is ALWAYS composed — a project
+ * without base video renders the black stage with its text/image overlays
+ * and plays its audio tracks. Only a completely empty project shows the
+ * hint, drawn OVER the black stage (never replacing it), and every clip
+ * type is immediately addable (the duration floor is 5 s).
  */
 @Composable
 fun EditorScreen(
@@ -66,6 +71,7 @@ fun EditorScreen(
     viewModel: EditorViewModel,
     onBack: () -> Unit,
     onExport: (String) -> Unit,
+    onOpenProject: (String) -> Unit = {},
 ) {
     val state by viewModel.ui.collectAsState()
     val context = LocalContext.current
@@ -172,13 +178,24 @@ fun EditorScreen(
                 .weight(1f),
             contentAlignment = Alignment.Center,
         ) {
+            // v0.5.1: the preview stage (black background + overlay layer +
+            // audio preview) exists for EVERY project — empty ones included.
+            PreviewStage(viewModel = viewModel)
             if (project.clips.isEmpty() && project.overlays.isEmpty() && project.audioClips.isEmpty()) {
-                EmptyState(
-                    title = stringResource(R.string.editor_empty_title),
-                    body = stringResource(R.string.editor_empty_body),
-                )
-            } else {
-                PreviewStage(viewModel = viewModel)
+                // Hint only — drawn over the black stage, not replacing it.
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        stringResource(R.string.editor_empty_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        stringResource(R.string.editor_empty_body),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
             }
         }
 
@@ -205,6 +222,11 @@ fun EditorScreen(
         ToolBarRow(
             onImport = {
                 importLauncher.launch(arrayOf("video/*"))
+            },
+            onEmptyProject = {
+                viewModel.newProject(context.getString(R.string.empty_project_name)) { id ->
+                    onOpenProject(id)
+                }
             },
             onTool = { activeTool = it },
             hasContent = com.onevideog.editor.editor.ProjectMath.projectDurationMs(project) > 0,
@@ -348,6 +370,7 @@ private fun TransportBar(viewModel: EditorViewModel) {
 @Composable
 private fun ToolBarRow(
     onImport: () -> Unit,
+    onEmptyProject: () -> Unit,
     onTool: (Tool) -> Unit,
     hasContent: Boolean,
 ) {
@@ -376,6 +399,16 @@ private fun ToolBarRow(
             Icon(
                 Icons.Filled.Add,
                 contentDescription = stringResource(R.string.a11y_import_video),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
+        // v0.5.1: "Projeto vazio" — a video-less timeline (black background,
+        // 5 s starting duration that grows with the clips) alongside the
+        // video import button.
+        IconButton(onClick = onEmptyProject, modifier = Modifier.size(44.dp)) {
+            Icon(
+                Icons.Filled.VideocamOff,
+                contentDescription = stringResource(R.string.a11y_empty_project),
                 tint = MaterialTheme.colorScheme.primary,
             )
         }

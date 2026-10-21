@@ -120,6 +120,14 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             val project = repository.create(name)
             history.reset(project)
+            DiagnosticsLogger.i(
+                "project", "CREATE", null,
+                "new project created",
+                meta = listOf(
+                    "projectId" to DiagSanitizer.fingerprint(project.id),
+                    "nameLen" to name.length.toString(),
+                ),
+            )
             withContext(Dispatchers.Main) {
                 _ui.value = UiState(project = project)
                 onCreated(project.id)
@@ -146,11 +154,18 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 val thumbsDir = repository.timelineThumbsDir(projectId)
                 val clip = importer.createClip(uri, displayName, projectId, thumbsDir)
                 commitProject { it.copy(clips = it.clips + clip) }
+                // v0.5.1: like text/image/audio, the imported video clip is
+                // APPENDED (never replaces an existing one) and becomes the
+                // selected clip immediately.
+                withContext(Dispatchers.Main) {
+                    selectTimelineClip(ClipKind.VIDEO, clip.id)
+                }
                 refreshHomeThumb()
                 DiagnosticsLogger.i(
                     MediaImporter.SUBSYSTEM, "VIDEO_IMPORT", opId,
-                    "video import completed",
+                    "video import completed (appended, selected)",
                     meta = listOf(
+                        "clipId" to DiagSanitizer.fingerprint(clip.id),
                         "durationMs" to clip.sourceDurationMs.toString(),
                         "w" to clip.width.toString(), "h" to clip.height.toString(),
                     ),
@@ -338,34 +353,47 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         if (duration <= 0) return
         val project = _ui.value.project ?: return
         val contentAspect = project.aspectEnum.ratio() ?: 16f / 9f
+        // Render once to learn the bitmap aspect, then set the initial
+        // width fraction so the text appears at sizeFrac of the height.
+        // The probe is a measurement-only object (id "probe" is never stored).
+        val probe = OverlayItem(
+            id = "probe",
+            kind = OverlayKind.TEXT,
+            text = text,
+            colorArgb = colorArgb,
+            fontFamily = fontFamily,
+            bold = bold,
+            italic = italic,
+            sizeFrac = sizeFrac,
+            bgArgb = bgArgb,
+        )
+        val bitmap = OverlayBitmapRenderer.textBitmap(probe)
+        val aspect = OverlayBitmapRenderer.bitmapAspect(bitmap)
+        val initialScale = OverlayLayout.textWidthFrac(sizeFrac, aspect, contentAspect)
+        // v0.5.1: the identity is minted BEFORE the commit and the item is
+        // APPENDED (never replaces/reuses an existing overlay). A full-span
+        // window makes [LanePacker] open a NEW lane for it, and it becomes
+        // the selected clip right after the commit.
+        val newId = TimelineLogic.newId()
+        val newItem = probe.copy(
+            id = newId,
+            startMs = 0,
+            endMs = duration,
+            transform = OverlayTransform(x = 0.5f, y = 0.8f, scale = initialScale),
+        )
         commitProject { p ->
             val nextZ = (p.overlays.maxOfOrNull { it.zOrder } ?: 0) + 1
-            // Render once to learn the bitmap aspect, then set the initial
-            // width fraction so the text appears at sizeFrac of the height.
-            val probe = OverlayItem(
-                id = "probe",
-                kind = OverlayKind.TEXT,
-                text = text,
-                colorArgb = colorArgb,
-                fontFamily = fontFamily,
-                bold = bold,
-                italic = italic,
-                sizeFrac = sizeFrac,
-                bgArgb = bgArgb,
-            )
-            val bitmap = OverlayBitmapRenderer.textBitmap(probe)
-            val aspect = OverlayBitmapRenderer.bitmapAspect(bitmap)
-            val initialScale = OverlayLayout.textWidthFrac(sizeFrac, aspect, contentAspect)
-            p.copy(
-                overlays = p.overlays + probe.copy(
-                    id = TimelineLogic.newId(),
-                    startMs = 0,
-                    endMs = duration,
-                    zOrder = nextZ,
-                    transform = OverlayTransform(x = 0.5f, y = 0.8f, scale = initialScale),
-                ),
-            )
+            p.copy(overlays = p.overlays + newItem.copy(zOrder = nextZ))
         }
+        selectTimelineClip(ClipKind.TEXT, newId)
+        DiagnosticsLogger.i(
+            "timeline", "OVERLAY_ADD", null,
+            "text overlay created (uuid, own lane, selected)",
+            meta = listOf(
+                "ovId" to DiagSanitizer.fingerprint(newId),
+                "endMs" to duration.toString(),
+            ),
+        )
     }
 
     /**
@@ -432,11 +460,14 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     return@launch
                 }
                 probe.recycle()
-                var createdId = ""
+                // v0.5.1: identity minted before the commit; the overlay is
+                // APPENDED and becomes the selected clip immediately.
+                val newId = TimelineLogic.newId()
+                var created = false
                 commitProject { p ->
                     val nextZ = (p.overlays.maxOfOrNull { it.zOrder } ?: 0) + 1
                     val overlay = OverlayItem(
-                        id = TimelineLogic.newId(),
+                        id = newId,
                         kind = OverlayKind.IMAGE,
                         startMs = 0,
                         endMs = duration,
@@ -444,14 +475,19 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         zOrder = nextZ,
                         uri = uri.toString(),
                     )
-                    createdId = overlay.id
+                    created = true
                     p.copy(overlays = p.overlays + overlay)
+                }
+                if (created) {
+                    withContext(Dispatchers.Main) {
+                        selectTimelineClip(ClipKind.IMAGE, newId)
+                    }
                 }
                 DiagnosticsLogger.i(
                     MediaImporter.SUBSYSTEM, ImageImportStages.OVERLAY_CREATE, opId,
-                    "image overlay created",
+                    "image overlay created (uuid, own lane, selected)",
                     meta = listOf(
-                        "ovId" to DiagSanitizer.fingerprint(createdId),
+                        "ovId" to DiagSanitizer.fingerprint(newId),
                         "durationMs" to duration.toString(),
                         "elapsedMs" to (SystemClock.elapsedRealtime() - startedAt).toString(),
                     ),
@@ -784,10 +820,16 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 val persisted = importer.persistReadPermission(uri)
                 val meta = importer.probeAudio(uri)
+                // v0.5.1: identity minted before the commit; the clip is
+                // APPENDED to its own audio row and becomes the selected
+                // clip immediately.
+                val newId = TimelineLogic.newId()
+                var created = false
                 commitProject {
+                    created = true
                     it.copy(
                         audioClips = it.audioClips + AudioClipItem(
-                            id = TimelineLogic.newId(),
+                            id = newId,
                             uri = uri.toString(),
                             displayName = displayName,
                             sourceDurationMs = meta.durationMs,
@@ -797,10 +839,16 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         ),
                     )
                 }
+                if (created) {
+                    withContext(Dispatchers.Main) {
+                        selectTimelineClip(ClipKind.AUDIO, newId)
+                    }
+                }
                 DiagnosticsLogger.i(
                     MediaImporter.SUBSYSTEM, "AUDIO_IMPORT", opId,
-                    "audio import completed",
+                    "audio import completed (uuid, own row, selected)",
                     meta = listOf(
+                        "clipId" to DiagSanitizer.fingerprint(newId),
                         "durationMs" to meta.durationMs.toString(),
                         "persisted" to persisted.toString(),
                     ),
@@ -993,16 +1041,60 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         setPlayhead(ms)
     }
 
+    // v0.5.1: the legacy per-kind setters are now THIN ALIASES of the
+    // unified exclusive selection — any code path that still calls them
+    // (instead of [selectTimelineClip]) automatically gets the
+    // one-selected-clip-of-any-kind semantics, so a forgotten call site can
+    // never resurrect the "two selected clips of different kinds" bug.
+
     fun selectClip(id: String?) {
-        _ui.value = _ui.value.copy(selectedClipId = id)
+        selectTimelineClip(ClipKind.VIDEO, id)
     }
 
     fun selectOverlay(id: String?) {
-        _ui.value = _ui.value.copy(selectedOverlayId = id)
+        if (id == null) {
+            clearSelection()
+        } else {
+            val kind = _ui.value.project?.overlays
+                ?.firstOrNull { it.id == id }
+                ?.let { if (it.isText) ClipKind.TEXT else ClipKind.IMAGE }
+                ?: ClipKind.TEXT
+            selectTimelineClip(kind, id)
+        }
     }
 
     fun selectAudioClip(id: String?) {
-        _ui.value = _ui.value.copy(selectedAudioClipId = id)
+        selectTimelineClip(ClipKind.AUDIO, id)
+    }
+
+    /**
+     * v0.5.1 — THE unified exclusive selection ("um clipe selecionado de
+     * cada vez, qualquer tipo"). Every tap/select path routes here instead
+     * of repeating the three-call clear dance, so selection can never end
+     * up with two selected clips of different kinds.
+     */
+    fun selectTimelineClip(kind: ClipKind, id: String?) {
+        _ui.value = _ui.value.copy(
+            selectedClipId = if (kind == ClipKind.VIDEO) id else null,
+            selectedOverlayId = if (kind == ClipKind.TEXT || kind == ClipKind.IMAGE) id else null,
+            selectedAudioClipId = if (kind == ClipKind.AUDIO) id else null,
+        )
+    }
+
+    /** Clears every selection (single entry point). */
+    fun clearSelection() {
+        _ui.value = _ui.value.copy(
+            selectedClipId = null,
+            selectedOverlayId = null,
+            selectedAudioClipId = null,
+        )
+    }
+
+    /** The currently selected clip id for [kind], or null. */
+    fun selectedIdFor(kind: ClipKind): String? = when (kind) {
+        ClipKind.VIDEO -> _ui.value.selectedClipId
+        ClipKind.TEXT, ClipKind.IMAGE -> _ui.value.selectedOverlayId
+        ClipKind.AUDIO -> _ui.value.selectedAudioClipId
     }
 
     fun setZoom(zoom: Float) {

@@ -187,9 +187,10 @@ fun TimelineStrip(
                             projectId = project.id,
                             viewModel = viewModel,
                             onClick = {
-                                viewModel.selectClip(clip.id)
-                                viewModel.selectOverlay(null)
-                                viewModel.selectAudioClip(null)
+                                // v0.5.1: unified exclusive selection.
+                                viewModel.selectTimelineClip(
+                                    com.onevideog.editor.editor.ClipKind.VIDEO, clip.id,
+                                )
                             },
                         )
                     }
@@ -203,10 +204,12 @@ fun TimelineStrip(
                     }
                     Spacer(Modifier.width(240.dp))
                 }
-                // Audio tracks
+                // Audio tracks — v0.5.1: EVERY clip gets its own row (the
+                // old 4-row cap hid the remaining clips behind a "+N" label
+                // while they still played and exported); the column scrolls.
                 val videoEndMs = com.onevideog.editor.editor.ProjectMath
                     .videoDurationMs(project.clips)
-                project.audioClips.take(4).forEach { audioClip ->
+                project.audioClips.forEach { audioClip ->
                     AudioTrackRow(
                         audioClip = audioClip,
                         scale = scale,
@@ -224,16 +227,6 @@ fun TimelineStrip(
                         modifier = Modifier
                             .padding(horizontal = 8.dp, vertical = 6.dp)
                             .clickable(onClick = onAddAudio),
-                    )
-                } else if (project.audioClips.size > 4) {
-                    Text(
-                        stringResource(
-                            R.string.timeline_more_audio,
-                            project.audioClips.size - 4,
-                        ),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 8.dp),
                     )
                 }
                 // Overlay lanes (deterministic lane packing)

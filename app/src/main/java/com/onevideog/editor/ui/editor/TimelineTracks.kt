@@ -107,9 +107,10 @@ internal fun AudioTrackRow(
                 // Body: tap selects; drag moves the clip in time.
                 .pointerInput(audioClip.id, audioClip.startMs) {
                     detectTapGestures(onTap = {
-                        viewModel.selectAudioClip(audioClip.id)
-                        viewModel.selectClip(null)
-                        viewModel.selectOverlay(null)
+                        // v0.5.1: unified exclusive selection.
+                        viewModel.selectTimelineClip(
+                            com.onevideog.editor.editor.ClipKind.AUDIO, audioClip.id,
+                        )
                         onOpenTool(Tool.AUDIO)
                     })
                 }
@@ -339,9 +340,15 @@ private fun OverlayBar(
             // Body: tap selects (and opens the editor); drag moves in time.
             .pointerInput(overlay.id, overlay.startMs) {
                 detectTapGestures(onTap = {
-                    viewModel.selectOverlay(overlay.id)
-                    viewModel.selectClip(null)
-                    viewModel.selectAudioClip(null)
+                    // v0.5.1: unified exclusive selection.
+                    viewModel.selectTimelineClip(
+                        if (overlay.isText) {
+                            com.onevideog.editor.editor.ClipKind.TEXT
+                        } else {
+                            com.onevideog.editor.editor.ClipKind.IMAGE
+                        },
+                        overlay.id,
+                    )
                     onOpenTool(if (overlay.isText) Tool.TEXT else Tool.IMAGE)
                 })
             }
