@@ -17,6 +17,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.VerticalAlignTop
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
@@ -46,11 +48,16 @@ import com.onevideog.editor.R
 import com.onevideog.editor.data.Interpolation
 import com.onevideog.editor.data.OverlayItem
 import com.onevideog.editor.data.OverlayKind
+import com.onevideog.editor.data.TextAnimPreset
+import com.onevideog.editor.data.TextAnimUnit
 import com.onevideog.editor.data.TextFontFamily
 import com.onevideog.editor.editor.EditorViewModel
+import com.onevideog.editor.editor.ExpandedOverlays
+import com.onevideog.editor.editor.KeyframeEditing
 import com.onevideog.editor.editor.KeyframeEvaluator
 import com.onevideog.editor.editor.OverlayBitmapRenderer
 import com.onevideog.editor.editor.OverlayLayout
+import com.onevideog.editor.editor.TextSegmentPlanner
 import com.onevideog.editor.ui.home.formatDuration
 import kotlin.math.roundToInt
 
@@ -345,25 +352,159 @@ private fun TextContentSection(viewModel: EditorViewModel, overlay: OverlayItem)
         },
         valueRange = 0.02f..0.2f,
     )
+    TextAnimationSection(viewModel, overlay)
+}
+
+/**
+ * v0.5.0 (G6): per-word / per-letter entrance animation controls. The
+ * selection is overlay-level state — segment expansion happens only at
+ * render time, so changing it never rebuilds the preview decoder.
+ * When the text would produce more than [ExpandedOverlays.MAX_SEGMENTS]
+ * segments for the chosen unit, the UI warns (WORD is the fallback the
+ * expansion applies automatically; WORD overflow disables the animation).
+ */
+@Composable
+private fun TextAnimationSection(viewModel: EditorViewModel, overlay: OverlayItem) {
+    val anim = overlay.textAnimation
+    Text(
+        stringResource(R.string.anim_title),
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurface,
+        modifier = Modifier.padding(top = 6.dp),
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        TextAnimPreset.entries.forEach { preset ->
+            FilterChip(
+                selected = anim.preset == preset,
+                onClick = {
+                    viewModel.setTextAnimation(
+                        overlay.id,
+                        anim.copy(preset = preset),
+                    )
+                },
+                label = {
+                    Text(
+                        stringResource(
+                            when (preset) {
+                                TextAnimPreset.NONE -> R.string.anim_preset_none
+                                TextAnimPreset.FADE -> R.string.anim_preset_fade
+                                TextAnimPreset.SLIDE_UP -> R.string.anim_preset_slide_up
+                                TextAnimPreset.POP -> R.string.anim_preset_pop
+                                TextAnimPreset.TYPEWRITER -> R.string.anim_preset_typewriter
+                            },
+                        ),
+                    )
+                },
+            )
+        }
+    }
+    if (anim.preset == TextAnimPreset.NONE) return
+
+    // Segment-count guard (G5): the same pure planner the render pipelines
+    // use, with the production measurer (Paint) — a warning ONLY; the
+    // expansion itself enforces the hard limit with the WORD fallback.
+    val metrics = OverlayBitmapRenderer.textMetrics(overlay)
+    val measurer = remember(overlay.fontFamily, overlay.bold, overlay.italic, overlay.sizeFrac) {
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = metrics.fontPx
+            typeface = OverlayBitmapRenderer.typefaceFor(
+                overlay.fontFamily, overlay.bold, overlay.italic,
+            )
+        }
+        TextSegmentPlanner.Measurer { paint.measureText(it) }
+    }
+    val letterCount = remember(overlay.text) {
+        TextSegmentPlanner.segmentCount(
+            overlay.text, TextAnimUnit.LETTER, metrics, measurer,
+        )
+    }
+    val wordCount = remember(overlay.text) {
+        TextSegmentPlanner.segmentCount(
+            overlay.text, TextAnimUnit.WORD, metrics, measurer,
+        )
+    }
+    if (anim.unit == TextAnimUnit.LETTER && letterCount > ExpandedOverlays.MAX_SEGMENTS) {
+        Text(
+            stringResource(R.string.anim_limit_letter, ExpandedOverlays.MAX_SEGMENTS),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+    } else if (wordCount > ExpandedOverlays.MAX_SEGMENTS) {
+        Text(
+            stringResource(R.string.anim_limit_word, ExpandedOverlays.MAX_SEGMENTS),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+    }
+
+    Text(
+        stringResource(R.string.anim_unit),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurface,
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        TextAnimUnit.entries.forEach { unit ->
+            FilterChip(
+                selected = anim.unit == unit,
+                onClick = {
+                    viewModel.setTextAnimation(
+                        overlay.id,
+                        anim.copy(unit = unit),
+                    )
+                },
+                label = {
+                    Text(
+                        stringResource(
+                            when (unit) {
+                                TextAnimUnit.WORD -> R.string.anim_unit_word
+                                TextAnimUnit.LETTER -> R.string.anim_unit_letter
+                            },
+                        ),
+                    )
+                },
+            )
+        }
+    }
+    var duration by remember(overlay.id, anim.durationMs) {
+        mutableFloatStateOf(anim.durationMs.toFloat())
+    }
+    Text(
+        stringResource(R.string.anim_duration, duration.roundToInt()),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurface,
+    )
+    Slider(
+        value = duration,
+        onValueChange = { duration = it },
+        onValueChangeFinished = {
+            viewModel.setTextAnimation(
+                overlay.id,
+                anim.copy(durationMs = duration.roundToInt().toLong()),
+            )
+        },
+        valueRange = 200f..2000f,
+    )
 }
 
 @Composable
 private fun TransformSection(viewModel: EditorViewModel, overlay: OverlayItem) {
-    val t = overlay.transform
+    val state by viewModel.ui.collectAsState()
+    // v0.5.0: the sheet shows the EVALUATED transform at the playhead (what
+    // is on screen for a keyframed overlay); edits commit through the
+    // auto-key path below.
+    val t = KeyframeEvaluator.evaluate(overlay, state.playheadMs)
     Text(
         stringResource(R.string.transform_title),
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.onSurface,
     )
+    // v0.5.0 (F1): sheet sliders commit through the SAME auto-key path as
+    // the gizmos and the quick panel (one rule, one undo step per slider).
     LabeledSlider(stringResource(R.string.transform_x), t.x, 0f..1f) { value ->
-        viewModel.updateOverlay(overlay.id) {
-            it.copy(transform = it.transform.copy(x = value))
-        }
+        viewModel.applyTransformEdit(overlay.id) { it.copy(x = value) }
     }
     LabeledSlider(stringResource(R.string.transform_y), t.y, 0f..1f) { value ->
-        viewModel.updateOverlay(overlay.id) {
-            it.copy(transform = it.transform.copy(y = value))
-        }
+        viewModel.applyTransformEdit(overlay.id) { it.copy(y = value) }
     }
     LabeledSlider(
         stringResource(R.string.transform_scale),
@@ -371,9 +512,7 @@ private fun TransformSection(viewModel: EditorViewModel, overlay: OverlayItem) {
         0.05f..1.6f,
         format = { v -> "${(v * 100).roundToInt()}%" },
     ) { value ->
-        viewModel.updateOverlay(overlay.id) {
-            it.copy(transform = it.transform.copy(scale = value))
-        }
+        viewModel.applyTransformEdit(overlay.id) { it.copy(scale = value) }
     }
     LabeledSlider(
         stringResource(R.string.transform_rotation),
@@ -381,9 +520,7 @@ private fun TransformSection(viewModel: EditorViewModel, overlay: OverlayItem) {
         -180f..180f,
         format = { v -> "${v.roundToInt()}\u00b0" },
     ) { value ->
-        viewModel.updateOverlay(overlay.id) {
-            it.copy(transform = it.transform.copy(rotationDeg = value))
-        }
+        viewModel.applyTransformEdit(overlay.id) { it.copy(rotationDeg = value) }
     }
     LabeledSlider(
         stringResource(R.string.transform_opacity),
@@ -391,9 +528,7 @@ private fun TransformSection(viewModel: EditorViewModel, overlay: OverlayItem) {
         0f..1f,
         format = { v -> "${(v * 100).roundToInt()}%" },
     ) { value ->
-        viewModel.updateOverlay(overlay.id) {
-            it.copy(transform = it.transform.copy(opacity = value))
-        }
+        viewModel.applyTransformEdit(overlay.id) { it.copy(opacity = value) }
     }
     Text(
         stringResource(R.string.transform_touch_hint),
@@ -492,6 +627,42 @@ private fun KeyframeSection(viewModel: EditorViewModel, overlay: OverlayItem) {
         Button(onClick = { viewModel.addKeyframeAtPlayhead(overlay.id) }) {
             Icon(Icons.Filled.Add, contentDescription = null)
             Text(stringResource(R.string.keyframe_add))
+        }
+    }
+    // v0.5.0 (F3): keyframe navigation — jump the playhead to the nearest
+    // keyframe before/after it (pure rule in [KeyframeEditing]).
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        IconButton(
+            onClick = {
+                KeyframeEditing.previousKeyframe(overlay.keyframes, state.playheadMs)
+                    ?.let { viewModel.seekTo(it.timeMs) }
+            },
+            enabled = overlay.keyframes.isNotEmpty(),
+        ) {
+            Icon(
+                Icons.Filled.KeyboardArrowLeft,
+                contentDescription = stringResource(R.string.keyframe_prev),
+                tint = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        Text(
+            stringResource(R.string.keyframe_jump),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 4.dp),
+        )
+        IconButton(
+            onClick = {
+                KeyframeEditing.nextKeyframe(overlay.keyframes, state.playheadMs)
+                    ?.let { viewModel.seekTo(it.timeMs) }
+            },
+            enabled = overlay.keyframes.isNotEmpty(),
+        ) {
+            Icon(
+                Icons.Filled.KeyboardArrowRight,
+                contentDescription = stringResource(R.string.keyframe_next),
+                tint = MaterialTheme.colorScheme.onSurface,
+            )
         }
     }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

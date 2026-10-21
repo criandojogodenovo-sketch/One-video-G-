@@ -124,4 +124,82 @@ class ClipEffectPlanTest {
         assertEquals(0, w.windowStartLocalMs)
         assertEquals(10_000, w.windowEndLocalMs)
     }
+
+    // ---- v0.5.0 (G4): segments from ExpandedOverlays -----------------------
+
+    private fun segment(parentId: String, index: Int, zOrder: Int = 3) = OverlayItem(
+        id = "$parentId#s$index",
+        kind = OverlayKind.TEXT,
+        startMs = 2_000,
+        endMs = 5_000,
+        zOrder = zOrder,
+        text = "seg$index",
+    )
+
+    @Test
+    fun `segments inherit the parent window and keep the reading order`() {
+        val segments = listOf(
+            segment("p", 0),
+            segment("p", 1),
+            segment("p", 2),
+        )
+        val windows = ClipEffectPlan.overlayWindowsForClip(
+            overlays = segments,
+            clipEndMs = 10_000,
+            frameAspect = 16f / 9f,
+            clipStartMs = 0,
+        )
+        // Same window as the parent, one per segment, in reading order
+        // (stable sort with equal zOrder — Media3 draws the last on top,
+        // so first-word-first is preserved).
+        assertEquals(listOf("p#s0", "p#s1", "p#s2"), windows.map { it.overlay.id })
+        windows.forEach {
+            assertEquals(2_000, it.windowStartLocalMs)
+            assertEquals(5_000, it.windowEndLocalMs)
+        }
+    }
+
+    @Test
+    fun `segments clamp to the clip exactly like their parent`() {
+        val segments = listOf(segment("p", 0), segment("p", 1))
+        // Clip starts at 3_000 (project): window clamps to local 0..2_000.
+        val windows = ClipEffectPlan.overlayWindowsForClip(
+            overlays = segments,
+            clipEndMs = 13_000,
+            frameAspect = 16f / 9f,
+            clipStartMs = 3_000,
+        )
+        assertEquals(2, windows.size)
+        windows.forEach {
+            assertEquals(0, it.windowStartLocalMs)
+            assertEquals(2_000, it.windowEndLocalMs)
+        }
+    }
+
+    @Test
+    fun `hidden segments produce no window like hidden overlays`() {
+        val hidden = segment("p", 0).copy(visible = false)
+        val shown = segment("p", 1)
+        val windows = ClipEffectPlan.overlayWindowsForClip(
+            overlays = listOf(hidden, shown),
+            clipEndMs = 10_000,
+            frameAspect = 16f / 9f,
+        )
+        assertEquals(listOf("p#s1"), windows.map { it.overlay.id })
+    }
+
+    @Test
+    fun `segments of different parents interleave by zOrder`() {
+        val windows = ClipEffectPlan.overlayWindowsForClip(
+            overlays = listOf(
+                segment("a", 0, zOrder = 1),
+                segment("b", 0, zOrder = 0),
+                segment("b", 1, zOrder = 0),
+            ),
+            clipEndMs = 10_000,
+            frameAspect = 16f / 9f,
+        )
+        // zOrder 0 group keeps its internal reading order.
+        assertEquals(listOf("b#s0", "b#s1", "a#s0"), windows.map { it.overlay.id })
+    }
 }

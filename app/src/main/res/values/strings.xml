@@ -278,4 +278,25 @@
     <string name="diag_export_saved">Diagnostic report saved.</string>
     <string name="diag_export_failed">Could not save the diagnostic report.</string>
     <string name="diag_notice">Logs stay on this device, in the app\'s private storage. They are copied or shared only when you explicitly tap the actions above. Nothing is uploaded automatically, and logs never contain your video/audio content, rendered text or file names.</string>
+
+    <!-- v0.5.0: keyframe editing UX (Fase F) -->
+    <string name="kf_state_on">● keyframe</string>
+    <string name="kf_state_between">○ between</string>
+    <string name="keyframe_prev">Previous keyframe</string>
+    <string name="keyframe_next">Next keyframe</string>
+    <string name="keyframe_jump">jump</string>
+
+    <!-- v0.5.0: text entrance animation (Fase G) -->
+    <string name="anim_title">Text animation</string>
+    <string name="anim_preset_none">None</string>
+    <string name="anim_preset_fade">Fade</string>
+    <string name="anim_preset_slide_up">Slide up</string>
+    <string name="anim_preset_pop">Pop</string>
+    <string name="anim_preset_typewriter">Typewriter</string>
+    <string name="anim_unit">Unit</string>
+    <string name="anim_unit_word">Word</string>
+    <string name="anim_unit_letter">Letter</string>
+    <string name="anim_duration">Entrance duration: %1$d ms</string>
+    <string name="anim_limit_letter">This text has more than %1$d letters — the animation falls back to whole words.</string>
+    <string name="anim_limit_word">This text has more than %1$d words — the entrance animation is disabled for it.</string>
 </resources>

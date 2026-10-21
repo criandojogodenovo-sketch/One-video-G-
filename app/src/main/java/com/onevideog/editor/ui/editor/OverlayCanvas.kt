@@ -35,6 +35,7 @@ import kotlin.math.sin
 import com.onevideog.editor.data.OverlayItem
 import com.onevideog.editor.data.OverlayKind
 import com.onevideog.editor.data.OverlayTransform
+import com.onevideog.editor.editor.ExpandedOverlays
 import com.onevideog.editor.editor.GizmoMath
 import com.onevideog.editor.editor.KeyframeEvaluator
 import com.onevideog.editor.editor.OverlayBitmapRenderer
@@ -50,11 +51,22 @@ internal data class PlacedOverlay(
     val widthPx: Float,
     val heightPx: Float,
     val selected: Boolean,
+    /**
+     * v0.5.0: parent overlay id when this placement is a generated text
+     * animation segment ("parent#sN"); null for regular overlays. Selection
+     * and gestures always target the PARENT — segments render only.
+     */
+    val parentId: String? = null,
 )
 
 /**
  * Computes every overlay's placement for [playheadMs] using the SAME pure
  * math the export composition uses ([KeyframeEvaluator] + [OverlayLayout]).
+ *
+ * [overlays] is the EXPANDED render list ([ExpandedOverlays.build]): text
+ * animation segments carry ids "parent#sN" and are placed individually;
+ * selection is mapped back to the parent id so gestures keep targeting the
+ * whole text block.
  */
 internal fun computePlacements(
     overlays: List<OverlayItem>,
@@ -78,6 +90,10 @@ internal fun computePlacements(
             val (w, h) = OverlayLayout.previewSize(
                 contentWidth, contentHeight, aspect, transform.scale,
             )
+            // v0.5.0: segment ids ("parent#sN") map back to their parent for
+            // selection/gestures; regular overlays map to themselves.
+            val isSegment = ExpandedOverlays.isSegmentId(overlay.id)
+            val parentId = if (isSegment) ExpandedOverlays.parentIdOf(overlay.id) else null
             PlacedOverlay(
                 overlay = overlay,
                 transform = transform,
@@ -86,9 +102,36 @@ internal fun computePlacements(
                 centerY = transform.y * contentHeight,
                 widthPx = w,
                 heightPx = h,
-                selected = overlay.id == selectedId,
+                selected = (parentId ?: overlay.id) == selectedId,
+                parentId = parentId,
             )
         }
+}
+
+/**
+ * v0.5.0: the selection chrome box for a selected PARENT — a single
+ * placement for regular overlays, the bounding box of all its segment
+ * placements for an animated text block (segments share the parent's
+ * rotation, so the rotated chrome wraps the whole block).
+ */
+internal fun parentChromeBox(
+    placements: List<PlacedOverlay>,
+    selectedId: String?,
+): PlacedOverlay? {
+    val group = placements.filter { (it.parentId ?: it.overlay.id) == selectedId }
+    val first = group.firstOrNull() ?: return null
+    if (group.size == 1) return first
+    val left = group.minOf { it.centerX - it.widthPx / 2f }
+    val right = group.maxOf { it.centerX + it.widthPx / 2f }
+    val top = group.minOf { it.centerY - it.heightPx / 2f }
+    val bottom = group.maxOf { it.centerY + it.heightPx / 2f }
+    return first.copy(
+        centerX = (left + right) / 2f,
+        centerY = (top + bottom) / 2f,
+        widthPx = (right - left).coerceAtLeast(1f),
+        heightPx = (bottom - top).coerceAtLeast(1f),
+        selected = true,
+    )
 }
 
 /** Point containment against a rotated rect (for touch hit-testing). */
@@ -156,6 +199,12 @@ internal fun OverlayLayer(
     contentHeightPx: () -> Float,
     selectedOverlayId: () -> String?,
     gestureOverride: () -> Pair<String, OverlayTransform>?,
+    /**
+     * v0.5.0: the UN-expanded overlays (project.overlays) — the gesture and
+     * selection targets. Animated text blocks render as segments but are
+     * always selected/transformed/deleted as their parent.
+     */
+    parents: () -> List<OverlayItem>,
     onTap: (OverlayItem?) -> Unit,
     onGesture: (OverlayItem, OverlayTransform) -> Unit,
     onGestureEnd: (OverlayItem, OverlayTransform) -> Unit,
@@ -169,10 +218,18 @@ internal fun OverlayLayer(
     val currentH = rememberUpdatedState(contentHeightPx)
     val currentSelected = rememberUpdatedState(selectedOverlayId)
     val currentOverride = rememberUpdatedState(gestureOverride)
+    val currentParents = rememberUpdatedState(parents)
     val currentOnTap = rememberUpdatedState(onTap)
     val currentOnGesture = rememberUpdatedState(onGesture)
     val currentOnGestureEnd = rememberUpdatedState(onGestureEnd)
     val currentOnDelete = rememberUpdatedState(onDelete)
+
+    /** Maps a hit placement back to its gesture/selection target. */
+    fun targetFor(placement: PlacedOverlay): OverlayItem? {
+        val wantedId = placement.parentId ?: placement.overlay.id
+        return currentParents.value.firstOrNull { it.id == wantedId }
+            ?: placement.overlay.takeIf { it.id == wantedId }
+    }
 
     fun resolveBitmap(overlay: OverlayItem): ImageBitmap? = when (overlay.kind) {
         OverlayKind.TEXT -> OverlayBitmapRenderer
@@ -220,8 +277,17 @@ internal fun OverlayLayer(
                         currentOverlays.value, currentPlayhead.value(), currentAspect.value(),
                         w, h, ::resolveBitmap, currentSelected.value(),
                     )
-                    val hit = placements.lastOrNull { it.contains(down.position) }?.overlay
-                    val selectedPlacement = placements.firstOrNull { it.selected }
+                    // v0.5.0: hit placement -> gesture/selection target (the
+                    // PARENT for animated text segments, the overlay itself
+                    // otherwise).
+                    val hitTarget = placements.lastOrNull { it.contains(down.position) }
+                        ?.let { targetFor(it) }
+                    // v0.5.0: chrome/geometry for the SELECTED PARENT (the
+                    // bounding box of its segment placements when animated).
+                    val selectedChrome = parentChromeBox(
+                        placements,
+                        currentSelected.value(),
+                    )
                     var mode = GestureMode.IDLE
                     var base: OverlayTransform? = null
                     var moved = false
@@ -245,34 +311,35 @@ internal fun OverlayLayer(
                     var lastPinchAngle = 0f
                     var pinchRotateAccum = 0f
 
-                    if (hit != null && hit.id == currentSelected.value() &&
-                        selectedPlacement != null && !hit.locked
+                    if (hitTarget != null && hitTarget.id == currentSelected.value() &&
+                        selectedChrome != null && !hitTarget.locked
                     ) {
-                        // The touched overlay is already selected AND not
-                        // locked: check handles. Locked overlays stay
+                        // The touched overlay's PARENT is already selected AND
+                        // not locked: check handles. Locked overlays stay
                         // selectable (tap falls through to selection below)
                         // but never start a transform/delete gesture —
-                        // v0.3.0 layer lock.
+                        // v0.3.0 layer lock (segments inherit the parent's
+                        // lock, so animated blocks behave the same).
                         // The pointerInput scope is a Density — resolve zones in px.
                         val zoneR = 24.dp.toPx()
-                        gestureTarget = hit
-                        base = KeyframeEvaluator.evaluate(hit, currentPlayhead.value())
+                        gestureTarget = hitTarget
+                        base = KeyframeEvaluator.evaluate(hitTarget, currentPlayhead.value())
                         mode = when {
-                            selectedPlacement.isInDeleteZone(down.position, zoneR) -> GestureMode.DELETE
-                            selectedPlacement.isInRotateZone(down.position, zoneR) -> GestureMode.ROTATE
-                            selectedPlacement.isInScaleZone(down.position, zoneR) -> GestureMode.SCALE
+                            selectedChrome.isInDeleteZone(down.position, zoneR) -> GestureMode.DELETE
+                            selectedChrome.isInRotateZone(down.position, zoneR) -> GestureMode.ROTATE
+                            selectedChrome.isInScaleZone(down.position, zoneR) -> GestureMode.SCALE
                             else -> GestureMode.MOVE
                         }
                         if (mode == GestureMode.ROTATE) {
                             lastHandleAngle = angleDeg(
-                                selectedPlacement.centerX,
-                                selectedPlacement.centerY,
+                                selectedChrome.centerX,
+                                selectedChrome.centerY,
                                 down.position,
                             )
                         }
-                        currentOnGesture.value(hit, base)
+                        currentOnGesture.value(hitTarget, base)
                     }
-                    val scaleStart = selectedPlacement?.let {
+                    val scaleStart = selectedChrome?.let {
                         distance(it.centerX, it.centerY, down.position)
                     } ?: 1f
                     while (true) {
@@ -334,8 +401,8 @@ internal fun OverlayLayer(
                                     )
                                     GestureMode.SCALE -> {
                                         val dist = distance(
-                                            selectedPlacement!!.centerX,
-                                            selectedPlacement.centerY,
+                                            selectedChrome!!.centerX,
+                                            selectedChrome.centerY,
                                             pointer,
                                         )
                                         base.copy(
@@ -345,8 +412,8 @@ internal fun OverlayLayer(
                                     }
                                     GestureMode.ROTATE -> {
                                         val angle = angleDeg(
-                                            selectedPlacement!!.centerX,
-                                            selectedPlacement.centerY,
+                                            selectedChrome!!.centerX,
+                                            selectedChrome.centerY,
                                             pointer,
                                         )
                                         // Incremental, seam-safe accumulation
@@ -377,9 +444,10 @@ internal fun OverlayLayer(
                             currentOnDelete.value(target)
                         target != null && base != null && moved ->
                             currentOnGestureEnd.value(target, base.withClampedValues())
-                        hit != null ->
-                            // Plain tap (no drag) on an overlay: select it.
-                            currentOnTap.value(hit)
+                        hitTarget != null ->
+                            // Plain tap (no drag) on an overlay: select its
+                            // PARENT (v0.5.0 — segments select the block).
+                            currentOnTap.value(hitTarget)
                         else ->
                             currentOnTap.value(null)
                     }
@@ -387,7 +455,8 @@ internal fun OverlayLayer(
             },
     ) {
         val override = currentOverride.value()
-        val placements = computePlacements(
+        val parentsList = currentParents.value
+        val rawPlacements = computePlacements(
             overlays = currentOverlays.value,
             playheadMs = currentPlayhead.value(),
             contentAspect = currentAspect.value(),
@@ -395,22 +464,45 @@ internal fun OverlayLayer(
             contentHeight = size.height,
             resolveBitmap = ::resolveBitmap,
             selectedId = currentSelected.value(),
-        ).map { placed ->
-            if (override != null && override.first == placed.overlay.id) {
-                val t = override.second
-                val aspect = placed.bitmap
-                    ?.let { it.width.toFloat() / it.height.coerceAtLeast(1) } ?: 1.5f
-                val (w2, h2) = OverlayLayout.previewSize(size.width, size.height, aspect, t.scale)
-                placed.copy(
-                    transform = t,
-                    centerX = t.x * size.width,
-                    centerY = t.y * size.height,
-                    widthPx = w2,
-                    heightPx = h2,
-                )
-            } else {
-                placed
+        )
+        // v0.5.0: the live gesture override is expressed as the PARENT's
+        // transform. Animated blocks render as many segment placements —
+        // the delta between the override and the parent's current evaluated
+        // transform is applied to ALL of the parent's placements, so the
+        // whole block follows the finger while its entrance animation keeps
+        // playing (and a regular overlay behaves exactly as in v0.4.0).
+        val placements = if (override != null) {
+            val parentId = override.first
+            val parent = parentsList.firstOrNull { it.id == parentId }
+            val parentNow = parent?.let {
+                KeyframeEvaluator.evaluate(it, currentPlayhead.value())
             }
+            if (parentNow != null) {
+                val t = override.second
+                val dx = (t.x - parentNow.x) * size.width
+                val dy = (t.y - parentNow.y) * size.height
+                val f = t.scale / parentNow.scale.coerceAtLeast(1e-3f)
+                val dRot = t.rotationDeg - parentNow.rotationDeg
+                rawPlacements.map { placed ->
+                    if ((placed.parentId ?: placed.overlay.id) == parentId) {
+                        placed.copy(
+                            centerX = placed.centerX + dx,
+                            centerY = placed.centerY + dy,
+                            widthPx = placed.widthPx * f,
+                            heightPx = placed.heightPx * f,
+                            transform = placed.transform.copy(
+                                rotationDeg = placed.transform.rotationDeg + dRot,
+                            ),
+                        )
+                    } else {
+                        placed
+                    }
+                }
+            } else {
+                rawPlacements
+            }
+        } else {
+            rawPlacements
         }
         // Pass 1 — content: EVERY active overlay draws its pixels here,
         // always (v0.3.1). The gesture override swaps in the live transform
@@ -423,12 +515,16 @@ internal fun OverlayLayer(
         clipRect(0f, 0f, size.width, size.height) {
             placements.forEach { placed -> drawPlaced(placed) }
         }
-        // Pass 2 — chrome: drawn separately, ONLY for the selected overlay,
-        // AFTER all content so the handles sit on top of everything. A LOCKED
-        // layer draws bounds-only chrome (no handles): the handles would be
-        // inert and only invite dead taps (v0.4.0 — E3).
-        placements.firstOrNull { it.selected }?.let {
-            drawSelectionChrome(it, interactive = !it.overlay.locked)
+        // Pass 2 — chrome: drawn separately, ONLY for the selected PARENT
+        // (bounding box of its segments when animated), AFTER all content so
+        // the handles sit on top of everything. A LOCKED layer draws
+        // bounds-only chrome (no handles): the handles would be inert and
+        // only invite dead taps (v0.4.0 — E3).
+        parentChromeBox(placements, currentSelected.value())?.let { chrome ->
+            val locked = parentsList
+                .firstOrNull { it.id == (chrome.parentId ?: chrome.overlay.id) }
+                ?.locked ?: chrome.overlay.locked
+            drawSelectionChrome(chrome, interactive = !locked)
         }
     }
 }

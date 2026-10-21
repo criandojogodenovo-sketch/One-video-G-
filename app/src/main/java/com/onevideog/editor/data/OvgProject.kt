@@ -146,6 +146,35 @@ data class Keyframe(
 )
 
 /**
+ * Per-word / per-letter text entrance animation (v0.5.0, Fase G).
+ *
+ * The animation is DECLARATIVE: the preset is expanded into per-segment
+ * keyframes by the shared pure planners
+ * ([com.onevideog.editor.editor.TextSegmentPlanner] +
+ * [com.onevideog.editor.editor.TextAnimationPlanner]) inside
+ * [com.onevideog.editor.editor.ExpandedOverlays] — one expansion used by
+ * BOTH the preview canvas and the export composition (parity contract).
+ *
+ * Defaults keep every pre-v0.5.0 schema-v2 document readable and behaving
+ * exactly as before: [preset] NONE means "no expansion, single bitmap".
+ */
+@Serializable
+data class TextAnimation(
+    val preset: TextAnimPreset = TextAnimPreset.NONE,
+    val unit: TextAnimUnit = TextAnimUnit.WORD,
+    // Entrance duration per segment, clamped by the planner to 100..5000 ms.
+    val durationMs: Long = 600,
+) {
+    val isEnabled: Boolean get() = preset != TextAnimPreset.NONE
+}
+
+/** Entrance animation presets (v0.5.0, Fase G). */
+enum class TextAnimPreset { NONE, FADE, SLIDE_UP, POP, TYPEWRITER }
+
+/** Segmentation unit for text animation: whole words or single letters. */
+enum class TextAnimUnit { WORD, LETTER }
+
+/**
  * A timed overlay (text or image) on the project timeline.
  *
  * All geometry lives in [transform] (content-space). Text styling is only
@@ -166,6 +195,11 @@ data class OverlayItem(
     // keep v1/v2 documents loadable unchanged.
     val visible: Boolean = true,
     val locked: Boolean = false,
+    // v0.5.0 per-word/per-letter entrance animation (TEXT overlays). The
+    // default (preset NONE) keeps older documents byte-compatible: the field
+    // decodes to NONE and the overlay renders as the single bitmap it always
+    // was.
+    val textAnimation: TextAnimation = TextAnimation(),
     val keyframes: List<Keyframe> = emptyList(),
     val interpolation: Interpolation = Interpolation.LINEAR,
     // ---- text ----

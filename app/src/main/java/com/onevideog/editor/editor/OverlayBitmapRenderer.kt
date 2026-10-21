@@ -44,6 +44,19 @@ object OverlayBitmapRenderer {
     /** Text wraps at this fraction of the canonical width. */
     const val WRAP_FRAC = 0.9f
 
+    // ---- v0.5.0 shared text-layout constants (single source for the block
+    // renderer AND TextSegmentPlanner — one implementation, parity by
+    // construction) ----
+
+    /** Line spacing as a fraction of font size (renderTextBlock contract). */
+    const val LINE_SPACING_FACTOR = 0.22f
+
+    /** First-baseline offset as a fraction of font size. */
+    const val BASELINE_FACTOR = 0.82f
+
+    /** Inner wrap fraction applied to the block width (renderTextBlock). */
+    const val WRAP_INNER_FRACTION = 0.98f
+
     private const val IMAGE_MAX_DIM = 1024
 
     /**
@@ -68,6 +81,36 @@ object OverlayBitmapRenderer {
             append(overlay.bgRadiusFrac)
         }
         com.onevideog.editor.data.OverlayKind.IMAGE -> "i|${overlay.uri}|${overlay.id}"
+    }
+
+    /**
+     * Pure per-overlay text layout metrics (v0.5.0) — the ONE source for the
+     * block renderer ([renderTextBlock] via [textBitmap]) and for
+     * [com.onevideog.editor.editor.TextSegmentPlanner], so segment assembly
+     * and block rendering cannot drift. No Android classes — JVM-testable.
+     */
+    data class TextMetrics(
+        val fontPx: Float,
+        val padX: Float,
+        val padY: Float,
+        val lineSpacing: Float,
+        val wrapMaxWidth: Float,
+        val hasBg: Boolean,
+    )
+
+    /** Layout metrics for a text overlay (see [TextMetrics]). */
+    fun textMetrics(overlay: OverlayItem): TextMetrics {
+        val fontPx = CANONICAL_H * overlay.sizeFrac.coerceIn(0.02f, 0.3f)
+        val hasBg = (overlay.bgArgb ushr 24) != 0
+        val bgPadPx = CANONICAL_H * overlay.bgPaddingFrac.coerceIn(0f, 0.1f)
+        return TextMetrics(
+            fontPx = fontPx,
+            padX = if (hasBg) bgPadPx * 0.9f else 2f,
+            padY = if (hasBg) bgPadPx else 2f,
+            lineSpacing = fontPx * LINE_SPACING_FACTOR,
+            wrapMaxWidth = (CANONICAL_W * WRAP_FRAC).toInt() * WRAP_INNER_FRACTION,
+            hasBg = hasBg,
+        )
     }
 
     /** Typeface for a [TextFontFamily] id. */
@@ -258,6 +301,10 @@ object OverlayBitmapRenderer {
     /**
      * Draws the text block (with optional background pill) on a transparent
      * bitmap, word-wrapped at [width]. Shared by preview and export paths.
+     *
+     * v0.5.0: line layout comes from the shared pure helpers
+     * ([wrapTextLines], [blockSizePx], [TextMetrics]) so the segment planner
+     * reproduces this bitmap's geometry exactly — one implementation.
      */
     fun renderTextBlock(
         width: Int,
@@ -277,21 +324,20 @@ object OverlayBitmapRenderer {
             typeface = typefaceFor(familyId, bold, italic)
             textAlign = Paint.Align.CENTER
         }
-        val lines = wrapText(text, paint, width * 0.98f)
-        val lineSpacing = fontPx * 0.22f
-        val textBlockH = lines.size * fontPx + (lines.size - 1) * lineSpacing
-
-        val hasBg = (bgArgb ushr 24) != 0
-        val padX = if (hasBg) bgPadPx * 0.9f else 2f
-        val padY = if (hasBg) bgPadPx else 2f
-        var blockW = 0f
-        for (line in lines) blockW = maxOf(blockW, paint.measureText(line))
-        val outW = (blockW + padX * 2).toInt().coerceAtLeast(4)
-        val outH = (textBlockH + padY * 2).toInt().coerceAtLeast(4)
+        val lines = wrapTextLines(text, width * WRAP_INNER_FRACTION) { paint.measureText(it) }
+        val metrics = TextMetrics(
+            fontPx = fontPx,
+            padX = if ((bgArgb ushr 24) != 0) bgPadPx * 0.9f else 2f,
+            padY = if ((bgArgb ushr 24) != 0) bgPadPx else 2f,
+            lineSpacing = fontPx * LINE_SPACING_FACTOR,
+            wrapMaxWidth = width * WRAP_INNER_FRACTION,
+            hasBg = (bgArgb ushr 24) != 0,
+        )
+        val (outW, outH) = blockSizePx(lines, metrics) { paint.measureText(it) }
 
         val bitmap = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
-        if (hasBg) {
+        if (metrics.hasBg) {
             val rect = RectF(0f, 0f, outW.toFloat(), outH.toFloat())
             val path = Path()
             path.addRoundRect(rect, bgRadiusPx, bgRadiusPx, Path.Direction.CW)
@@ -301,22 +347,30 @@ object OverlayBitmapRenderer {
         val shadow = Paint(paint).apply {
             setShadowLayer(fontPx * 0.08f, 0f, fontPx * 0.04f, 0x88000000.toInt())
         }
-        var y = padY + fontPx * 0.82f
+        var y = metrics.padY + fontPx * BASELINE_FACTOR
         for (line in lines) {
             canvas.drawText(line, outW / 2f, y, shadow)
-            y += fontPx + lineSpacing
+            y += fontPx + metrics.lineSpacing
         }
         return bitmap
     }
 
-    /** Greedy word wrap used for both preview and export text rendering. */
-    fun wrapText(text: String, paint: Paint, maxWidth: Float): List<String> {
+    /**
+     * Greedy word wrap (pure — measurer injected). Used for BOTH preview and
+     * export text rendering and by the segment planner, so the wrapped line
+     * assignment is always the same for the same text + metrics.
+     */
+    fun wrapTextLines(
+        text: String,
+        maxWidth: Float,
+        measure: (String) -> Float,
+    ): List<String> {
         val result = mutableListOf<String>()
         for (paragraph in text.split("\n")) {
             var line = ""
             for (word in paragraph.split(" ")) {
                 val candidate = if (line.isEmpty()) word else "$line $word"
-                if (paint.measureText(candidate) <= maxWidth || line.isEmpty()) {
+                if (measure(candidate) <= maxWidth || line.isEmpty()) {
                     line = candidate
                 } else {
                     result += line
@@ -326,5 +380,30 @@ object OverlayBitmapRenderer {
             result += line
         }
         return result.filter { it.isNotEmpty() }.ifEmpty { listOf("") }
+    }
+
+    /** Android-paint convenience overload (delegates to the pure core). */
+    fun wrapText(text: String, paint: Paint, maxWidth: Float): List<String> =
+        wrapTextLines(text, maxWidth) { paint.measureText(it) }
+
+    /**
+     * Exact block bitmap size for [lines] laid out with [metrics] — the same
+     * arithmetic [renderTextBlock] uses to size its output, exposed so the
+     * segment planner normalizes segment positions against the SAME block
+     * frame. Pure; returns (width, height) in canonical px (int-rounded like
+     * Bitmap.createBitmap).
+     */
+    fun blockSizePx(
+        lines: List<String>,
+        metrics: TextMetrics,
+        measure: (String) -> Float,
+    ): Pair<Int, Int> {
+        var blockW = 0f
+        for (line in lines) blockW = maxOf(blockW, measure(line))
+        val lineCount = lines.size.coerceAtLeast(1)
+        val textBlockH = lineCount * metrics.fontPx + (lineCount - 1) * metrics.lineSpacing
+        val outW = (blockW + metrics.padX * 2).toInt().coerceAtLeast(4)
+        val outH = (textBlockH + metrics.padY * 2).toInt().coerceAtLeast(4)
+        return outW to outH
     }
 }

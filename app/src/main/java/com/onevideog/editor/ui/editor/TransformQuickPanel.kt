@@ -99,6 +99,25 @@ internal fun TransformQuickPanel(
                     .padding(start = 8.dp)
                     .clickable { expanded = !expanded },
             )
+            // v0.5.0 (F4): keyframe-state indicator — the playhead is either
+            // ON a keyframe (edits there UPDATE it — auto-key) or BETWEEN
+            // keyframes (edits CREATE one). Pure rule in [KeyframeEditing].
+            val onKeyframe = run {
+                com.onevideog.editor.editor.KeyframeEditing
+                    .keyframeAtPlayhead(overlay, state.playheadMs) != null
+            }
+            Text(
+                stringResource(
+                    if (onKeyframe) R.string.kf_state_on else R.string.kf_state_between,
+                ),
+                style = MaterialTheme.typography.labelSmall,
+                color = if (onKeyframe) {
+                    MaterialTheme.colorScheme.secondary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                modifier = Modifier.padding(end = 6.dp),
+            )
             if (overlay.locked) {
                 Icon(
                     Icons.Filled.Lock,
@@ -155,16 +174,21 @@ internal fun TransformQuickPanel(
             return@Column
         }
 
-        val t = overlay.transform
+        // v0.5.0: sliders show the EVALUATED transform at the playhead (what
+        // is actually on screen for a keyframed overlay); edits still commit
+        // through the auto-key path below.
+        val t = com.onevideog.editor.editor.KeyframeEvaluator
+            .evaluate(overlay, state.playheadMs)
+        // v0.5.0 (F1): every slider commits through the auto-key path — with
+        // keyframes the edit lands on the keyframe at the playhead (± 25 ms)
+        // or creates one at the snapped playhead; without keyframes it
+        // writes the base transform (v0.4.0 behaviour). One undo step per
+        // slider release.
         QuickSlider(stringResource(R.string.transform_x), t.x, 0f..1f) { value ->
-            viewModel.updateOverlay(overlay.id) {
-                it.copy(transform = it.transform.copy(x = value))
-            }
+            viewModel.applyTransformEdit(overlay.id) { it.copy(x = value) }
         }
         QuickSlider(stringResource(R.string.transform_y), t.y, 0f..1f) { value ->
-            viewModel.updateOverlay(overlay.id) {
-                it.copy(transform = it.transform.copy(y = value))
-            }
+            viewModel.applyTransformEdit(overlay.id) { it.copy(y = value) }
         }
         QuickSlider(
             stringResource(R.string.transform_scale),
@@ -172,9 +196,7 @@ internal fun TransformQuickPanel(
             0.05f..1.6f,
             format = { v -> "${(v * 100).roundToInt()}%" },
         ) { value ->
-            viewModel.updateOverlay(overlay.id) {
-                it.copy(transform = it.transform.copy(scale = value))
-            }
+            viewModel.applyTransformEdit(overlay.id) { it.copy(scale = value) }
         }
         QuickSlider(
             stringResource(R.string.transform_rotation),
@@ -182,9 +204,7 @@ internal fun TransformQuickPanel(
             -180f..180f,
             format = { v -> "${v.roundToInt()}°" },
         ) { value ->
-            viewModel.updateOverlay(overlay.id) {
-                it.copy(transform = it.transform.copy(rotationDeg = value))
-            }
+            viewModel.applyTransformEdit(overlay.id) { it.copy(rotationDeg = value) }
         }
         QuickSlider(
             stringResource(R.string.transform_opacity),
@@ -192,9 +212,7 @@ internal fun TransformQuickPanel(
             0f..1f,
             format = { v -> "${(v * 100).roundToInt()}%" },
         ) { value ->
-            viewModel.updateOverlay(overlay.id) {
-                it.copy(transform = it.transform.copy(opacity = value))
-            }
+            viewModel.applyTransformEdit(overlay.id) { it.copy(opacity = value) }
         }
     }
 }
