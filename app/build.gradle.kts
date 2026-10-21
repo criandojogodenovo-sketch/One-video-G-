@@ -13,8 +13,8 @@ android {
         applicationId = "com.onevideog.editor"
         minSdk = 24
         targetSdk = 34
-        versionCode = 13
-        versionName = "0.5.2"
+        versionCode = 14
+        versionName = "0.5.3"
 
         // Keep only the locales the app ships so resource resolution is deterministic.
         resourceConfigurations += listOf("en", "pt")

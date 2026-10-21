@@ -236,3 +236,21 @@ tick (stutter/silence for any trimmed clip). The export plan is unchanged.
     playback), and a failed black-PNG write is now diagnosed explicitly
     (`BLACK_BASE_MISSING`) instead of surfacing as an opaque empty-sequence
     composition error.
+13. **Preview overlay pixels are Compose composables (v0.5.3).** The
+    preview no longer renders overlay pixels from bitmaps in a draw-phase
+    Canvas. The overlay layer is now a plain Compose `Box` above the
+    PlayerView: TEXT renders with `Text` primitives laid out from the SAME
+    canonical block the export bitmap uses (`OverlayTextRender` ->
+    `textMetrics`/`wrapTextLines`/`blockSizePx`, one `Text` per pre-wrapped
+    line so Compose never re-wraps), IMAGE renders with `Image` at the
+    bitmap's own aspect; x/y (0..1), scale (width fraction), clockwise
+    rotation, opacity, z-order and content clipping are identical to the
+    export path. The selection chrome (frame + handles) moved to a separate
+    unclipped layer above the content, drawn only for the selected item.
+    Evidence contract: every active overlay logs `OVERLAY_DRAW` (id, kind,
+    x, y, scale, rotation, opacity, visible, bitmap/text size) when the
+    drawn set changes or at most once per second while playing. Known
+    cosmetic delta: glyph rasterization differs slightly between Compose's
+    text stack and the export's `Paint` bitmap (same typeface, same size,
+    same line assignment); block geometry, transforms and timing are shared
+    and unit-tested.
