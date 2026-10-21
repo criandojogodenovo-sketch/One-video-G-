@@ -158,6 +158,55 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /**
+     * v0.5.2 — leaving the editor back to the list. Flushes pending edits and
+     * DELETES the project when it is completely empty (0 clips, 0 overlays,
+     * 0 audios — [TimelineClips.isCompletelyEmpty]) so abandoned empty
+     * projects never accumulate. Projects with ANY content are kept. The
+     * navigation callback runs in every outcome (delete, kept, save failure,
+     * no project at all) — the user always returns to the list.
+     */
+    fun exitAndCleanup(onExit: () -> Unit) {
+        val project = _ui.value.project
+        if (project == null) {
+            onExit()
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            if (TimelineClips.isCompletelyEmpty(project)) {
+                // Cancel a pending autosave FIRST — a fire-after-delete save
+                // would recreate the directory (repository.save mkdirs) and
+                // resurrect an empty project. An autosave already in flight is
+                // caught by the re-delete below.
+                autosaveJob?.cancel()
+                repository.delete(project.id)
+                if (repository.load(project.id) != null) {
+                    repository.delete(project.id)
+                }
+                DiagnosticsLogger.i(
+                    "project", "AUTO_DELETE_EMPTY", null,
+                    "empty project deleted on editor exit",
+                    meta = listOf("projectId" to DiagSanitizer.fingerprint(project.id)),
+                )
+                withContext(Dispatchers.Main) {
+                    // Drop the in-memory state and history so the deleted
+                    // snapshot can never be reused after its file is gone.
+                    history = UndoRedoManager(null)
+                    _ui.value = UiState()
+                    onExit()
+                }
+            } else {
+                autosaveJob?.cancel()
+                runCatching {
+                    repository.save(project.copy(updatedAtEpochMs = System.currentTimeMillis()))
+                }.onFailure {
+                    DiagnosticsLogger.e("project", "SAVE", null, "exit save FAILED", it)
+                }
+                withContext(Dispatchers.Main) { onExit() }
+            }
+        }
+    }
+
     // region video clips ------------------------------------------------------
 
     fun importVideo(uri: Uri, displayName: String) {

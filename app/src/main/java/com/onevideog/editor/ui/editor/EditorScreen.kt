@@ -48,6 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import com.onevideog.editor.R
@@ -79,6 +80,14 @@ fun EditorScreen(
     LaunchedEffect(projectId) { viewModel.open(projectId) }
 
     val project = state.project
+
+    // v0.5.2: leaving the editor — through the top-bar back arrow OR the
+    // system back gesture — flushes the pending save and auto-deletes the
+    // project when it is completely empty (0 clips, 0 overlays, 0 audios).
+    // Navigating to the EXPORT screen is not an exit: that project is kept.
+    BackHandler(enabled = project != null) {
+        viewModel.exitAndCleanup(onBack)
+    }
 
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
@@ -154,8 +163,8 @@ fun EditorScreen(
             onUndo = { viewModel.undo() },
             onRedo = { viewModel.redo() },
             onBack = {
-                viewModel.saveNow()
-                onBack()
+                // v0.5.2: save + auto-delete-if-empty, then navigate.
+                viewModel.exitAndCleanup(onBack)
             },
             onExport = { viewModel.saveNow { onExport(projectId) } },
         )

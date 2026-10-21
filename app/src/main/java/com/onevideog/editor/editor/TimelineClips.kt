@@ -86,6 +86,15 @@ object TimelineClips {
     fun find(project: OvgProject, id: String): TimelineClip? =
         all(project).firstOrNull { it.id == id }
 
+    /**
+     * v0.5.2 — true when the project holds NOTHING at all: 0 video clips,
+     * 0 overlays and 0 audio clips. Such projects are deleted automatically
+     * when the editor is left (abandoned empty projects never accumulate).
+     * Pure — unit-tested.
+     */
+    fun isCompletelyEmpty(project: OvgProject): Boolean =
+        project.clips.isEmpty() && project.overlays.isEmpty() && project.audioClips.isEmpty()
+
     /** True when the clip is audible/visible at [timeMs]. */
     fun TimelineClip.isActiveAt(timeMs: Long): Boolean =
         timeMs >= startMs && timeMs < endMs
