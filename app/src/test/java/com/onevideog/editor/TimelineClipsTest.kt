@@ -175,4 +175,38 @@ class TimelineClipsTest {
         val ids = TimelineClips.all(p).map { it.id }
         assertEquals(ids.size, ids.toSet().size)
     }
+
+    // ------------------------------------------------------ isCompletelyEmpty
+
+    /**
+     * v0.5.2 — the editor-exit auto-delete predicate: a project is deleted
+     * only when it holds 0 clips, 0 overlays AND 0 audios. ANY element of
+     * any kind keeps the project alive (overlays/audio-only projects are
+     * legitimate per the "Projeto vazio" rule).
+     */
+    @Test
+    fun `isCompletelyEmpty is true only when every list is empty`() {
+        assertTrue(TimelineClips.isCompletelyEmpty(project()))
+        assertFalse(
+            TimelineClips.isCompletelyEmpty(project(clips = listOf(video("v1", 1_000)))),
+        )
+        assertFalse(
+            TimelineClips.isCompletelyEmpty(
+                project(overlays = listOf(overlay("t1", OverlayKind.TEXT, 0, 2_000))),
+            ),
+        )
+        assertFalse(
+            TimelineClips.isCompletelyEmpty(
+                project(audio = listOf(audio("a1", 0, 0, 2_000))),
+            ),
+        )
+        // A project that HAD elements keeps its identity even after all
+        // windows are moved out of the active range — emptiness is list
+        // emptiness, not "nothing at the playhead".
+        assertFalse(
+            TimelineClips.isCompletelyEmpty(
+                project(overlays = listOf(overlay("t1", OverlayKind.TEXT, 9_000, 9_500))),
+            ),
+        )
+    }
 }

@@ -48,7 +48,7 @@
     <string name="editor_import_video">Import video</string>
     <string name="editor_import_music">Import music</string>
     <string name="editor_empty_title">Your timeline is empty</string>
-    <string name="editor_empty_body">Import a video to start editing. You can trim, split, reorder and export offline.</string>
+    <string name="editor_empty_body">Add text, an image or audio to start editing — a base video is optional. You can also add a video, trim, split, reorder and export offline.</string>
     <!-- v0.5.1: video-less projects (black background, 5 s starting duration). -->
     <string name="empty_project">Empty project</string>
     <string name="empty_project_name">Empty project</string>
@@ -236,6 +236,7 @@
     <string name="a11y_zoom_in">Zoom in timeline</string>
     <string name="a11y_zoom_out">Zoom out timeline</string>
     <string name="a11y_import_video">Import video</string>
+    <string name="a11y_add_video">Add video</string>
     <string name="a11y_undo">Undo</string>
     <string name="a11y_redo">Redo</string>
     <string name="a11y_settings">Settings</string>

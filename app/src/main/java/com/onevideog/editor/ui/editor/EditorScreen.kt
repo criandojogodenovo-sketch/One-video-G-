@@ -29,7 +29,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.TextFields
-import androidx.compose.material.icons.filled.VideocamOff
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -48,6 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import com.onevideog.editor.R
@@ -71,7 +72,6 @@ fun EditorScreen(
     viewModel: EditorViewModel,
     onBack: () -> Unit,
     onExport: (String) -> Unit,
-    onOpenProject: (String) -> Unit = {},
 ) {
     val state by viewModel.ui.collectAsState()
     val context = LocalContext.current
@@ -80,6 +80,14 @@ fun EditorScreen(
     LaunchedEffect(projectId) { viewModel.open(projectId) }
 
     val project = state.project
+
+    // v0.5.2: leaving the editor — through the top-bar back arrow OR the
+    // system back gesture — flushes the pending save and auto-deletes the
+    // project when it is completely empty (0 clips, 0 overlays, 0 audios).
+    // Navigating to the EXPORT screen is not an exit: that project is kept.
+    BackHandler(enabled = project != null) {
+        viewModel.exitAndCleanup(onBack)
+    }
 
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
@@ -155,8 +163,8 @@ fun EditorScreen(
             onUndo = { viewModel.undo() },
             onRedo = { viewModel.redo() },
             onBack = {
-                viewModel.saveNow()
-                onBack()
+                // v0.5.2: save + auto-delete-if-empty, then navigate.
+                viewModel.exitAndCleanup(onBack)
             },
             onExport = { viewModel.saveNow { onExport(projectId) } },
         )
@@ -222,11 +230,6 @@ fun EditorScreen(
         ToolBarRow(
             onImport = {
                 importLauncher.launch(arrayOf("video/*"))
-            },
-            onEmptyProject = {
-                viewModel.newProject(context.getString(R.string.empty_project_name)) { id ->
-                    onOpenProject(id)
-                }
             },
             onTool = { activeTool = it },
             hasContent = com.onevideog.editor.editor.ProjectMath.projectDurationMs(project) > 0,
@@ -370,7 +373,6 @@ private fun TransportBar(viewModel: EditorViewModel) {
 @Composable
 private fun ToolBarRow(
     onImport: () -> Unit,
-    onEmptyProject: () -> Unit,
     onTool: (Tool) -> Unit,
     hasContent: Boolean,
 ) {
@@ -402,13 +404,17 @@ private fun ToolBarRow(
                 tint = MaterialTheme.colorScheme.primary,
             )
         }
-        // v0.5.1: "Projeto vazio" — a video-less timeline (black background,
-        // 5 s starting duration that grows with the clips) alongside the
-        // video import button.
-        IconButton(onClick = onEmptyProject, modifier = Modifier.size(44.dp)) {
+        // v0.5.2: the camera button IS "Adicionar vídeo" — always active,
+        // opens the video selector on the CURRENT project. The imported video
+        // becomes the base of a video-less project (duration = video length,
+        // existing overlays kept) through the one shared [importVideo] path.
+        // The v0.5.1 behaviour (create a NEW empty project from inside the
+        // editor) is intentionally gone — projects are only created on the
+        // home screen ("Novo projeto" / "Projeto vazio").
+        IconButton(onClick = onImport, modifier = Modifier.size(44.dp)) {
             Icon(
-                Icons.Filled.VideocamOff,
-                contentDescription = stringResource(R.string.a11y_empty_project),
+                Icons.Filled.Videocam,
+                contentDescription = stringResource(R.string.a11y_add_video),
                 tint = MaterialTheme.colorScheme.primary,
             )
         }

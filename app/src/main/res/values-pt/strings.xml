@@ -48,7 +48,7 @@
     <string name="editor_import_video">Importar vídeo</string>
     <string name="editor_import_music">Importar áudio</string>
     <string name="editor_empty_title">A linha temporal está vazia</string>
-    <string name="editor_empty_body">Importe um vídeo para começar a editar. Pode cortar, dividir, reordenar e exportar offline.</string>
+    <string name="editor_empty_body">Adicione texto, imagem ou áudio para começar a editar — o vídeo base é opcional. Também pode adicionar um vídeo, cortar, dividir, reordenar e exportar offline.</string>
     <!-- v0.5.1: projetos sem vídeo (fundo preto, duração inicial de 5 s). -->
     <string name="empty_project">Projeto vazio</string>
     <string name="empty_project_name">Projeto vazio</string>
@@ -236,6 +236,7 @@
     <string name="a11y_zoom_in">Ampliar linha temporal</string>
     <string name="a11y_zoom_out">Reduzir linha temporal</string>
     <string name="a11y_import_video">Importar vídeo</string>
+    <string name="a11y_add_video">Adicionar vídeo</string>
     <string name="a11y_undo">Anular</string>
     <string name="a11y_redo">Refazer</string>
     <string name="a11y_settings">Definições</string>

@@ -110,9 +110,6 @@ private fun OvgNavHost(
                 viewModel = editorViewModel,
                 onBack = { navController.popBackStack() },
                 onExport = { id -> navController.navigate("export/$id") },
-                // v0.5.1: the in-editor "Projeto vazio" button creates and
-                // opens a new video-less project (pushed on the back stack).
-                onOpenProject = { id -> navController.navigate("editor/$id") },
             )
         }
         composable(
