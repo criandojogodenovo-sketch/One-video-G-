@@ -139,6 +139,13 @@ object ClipEffectsFactory {
      * Texture overlays for [clip], FIFO order by zOrder (Media3 draws the
      * LAST overlay on top, so the list must be ascending by zOrder — see
      * [OverlayLayout] docs and OverlayEffect's contract).
+     *
+     * v0.5.7: windows are planned over the PARENT overlays (no segment
+     * expansion here) and an animated text overlay becomes ONE
+     * [AnimatedTextOverlay] composite texture instead of one
+     * [KeyframedOverlay] per word/letter segment — same plan, same windows,
+     * same z-order, one GL draw. The planning rules (G5 fallback + limit)
+     * stay in [ExpandedOverlays.animationSpec], shared with the preview.
      */
     fun overlayTextures(
         context: Context,
@@ -146,41 +153,60 @@ object ClipEffectsFactory {
         clip: com.onevideog.editor.data.Clip,
         clipStartMs: Long,
     ): ImmutableList<androidx.media3.effect.TextureOverlay> {
-        // v0.5.0 (G4): ONE expansion shared with the preview — text overlays
-        // with an entrance animation become one KeyframedOverlay per segment
-        // (same windows, same z-order rule, same composed keyframes).
-        val expanded = ExpandedOverlays.build(project)
+        val contentAspect = ExpandedOverlays.projectContentAspect(project)
         val windows = ClipEffectPlan.overlayWindowsForClip(
-            overlays = expanded.overlays,
-            clipEndMs = clipStartMs + clip.effectiveDurationMs,
-            frameAspect = clip.sourceAspect
-                ?: project.aspectEnum.ratio()
-                ?: 16f / 9f,
+            project = project,
+            clip = clip,
             clipStartMs = clipStartMs,
         )
-        return texturesForWindows(context, windows, clipStartMs)
+        return texturesForOverlays(context, windows, clipStartMs, contentAspect)
     }
 
     /**
      * v0.5.1: window -> textures, the ONE builder for every export surface
      * (per-clip video items AND the empty-project black base item). Same
-     * bitmaps, same z-order, same [KeyframedOverlay] math — no per-surface
-     * duplication. [surfaceStartProjectMs] is the project time of the item's
-     * local t=0 (the video clip's timeline start, or 0 for the black base).
+     * bitmaps, same z-order, same keyframe math — no per-surface duplication.
+     * [surfaceStartProjectMs] is the project time of the item's local t=0 (the
+     * video clip's timeline start, or 0 for the black base).
+     * [contentAspect] drives the animated-text composite (v0.5.7).
      */
-    fun texturesForWindows(
+    fun texturesForOverlays(
         context: Context,
         windows: List<ClipEffectPlan.OverlayWindow>,
         surfaceStartProjectMs: Long,
+        contentAspect: Float,
     ): ImmutableList<androidx.media3.effect.TextureOverlay> {
         if (windows.isEmpty()) return ImmutableList.of()
         val builder = ImmutableList.builder<androidx.media3.effect.TextureOverlay>()
         for (window in windows) {
-            val bitmap = when (window.overlay.kind) {
+            val overlay = window.overlay
+            val animSpec = if (overlay.kind == com.onevideog.editor.data.OverlayKind.TEXT) {
+                ExpandedOverlays.animationSpec(overlay, contentAspect)
+            } else {
+                null
+            }
+            if (animSpec != null) {
+                builder.add(
+                    AnimatedTextOverlay(
+                        parent = overlay,
+                        segments = animatedTextSegments(overlay, animSpec),
+                        blockWidthPx = animSpec.frame.widthPx,
+                        blockHeightPx = animSpec.frame.heightPx,
+                        blockAspectW = animSpec.blockAspectW,
+                        windowStartLocalMs = window.windowStartLocalMs,
+                        windowEndLocalMs = window.windowEndLocalMs,
+                        clipStartMs = surfaceStartProjectMs,
+                        frameAspect = window.frameAspect,
+                        contentAspect = contentAspect,
+                    ),
+                )
+                continue
+            }
+            val bitmap = when (overlay.kind) {
                 com.onevideog.editor.data.OverlayKind.TEXT ->
-                    OverlayBitmapRenderer.textBitmap(window.overlay)
+                    OverlayBitmapRenderer.textBitmap(overlay)
                 com.onevideog.editor.data.OverlayKind.IMAGE -> {
-                    val bmp = OverlayBitmapRenderer.imageBitmap(context, window.overlay)
+                    val bmp = OverlayBitmapRenderer.imageBitmap(context, overlay)
                     if (bmp == null) {
                         // Stage L: recoverable render failure — the overlay
                         // will be invisible this session; the decode stage
@@ -188,7 +214,7 @@ object ClipEffectsFactory {
                         DiagnosticsLogger.w(
                             "preview", ImageImportStages.RENDER_FAIL, DiagContext.currentOpId(),
                             "image overlay has no bitmap (overlay hidden)",
-                            meta = listOf("ovId" to DiagSanitizer.fingerprint(window.overlay.id)),
+                            meta = listOf("ovId" to DiagSanitizer.fingerprint(overlay.id)),
                         )
                     }
                     bmp
@@ -196,7 +222,7 @@ object ClipEffectsFactory {
             }
             builder.add(
                 KeyframedOverlay(
-                    overlay = window.overlay,
+                    overlay = overlay,
                     contentBitmap = bitmap,
                     windowStartLocalMs = window.windowStartLocalMs,
                     windowEndLocalMs = window.windowEndLocalMs,

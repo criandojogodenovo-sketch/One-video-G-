@@ -16,10 +16,10 @@ call the same functions — neither has a second implementation:
 | Audio placement          | `AudioTimeline.segmentsFor`              | `AudioPreviewController`          | audio `EditedMediaItemSequence` builder    |
 | Auto-key edit (v0.5.0)   | `KeyframeEditing.applyTransformEdit`     | gizmo commit, quick panel, sheet  | (model-level — export reads the result)    |
 | Text segments (v0.5.0)   | `TextSegmentPlanner` + `OverlayBitmapRenderer.textMetrics`/`wrapTextLines` | `computePlacements` render list | `ClipEffectsFactory.overlayTextures` |
-| Text entrance (v0.5.0)   | `TextAnimationPlanner` + `ExpandedOverlays.build` (ONE expansion) | `computePlacements` render list | `ClipEffectsFactory.overlayTextures` |
+| Text entrance (v0.5.0)   | `TextAnimationPlanner` + `ExpandedOverlays.build` (preview) / `ExpandedOverlays.animationSpec` (ONE plan, both pipelines, v0.5.7) | `computePlacements` render list | `ClipEffectsFactory.texturesForOverlays` — ONE `AnimatedTextOverlay` composite per animated text (v0.5.7) |
 | Unified clip view (v0.5.1) | `TimelineClips` (`ClipKind` + `TimelineClip`) | timeline rows, exclusive selection, creation | (editing-layer model — export unaffected) |
 | Audio preview coords (v0.5.1) | `AudioTimeline.windowPositionAt` | `AudioPreviewController` seek/drift | (export plan unchanged — `AudioTimeline.exportPlan`) |
-| Video-less base (v0.5.1) | `ProjectMath.MIN_EMPTY_DURATION_MS` + `ClipEffectsFactory.texturesForWindows` | black stage + `computePlacements` overlay layer | `CompositionFactory.buildBlackBaseItem` (black PNG item carrying the same textures) |
+| Video-less base (v0.5.1) | `ProjectMath.MIN_EMPTY_DURATION_MS` + `ClipEffectsFactory.texturesForOverlays` | black stage + `computePlacements` overlay layer | `CompositionFactory.buildBlackBaseItem` (black PNG item carrying the same textures) |
 
 Timeline, clip labels, preview and export all read duration from
 `ProjectMath.projectDurationMs`. There is no other duration calculation.
@@ -183,14 +183,15 @@ tick (stutter/silence for any trimmed clip). The export plan is unchanged.
    both paths, so wrap points are identical; apparent size relative to a
    differently-shaped *source* clip in `Original` format projects varies per
    clip in both preview and export equally.
-7. **Text animation segment cost (v0.5.0).** Per-word/per-letter entrance
-   animation expands a text overlay into up to 96 segment overlays
+7. **Text animation segment cost (v0.5.0, revised v0.5.7).** Per-word/per-letter
+   entrance animation expands a text overlay into up to 96 segment overlays
    (`ExpandedOverlays.MAX_SEGMENTS`), each with its own bitmap (≈36 KB for
-   a typical letter, shared per identical word) + one export texture —
-   bounded but real: worst case ≈3.5 MB inside the shared 20 MB LruCache
-   and 96 `KeyframedOverlay` instances in the export effect list. Overlong
-   LETTER texts fall back to WORD; WORD overflow disables the animation
-   (UI warns; diagnostics `TEXT_ANIM_LIMIT`).
+   a typical letter, shared per identical word). **v0.5.7: the EXPORT builds
+   ONE `AnimatedTextOverlay` composite texture per animated overlay** (one GL
+   draw; segments are composited into the block frame per frame by the same
+   evaluator/planner) — the per-segment GL texture/draw cost left the export
+   effect list. Overlong LETTER texts fall back to WORD; WORD overflow
+   disables the animation (UI warns; diagnostics `TEXT_ANIM_LIMIT`).
 8. **Text animation background pill (v0.5.0).** With a background colour
    set, each animated segment renders its own pill (per-word karaoke
    look); without a background the assembled segments are pixel-aligned
@@ -213,6 +214,12 @@ tick (stutter/silence for any trimmed clip). The export plan is unchanged.
    preview's clip-less content aspect; overlay parity holds by
    construction because both paths read the same normalized model and the
    same texture builder.
+12. **Animated-text entrance delta direction (v0.5.7).** In the export's
+   single-composite texture the entrance deltas (SLIDE_UP travel) ride the
+   text block's frame, so on a ROTATED parent the slide direction rotates
+   with the text; the pre-v0.5.7 per-segment pipeline slid in screen space
+   (un-rotated). Un-rotated parents (the norm) render pixel-identically:
+   same segment bitmaps, same planned positions, same evaluator times.
 
 ## What "parity" means here (verification status)
 
