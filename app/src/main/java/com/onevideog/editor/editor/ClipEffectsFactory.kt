@@ -15,6 +15,7 @@ import com.onevideog.editor.diag.DiagSanitizer
 import com.onevideog.editor.diag.DiagnosticsLogger
 import com.onevideog.editor.diag.ImageImportStages
 import android.os.SystemClock
+import java.util.Locale
 
 /**
  * THE single source of truth for per-clip video effects. Both pipelines call
@@ -73,6 +74,13 @@ object ClipEffectsFactory {
         clip: com.onevideog.editor.data.Clip,
         clipStartMs: Long,
         forPreview: Boolean,
+        /**
+         * v0.5.9 (PONTO E): the OUTPUT frame px (composition Presentation
+         * result) for the ANIM_TEXT_FRAME boxPx evidence. Only the export
+         * path uses it; preview callers keep the 0 defaults.
+         */
+        outputWidthPx: Int = 0,
+        outputHeightPx: Int = 0,
     ): List<Effect> {
         val startedAt = SystemClock.elapsedRealtime()
         val effects = mutableListOf<Effect>()
@@ -90,7 +98,7 @@ object ClipEffectsFactory {
         val textures = if (forPreview) {
             ImmutableList.of()
         } else {
-            overlayTextures(context, project, clip, clipStartMs)
+            overlayTextures(context, project, clip, clipStartMs, outputWidthPx, outputHeightPx)
         }
         if (textures.isNotEmpty()) {
             effects.add(OverlayEffect(textures))
@@ -152,6 +160,9 @@ object ClipEffectsFactory {
         project: OvgProject,
         clip: com.onevideog.editor.data.Clip,
         clipStartMs: Long,
+        /** v0.5.9: output frame px for the composite's boxPx log (0 = n/a). */
+        outputWidthPx: Int = 0,
+        outputHeightPx: Int = 0,
     ): ImmutableList<androidx.media3.effect.TextureOverlay> {
         val contentAspect = ExpandedOverlays.projectContentAspect(project)
         val windows = ClipEffectPlan.overlayWindowsForClip(
@@ -159,7 +170,14 @@ object ClipEffectsFactory {
             clip = clip,
             clipStartMs = clipStartMs,
         )
-        return texturesForOverlays(context, windows, clipStartMs, contentAspect)
+        return texturesForOverlays(
+            context,
+            windows,
+            clipStartMs,
+            contentAspect,
+            outputWidthPx,
+            outputHeightPx,
+        )
     }
 
     /**
@@ -175,6 +193,9 @@ object ClipEffectsFactory {
         windows: List<ClipEffectPlan.OverlayWindow>,
         surfaceStartProjectMs: Long,
         contentAspect: Float,
+        /** v0.5.9: output frame px for the composite's boxPx log (0 = n/a). */
+        outputWidthPx: Int = 0,
+        outputHeightPx: Int = 0,
     ): ImmutableList<androidx.media3.effect.TextureOverlay> {
         if (windows.isEmpty()) return ImmutableList.of()
         val builder = ImmutableList.builder<androidx.media3.effect.TextureOverlay>()
@@ -189,6 +210,7 @@ object ClipEffectsFactory {
                 // v0.5.8: one ANIM_TEXT_BUILD event per composite — the
                 // planning evidence the frame-level ANIM_TEXT_FRAME logs
                 // (AnimatedTextOverlay.getBitmap) correlate against.
+                // v0.5.9: framePx names the output basis; Locale.US decimals.
                 DiagnosticsLogger.i(
                     "export", "ANIM_TEXT_BUILD", DiagContext.currentOpId(),
                     "animated text composite texture built",
@@ -197,9 +219,14 @@ object ClipEffectsFactory {
                         "unit" to animSpec.unit.name,
                         "segments" to animSpec.geoms.size.toString(),
                         "blockPx" to "${animSpec.frame.widthPx}x${animSpec.frame.heightPx}",
-                        "blockAspectW" to "%.4f".format(animSpec.blockAspectW),
-                        "frameAspect" to "%.4f".format(window.frameAspect),
-                        "contentAspect" to "%.4f".format(contentAspect),
+                        "blockAspectW" to "%.4f".format(Locale.US, animSpec.blockAspectW),
+                        "frameAspect" to "%.4f".format(Locale.US, window.frameAspect),
+                        "contentAspect" to "%.4f".format(Locale.US, contentAspect),
+                        "framePx" to if (outputWidthPx > 0 && outputHeightPx > 0) {
+                            "${outputWidthPx}x$outputHeightPx"
+                        } else {
+                            "n/a"
+                        },
                         "surfaceStartMs" to surfaceStartProjectMs.toString(),
                         "windowLocalMs" to
                             "${window.windowStartLocalMs}..${window.windowEndLocalMs}",
@@ -217,6 +244,8 @@ object ClipEffectsFactory {
                         clipStartMs = surfaceStartProjectMs,
                         frameAspect = window.frameAspect,
                         contentAspect = contentAspect,
+                        outputWidthPx = outputWidthPx,
+                        outputHeightPx = outputHeightPx,
                     ),
                 )
                 continue

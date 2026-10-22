@@ -69,10 +69,20 @@ object CompositionFactory {
         val plannedDurationMs = ProjectMath.projectDurationMs(project)
 
         // ---- video sequence ----
+        // v0.5.9 (PONTO E): the OUTPUT frame px the composition Presentation
+        // produces — the exact basis for the ANIM_TEXT_* boxPx evidence.
+        // Fixed aspects: the real even-rounded ExportConfig size; SOURCE:
+        // targetHeight x aspect (Presentation.createForHeight keeps aspect).
+        val aspect0 = project.aspectEnum
+        val fixedOutput = if (aspect0 == ProjectAspect.SOURCE) {
+            null
+        } else {
+            ExportConfig.outputSize(resolution, aspect0)
+        }
         val videoItems = ImmutableList.builder<EditedMediaItem>()
         var clipStart = 0L
         for (clip in project.clips) {
-            videoItems.add(buildClipItem(context, project, clip, clipStart))
+            videoItems.add(buildClipItem(context, project, clip, clipStart, fixedOutput, resolution.targetHeight))
             clipStart += clip.effectiveDurationMs
         }
 
@@ -85,7 +95,7 @@ object CompositionFactory {
         // 16:9, fixed aspect -> the project ratio), so normalized overlay
         // positions are identical in preview and export (parity).
         if (project.clips.isEmpty() && plannedDurationMs > 0) {
-            val base = buildBlackBaseItem(context, project, plannedDurationMs, workDir)
+            val base = buildBlackBaseItem(context, project, plannedDurationMs, workDir, fixedOutput, resolution.targetHeight)
             if (base == null) {
                 // Without the base item the video sequence is EMPTY and the
                 // Transformer fails with an opaque composition error — record
@@ -150,6 +160,9 @@ object CompositionFactory {
         project: OvgProject,
         durationMs: Long,
         workDir: File,
+        /** v0.5.9: fixed-aspect output size (null = SOURCE — derived below). */
+        fixedOutput: ExportConfig.OutputSize?,
+        targetHeight: Int,
     ): EditedMediaItem? {
         val aspect = when (val a = project.aspectEnum) {
             ProjectAspect.SOURCE -> 16f / 9f
@@ -165,11 +178,16 @@ object CompositionFactory {
             frameAspect = aspect,
             clipStartMs = 0L,
         )
+        // v0.5.9 (PONTO E): the frame px basis for the composite log.
+        val outW = fixedOutput?.width ?: Math.round(targetHeight * aspect)
+        val outH = fixedOutput?.height ?: targetHeight
         val overlayTextures = ClipEffectsFactory.texturesForOverlays(
             context,
             windows,
             0L,
             ExpandedOverlays.projectContentAspect(project),
+            outW,
+            outH,
         )
         val videoEffects = if (overlayTextures.isEmpty()) {
             emptyList<androidx.media3.common.Effect>()
@@ -239,6 +257,9 @@ object CompositionFactory {
         project: OvgProject,
         clip: Clip,
         clipStartMs: Long,
+        /** v0.5.9: fixed-aspect output size (null = SOURCE — derived below). */
+        fixedOutput: ExportConfig.OutputSize?,
+        targetHeight: Int,
     ): EditedMediaItem {
         val mediaItem = MediaItem.Builder()
             .setUri(Uri.parse(clip.uri))
@@ -259,12 +280,20 @@ object CompositionFactory {
         // ONE shared effect pipeline: the same builder the preview player
         // feeds into ExoPlayer.setVideoEffects (forPreview=false — the
         // composition-level Presentation is added below at composition scope).
+        // v0.5.9 (PONTO E): the frame px basis for the ANIM_TEXT_* log —
+        // fixed aspect: the real even-rounded output size; SOURCE: the clip's
+        // aspect at targetHeight (Presentation.createForHeight keeps aspect).
+        val outW = fixedOutput?.width
+            ?: Math.round(targetHeight * (clip.sourceAspect ?: 16f / 9f))
+        val outH = fixedOutput?.height ?: targetHeight
         val videoEffects = ClipEffectsFactory.effectsFor(
             context = context,
             project = project,
             clip = clip,
             clipStartMs = clipStartMs,
             forPreview = false,
+            outputWidthPx = outW,
+            outputHeightPx = outH,
         )
 
         return EditedMediaItem.Builder(mediaItem)
