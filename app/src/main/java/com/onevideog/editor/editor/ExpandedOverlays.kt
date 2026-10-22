@@ -109,20 +109,26 @@ object ExpandedOverlays {
         overlay: OverlayItem,
         contentAspect: Float,
         onLimited: ((String) -> Unit)? = null,
+        /**
+         * v0.5.8: injectable text measurer (the TextSegmentPlanner pattern).
+         * Null = the production Paint measurer — the ONLY change for callers
+         * is that JVM tests can now exercise the enabled-animation plan.
+         */
+        measurer: TextSegmentPlanner.Measurer? = null,
     ): AnimSpec? {
         val anim = overlay.textAnimation
         if (overlay.kind != OverlayKind.TEXT || !anim.isEnabled) return null
         val metrics = OverlayBitmapRenderer.textMetrics(overlay)
-        val measurer = paintMeasurer(overlay, metrics)
+        val measure = measurer ?: paintMeasurer(overlay, metrics)
         var unit = anim.unit
-        var geoms = TextSegmentPlanner.plan(overlay.text, unit, metrics, measurer)
+        var geoms = TextSegmentPlanner.plan(overlay.text, unit, metrics, measure)
         if (geoms.isEmpty()) return null
         if (geoms.size > MAX_SEGMENTS) {
             // G5: LETTER on a long text overflows -> fall back to WORD
             // (coarser granularity, far fewer segments).
             if (unit == TextAnimUnit.LETTER) {
                 unit = TextAnimUnit.WORD
-                geoms = TextSegmentPlanner.plan(overlay.text, unit, metrics, measurer)
+                geoms = TextSegmentPlanner.plan(overlay.text, unit, metrics, measure)
             }
             if (geoms.size > MAX_SEGMENTS) {
                 DiagnosticsLogger.w(
@@ -139,7 +145,7 @@ object ExpandedOverlays {
                 return null
             }
         }
-        val frame = TextSegmentPlanner.blockFrame(overlay.text, metrics, measurer)
+        val frame = TextSegmentPlanner.blockFrame(overlay.text, metrics, measure)
         val blockAspectW = if (frame.heightPx <= 0) {
             1f
         } else {
@@ -156,14 +162,18 @@ object ExpandedOverlays {
      * Builds the render list for [project]. The heavy work is text
      * measurement (a few dozen measureText calls) — callers memoise the
      * result per project revision (preview) or call it once per export.
+     * [measurer] v0.5.8: injectable for JVM tests (null = production Paint).
      */
-    fun build(project: OvgProject): Result {
+    fun build(
+        project: OvgProject,
+        measurer: TextSegmentPlanner.Measurer? = null,
+    ): Result {
         val renderList = mutableListOf<OverlayItem>()
         val parentOfSegment = mutableMapOf<String, String>()
         val limited = mutableSetOf<String>()
         val contentAspect = projectContentAspect(project)
         for (overlay in project.overlays) {
-            val segments = expandOverlay(overlay, contentAspect, limited)
+            val segments = expandOverlay(overlay, contentAspect, limited, measurer)
             for (segment in segments) {
                 parentOfSegment[segment.id] = overlay.id
                 renderList += segment
@@ -231,6 +241,7 @@ object ExpandedOverlays {
         overlay: OverlayItem,
         contentAspect: Float,
         limited: MutableSet<String>,
+        measurer: TextSegmentPlanner.Measurer? = null,
     ): List<OverlayItem> {
         // v0.5.5 (docs/AUDIT_v0.5.4_report_followup.md §1): overlays that need
         // no expansion must still RENDER. Since v0.5.0 this path returned
@@ -245,7 +256,7 @@ object ExpandedOverlays {
         if (!overlay.visible) return emptyList()
         // v0.5.7: the planning rule moved to [animationSpec] (shared with the
         // export composite); expansion and pass-through behaviour identical.
-        val spec = animationSpec(overlay, contentAspect) { limited += it }
+        val spec = animationSpec(overlay, contentAspect, { limited += it }, measurer)
             ?: return listOf(overlay)
         val segments = mutableListOf<OverlayItem>()
         for ((index, geom) in spec.geoms.withIndex()) {
