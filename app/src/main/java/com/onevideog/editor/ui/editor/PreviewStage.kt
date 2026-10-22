@@ -177,6 +177,10 @@ fun PreviewStage(viewModel: EditorViewModel) {
     //   viewport = the fitted content box inside the stage container
     var videoSize by remember { mutableStateOf(VideoSize.UNKNOWN) }
     var surfaceSize by remember { mutableStateOf(0 to 0) }
+    // v0.5.9 (PONTO C): bounded playback state as COMPOSE state — drives the
+    // overlay-draw gate below (overlays hidden while the player is
+    // BUFFERING, i.e. the video frame on screen is stale/absent).
+    var playerState by remember { mutableStateOf(Player.STATE_IDLE) }
     val geometryTracker = remember { ViewportGeometryTracker() }
     // v0.5.7 (ponto 5): the CLIP's declared video geometry (probed at import
     // and persisted with the project) is authoritative when the decoder has
@@ -212,6 +216,8 @@ fun PreviewStage(viewModel: EditorViewModel) {
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
+                // v0.5.9 (PONTO C): publish the state for the overlay gate.
+                playerState = playbackState
                 // Keep the icon/state and the player in lock-step: STATE_ENDED
                 // flips `isPlaying` off so the UI never shows a phantom
                 // "playing" (and pressing play can restart the item).
@@ -354,6 +360,15 @@ fun PreviewStage(viewModel: EditorViewModel) {
     // is a no-op at best and an EGL hazard at worst).
     var lastAppliedRevision by remember { mutableStateOf<Int?>(null) }
 
+    // v0.5.9 (PONTO D — user prescription): the LATEST revision the
+    // composition has seen, written FIRST on every recomposition (before any
+    // effect body runs). A rebuild body that wakes up for a revision that is
+    // no longer the current one (e.g. its 300 ms debounce outlived a newer
+    // edit wave) is IGNORED — an older effect list can never overwrite a
+    // newer one. Flips are logged (PREVIEW_REBUILD_SKIPPED).
+    var latestSeenRevision by remember { mutableStateOf(effectsRevision) }
+    latestSeenRevision = effectsRevision
+
     // Effect application — MUST run before the media-load effect below so the
     // first prepare() happens with the effects already set.
     // v0.5.7 hardening of the LIVE-pipeline rebuild path (pontos 1–3):
@@ -371,6 +386,19 @@ fun PreviewStage(viewModel: EditorViewModel) {
     LaunchedEffect(effectsRevision) {
         val clip = currentClip ?: return@LaunchedEffect
         if (lastAppliedRevision == effectsRevision) return@LaunchedEffect
+        if (effectsRevision != latestSeenRevision) {
+            // v0.5.9 (PONTO D): stale rebuild — a newer revision is already
+            // the current one; never attach the older effect list.
+            DiagnosticsLogger.d(
+                "preview", "PREVIEW_REBUILD_SKIPPED", previewOpId,
+                "stale effect revision ignored (newer revision already seen)",
+                meta = listOf(
+                    "revision" to effectsRevision.toString(),
+                    "latest" to latestSeenRevision.toString(),
+                ),
+            )
+            return@LaunchedEffect
+        }
         val sameClipRebuild = loadedClipId == clip.id
         if (sameClipRebuild) {
             delay(300)
@@ -562,6 +590,37 @@ fun PreviewStage(viewModel: EditorViewModel) {
     }
 
     // ------------------------------ viewport ----------------------------------
+    // v0.5.9 (PONTO C — user prescription): do NOT draw overlays while the
+    // video is not actually being rendered — video=none (no decoder geometry
+    // AND no clip probe dims) or the player is BUFFERING (the frame on
+    // screen is stale, so overlay pixels would not correspond to what the
+    // export composites for that timestamp). Projects WITHOUT clips keep
+    // drawing ALWAYS (the clip-less clock drives the playhead; no video
+    // player is involved). The gate flips are logged as OVERLAY_GATE so the
+    // device report can distinguish "hidden by the gate" from "missing".
+    val overlaysDrawn = project.clips.isEmpty() ||
+        (effectiveVideoSize.width > 0 && playerState != Player.STATE_BUFFERING)
+    var lastGateLogged by remember { mutableStateOf(overlaysDrawn) }
+    LaunchedEffect(overlaysDrawn) {
+        if (overlaysDrawn != lastGateLogged) {
+            lastGateLogged = overlaysDrawn
+            val videoSourceName =
+                if (videoSize.width > 0 && videoSize.height > 0) "decoder"
+                else if (clipVideoSize.width > 0) "clip" else "none"
+            DiagnosticsLogger.i(
+                "preview", "OVERLAY_GATE", previewOpId,
+                if (overlaysDrawn) "overlay drawing resumed"
+                else "overlay drawing suspended (video=none/BUFFERING)",
+                meta = listOf(
+                    "drawing" to overlaysDrawn.toString(),
+                    "videoSource" to videoSourceName,
+                    "playerState" to playbackStateName(playerState),
+                    "clips" to project.clips.size.toString(),
+                ),
+            )
+        }
+    }
+
     BoxWithConstraints(
         modifier = Modifier
             .background(Color.Black),
@@ -673,6 +732,9 @@ fun PreviewStage(viewModel: EditorViewModel) {
                 // segments are placed per frame through
                 // AnimatedTextLayout.segmentPlacement (project-frame reference).
                 segmentPlans = { expanded.segmentPlans },
+                // v0.5.9 (PONTO C): overlays are not drawn while the video is
+                // video=none/BUFFERING (see the gate above).
+                drawOverlays = { overlaysDrawn },
                 opId = previewOpId,
                 onTap = { overlay ->
                     // Clear any stale gesture override (a tap ends the

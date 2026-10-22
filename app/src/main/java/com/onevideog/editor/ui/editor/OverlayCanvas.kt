@@ -390,6 +390,12 @@ internal fun OverlayLayer(
      * [AnimatedTextLayout.segmentPlacement] (preview == export layout).
      */
     segmentPlans: () -> Map<String, ExpandedOverlays.SegmentPlan> = { emptyMap() },
+    /**
+     * v0.5.9 (PONTO C): false while the video is video=none/BUFFERING —
+     * nothing is placed or drawn (and the draw evidence is suppressed) until
+     * the video actually renders again. Clip-less projects always pass true.
+     */
+    drawOverlays: () -> Boolean = { true },
     onTap: (OverlayItem?) -> Unit,
     onGesture: (OverlayItem, OverlayTransform) -> Unit,
     onGestureEnd: (OverlayItem, OverlayTransform) -> Unit,
@@ -407,6 +413,8 @@ internal fun OverlayLayer(
     val contentH = contentHeightPx()
     val contentAsp = contentAspect()
     val playhead = playheadMs()
+    // v0.5.9 (PONTO C): overlays render only while the video actually does.
+    val overlaysVisible = drawOverlays()
 
     // ---- image content: async decode state (cache-backed, never inline) ----
     // v0.2.5 rule kept: the render path must never decode on the UI thread;
@@ -457,17 +465,21 @@ internal fun OverlayLayer(
                 ?.let { OverlayRender.ImageContent(it) }
     }
 
-    val rawPlacements = computePlacements(
-        overlays = overlays,
-        playheadMs = playhead,
-        contentAspect = contentAsp,
-        contentWidth = contentW,
-        contentHeight = contentH,
-        resolveRender = ::resolveRender,
-        selectedId = selectedId,
-        parents = parentsList,
-        segmentPlans = segmentPlans(),
-    )
+    val rawPlacements = if (overlaysVisible) {
+        computePlacements(
+            overlays = overlays,
+            playheadMs = playhead,
+            contentAspect = contentAsp,
+            contentWidth = contentW,
+            contentHeight = contentH,
+            resolveRender = ::resolveRender,
+            selectedId = selectedId,
+            parents = parentsList,
+            segmentPlans = segmentPlans(),
+        )
+    } else {
+        emptyList()
+    }
     val placements = applyGestureOverride(
         raw = rawPlacements,
         override = override,
@@ -480,6 +492,8 @@ internal fun OverlayLayer(
     // ---- OVERLAY_DRAW evidence (throttled: on set change or 1 Hz) ----
     val drawLogGate = remember { OverlayDrawLogGate() }
     LaunchedEffect(placements) {
+        // v0.5.9 (PONTO C): no draw evidence while the gate hides the layer.
+        if (!overlaysVisible) return@LaunchedEffect
         val sig = placements.joinToString("|") { p ->
             "${p.parentId ?: p.overlay.id}:" +
                 "${p.widthPx.roundToInt()}x${p.heightPx.roundToInt()}"
