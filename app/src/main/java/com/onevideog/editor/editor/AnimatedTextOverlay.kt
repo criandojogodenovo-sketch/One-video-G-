@@ -7,9 +7,10 @@ import android.graphics.RectF
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.BitmapOverlay
 import androidx.media3.effect.OverlaySettings
+import com.onevideog.editor.diag.DiagSanitizer
 import com.onevideog.editor.data.OverlayItem
 import com.onevideog.editor.data.OverlayKind
-import kotlin.math.roundToInt
+import com.onevideog.editor.diag.DiagnosticsLogger
 
 /**
  * v0.5.7 (missão "texto animado = um único desenho por overlay"): ONE export
@@ -39,6 +40,12 @@ import kotlin.math.roundToInt
  * microseconds, windows in item-local ms, keyframes evaluated at project time
  * (`clipStartMs + localMs`). Outside its window the overlay returns the shared
  * transparent bitmap (returning null is not safe in Media3 1.4.1).
+ *
+ * v0.5.8: the per-frame composite geometry moved VERBATIM to the pure,
+ * preview-parity-tested [AnimatedTextLayout] (one shared implementation for
+ * the segment placement math), and every frame while the entrance is running
+ * logs an ANIM_TEXT_FRAME diagnostics event (progress, parent/relative scale,
+ * final block px per segment — the parity evidence the device report needs).
  */
 @UnstableApi
 class AnimatedTextOverlay(
@@ -69,6 +76,25 @@ class AnimatedTextOverlay(
         val relative: OverlayItem,
     )
 
+    /**
+     * Last PROJECT time any segment's relative entrance keyframe defines —
+     * the ANIM_TEXT_FRAME log is limited to the entrance (plus a short
+     * grace); at rest the composite is static and per-frame logs would only
+     * flood the diagnostics ring.
+     */
+    private val lastEntranceEndMs: Long by lazy {
+        var maxEnd = Long.MIN_VALUE
+        for (seg in segments) {
+            for (kf in seg.relative.keyframes) {
+                if (kf.timeMs > maxEnd) maxEnd = kf.timeMs
+            }
+        }
+        if (maxEnd == Long.MIN_VALUE) clipStartMs + windowEndLocalMs else maxEnd
+    }
+
+    /** ANIM_TEXT_FRAME throttle: at most one event per [FRAME_LOG_STEP_MS]. */
+    private var lastLoggedProjectMs = Long.MIN_VALUE
+
     private val scratch: Bitmap by lazy {
         Bitmap.createBitmap(
             blockWidthPx.coerceAtLeast(1),
@@ -86,33 +112,71 @@ class AnimatedTextOverlay(
         }
         val projectMs = clipStartMs + Math.round(localMs.toFloat())
         val parentEval = KeyframeEvaluator.evaluate(parent, projectMs)
-        val parentScale = parentEval.scale.coerceAtLeast(MIN_PARENT_SCALE)
-        // The block's height as a content-HEIGHT fraction: width fraction is
-        // parentScale; height = width * (blockW/blockH) / contentAspect.
+        val parentScale = parentEval.scale.coerceAtLeast(AnimatedTextLayout.MIN_PARENT_SCALE)
         val blockHeightFrac =
-            (parentScale * contentAspect / blockAspectW).coerceAtLeast(MIN_PARENT_SCALE)
+            AnimatedTextLayout.blockHeightFrac(parentScale, contentAspect, blockAspectW)
+        // v0.5.8: ANIM_TEXT_FRAME evidence — one event per 100 ms while the
+        // entrance runs (the composite is static after it, so logging the
+        // whole window would only flood the diagnostics ring).
+        val logFrame = projectMs <= lastEntranceEndMs + FRAME_LOG_GRACE_MS &&
+            projectMs - lastLoggedProjectMs >= FRAME_LOG_STEP_MS
+        if (logFrame) lastLoggedProjectMs = projectMs
+        val segLog = if (logFrame) StringBuilder() else null
         canvas.drawColor(android.graphics.Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
         for (segment in segments) {
             val rel = KeyframeEvaluator.evaluate(segment.relative, projectMs)
-            val w = segment.widthFrac * blockWidthPx * rel.scale
-            if (w <= 0f) continue
-            val h = if (segment.bitmap.width <= 0) {
-                w
-            } else {
-                w * segment.bitmap.height.toFloat() / segment.bitmap.width
-            }
-            // Entrance deltas in content fractions -> block px: x over the
-            // block's width fraction (parentScale), y over blockHeightFrac.
-            val cx = segment.centerXFrac * blockWidthPx +
-                rel.x / parentScale * blockWidthPx
-            val cy = segment.centerYFrac * blockHeightPx +
-                rel.y / blockHeightFrac * blockHeightPx
-            paint.alpha = (rel.opacity.coerceIn(0f, 1f) * 255f).roundToInt().coerceIn(0, 255)
+            // v0.5.8: the SAME pure layout the parity test pins against the
+            // preview placement math (AnimatedTextOverlayParityTest).
+            val frame = AnimatedTextLayout.segmentFrame(
+                centerXFrac = segment.centerXFrac,
+                centerYFrac = segment.centerYFrac,
+                widthFrac = segment.widthFrac,
+                bitmapWidth = segment.bitmap.width,
+                bitmapHeight = segment.bitmap.height,
+                relX = rel.x,
+                relY = rel.y,
+                relScale = rel.scale,
+                relOpacity = rel.opacity,
+                parentScale = parentScale,
+                blockHeightFrac = blockHeightFrac,
+                blockWidthPx = blockWidthPx,
+                blockHeightPx = blockHeightPx,
+            ) ?: continue
+            paint.alpha = frame.alphaInt
             canvas.drawBitmap(
                 segment.bitmap,
                 null,
-                RectF(cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f),
+                RectF(
+                    frame.centerXpx - frame.widthPx / 2f,
+                    frame.centerYpx - frame.heightPx / 2f,
+                    frame.centerXpx + frame.widthPx / 2f,
+                    frame.centerYpx + frame.heightPx / 2f,
+                ),
                 paint,
+            )
+            segLog?.let { log ->
+                log.append(" op=").append("%.3f".format(rel.opacity))
+                log.append(" sc=").append("%.3f".format(rel.scale))
+                log.append(" wh=").append("%.1f".format(frame.widthPx))
+                    .append('x').append("%.1f".format(frame.heightPx))
+                log.append(" @").append("%.1f".format(frame.centerXpx))
+                    .append(',').append("%.1f".format(frame.centerYpx)).append(';')
+            }
+        }
+        if (logFrame && segLog != null) {
+            DiagnosticsLogger.i(
+                "export", "ANIM_TEXT_FRAME", null,
+                "animated text composite frame",
+                meta = listOf(
+                    "ovId" to DiagSanitizer.fingerprint(parent.id),
+                    "tUs" to presentationTimeUs.toString(),
+                    "projectMs" to projectMs.toString(),
+                    "parentScale" to "%.4f".format(parentScale),
+                    "blockFracW" to "%.4f".format(parentScale),
+                    "blockFracH" to "%.4f".format(blockHeightFrac),
+                    "blockPx" to "${blockWidthPx}x$blockHeightPx",
+                    "segments" to segLog.toString(),
+                ),
             )
         }
         return scratch
@@ -147,7 +211,11 @@ class AnimatedTextOverlay(
     }
 
     private companion object {
-        const val MIN_PARENT_SCALE = 1e-3f
+        /** ANIM_TEXT_FRAME cadence while the entrance runs. */
+        const val FRAME_LOG_STEP_MS = 100L
+
+        /** Keep logging this long past the last entrance keyframe. */
+        const val FRAME_LOG_GRACE_MS = 250L
     }
 }
 

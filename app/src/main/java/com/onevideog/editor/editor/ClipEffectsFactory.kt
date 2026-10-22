@@ -186,6 +186,25 @@ object ClipEffectsFactory {
                 null
             }
             if (animSpec != null) {
+                // v0.5.8: one ANIM_TEXT_BUILD event per composite — the
+                // planning evidence the frame-level ANIM_TEXT_FRAME logs
+                // (AnimatedTextOverlay.getBitmap) correlate against.
+                DiagnosticsLogger.i(
+                    "export", "ANIM_TEXT_BUILD", DiagContext.currentOpId(),
+                    "animated text composite texture built",
+                    meta = listOf(
+                        "ovId" to DiagSanitizer.fingerprint(overlay.id),
+                        "unit" to animSpec.unit.name,
+                        "segments" to animSpec.geoms.size.toString(),
+                        "blockPx" to "${animSpec.frame.widthPx}x${animSpec.frame.heightPx}",
+                        "blockAspectW" to "%.4f".format(animSpec.blockAspectW),
+                        "frameAspect" to "%.4f".format(window.frameAspect),
+                        "contentAspect" to "%.4f".format(contentAspect),
+                        "surfaceStartMs" to surfaceStartProjectMs.toString(),
+                        "windowLocalMs" to
+                            "${window.windowStartLocalMs}..${window.windowEndLocalMs}",
+                    ),
+                )
                 builder.add(
                     AnimatedTextOverlay(
                         parent = overlay,
@@ -271,8 +290,21 @@ object ClipEffectPlan {
     ): List<OverlayWindow> = overlayWindowsForClip(
         overlays = project.overlays,
         clipEndMs = clipStartMs + clip.effectiveDurationMs,
-        frameAspect = clip.sourceAspect
-            ?: project.aspectEnum.ratio()
+        // v0.5.8: frameAspect is the aspect of the frame the overlays are
+        // composited onto — the OUTPUT frame. For a fixed-aspect project that
+        // IS the project ratio (CompositionFactory builds the composition
+        // Presentation at ExportConfig.outputSize, LAYOUT_SCALE_TO_FIT), and
+        // the preview positions overlays against the same ratio
+        // (PreviewStage.contentAspect, ExpandedOverlays.projectContentAspect
+        // — project ratio first). The previous source-first order fed the
+        // overlay y-scale the SOURCE aspect instead, so every overlay was
+        // drawn vertically squashed/stretched by sourceAspect/projectRatio
+        // whenever the two differed (device symptom: exported animated text
+        // "small with wide letter gaps" — the glyph height shrank while the
+        // planned horizontal positions stayed). SOURCE projects keep the
+        // clip's aspect (ratio() is null there — unchanged behaviour).
+        frameAspect = project.aspectEnum.ratio()
+            ?: clip.sourceAspect
             ?: 16f / 9f,
         clipStartMs = clipStartMs,
     )

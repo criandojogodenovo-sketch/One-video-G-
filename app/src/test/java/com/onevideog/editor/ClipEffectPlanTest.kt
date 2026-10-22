@@ -63,6 +63,51 @@ class ClipEffectPlanTest {
         assertTrue(w.frameAspect > 0)
     }
 
+    /**
+     * v0.5.8: frameAspect is the OUTPUT frame aspect — for a fixed-aspect
+     * project the project ratio (the composition Presentation scales to
+     * ExportConfig.outputSize at that ratio and the preview positions
+     * overlays against the same ratio), NOT the source clip's aspect. The
+     * old source-first order squashed overlays vertically whenever the
+     * source aspect differed from the project aspect (exported animated
+     * text looked "small with wide letter gaps").
+     */
+    @Test
+    fun `fixed-aspect project uses the project ratio for the frame aspect`() {
+        val fixed = projectWith(overlay("t", 2_000, 5_000))
+            .copy(aspect = com.onevideog.editor.data.ProjectAspect.R9_16.name)
+        val w = ClipEffectPlan.overlayWindowsForClip(fixed, fixed.clips[0], 0).single()
+        assertEquals(9f / 16f, w.frameAspect, 1e-6f)
+    }
+
+    @Test
+    fun `fixed 1x1 project uses 1 for the frame aspect`() {
+        val square = projectWith(overlay("t", 2_000, 5_000))
+            .copy(aspect = com.onevideog.editor.data.ProjectAspect.R1_1.name)
+        val w = ClipEffectPlan.overlayWindowsForClip(square, square.clips[0], 0).single()
+        assertEquals(1f, w.frameAspect, 1e-6f)
+    }
+
+    @Test
+    fun `source project keeps the clip source aspect for the frame aspect`() {
+        // projectWith builds a 1920x1080 clip with the default SOURCE aspect:
+        // ratio() is null there, so the clip's probed aspect stays authoritative.
+        val p = projectWith(overlay("t", 2_000, 5_000))
+        val w = ClipEffectPlan.overlayWindowsForClip(p, p.clips[0], 0).single()
+        assertEquals(16f / 9f, w.frameAspect, 1e-6f)
+    }
+
+    @Test
+    fun `clip without probed dimensions falls back to the project ratio then 16x9`() {
+        val base = projectWith(overlay("t", 2_000, 5_000))
+        val noProbe = base.copy(
+            aspect = com.onevideog.editor.data.ProjectAspect.R9_16.name,
+            clips = listOf(base.clips[0].copy(width = 0, height = 0)),
+        )
+        val w = ClipEffectPlan.overlayWindowsForClip(noProbe, noProbe.clips[0], 0).single()
+        assertEquals(9f / 16f, w.frameAspect, 1e-6f)
+    }
+
     @Test
     fun `overlay starting before the clip is clamped to zero`() {
         val p = projectWith(overlay("early", 0, 4_000))
