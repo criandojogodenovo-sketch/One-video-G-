@@ -42,10 +42,8 @@ import com.onevideog.editor.editor.PlayheadGate
 import com.onevideog.editor.editor.ProjectMath
 import com.onevideog.editor.editor.TimelineLogic
 import com.onevideog.editor.editor.ViewportGeometryTracker
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.withContext
 
 /** Bounded playback-state name for diagnostics (no reflection, no churn). */
 private fun playbackStateName(state: Int): String = when (state) {
@@ -55,6 +53,21 @@ private fun playbackStateName(state: Int): String = when (state) {
     Player.STATE_ENDED -> "ENDED"
     else -> "#$state"
 }
+
+/** The ONE MediaItem builder for the preview player (clip window preserved). */
+private fun mediaItemFor(clip: com.onevideog.editor.data.Clip): MediaItem =
+    MediaItem.Builder()
+        .setUri(android.net.Uri.parse(clip.uri))
+        .setClippingConfiguration(
+            MediaItem.ClippingConfiguration.Builder()
+                .setStartPositionMs(clip.trimStartMs)
+                .setEndPositionMs(clip.trimEndMs)
+                .build(),
+        )
+        .build()
+
+/** v0.5.7 (ponto 4): bounded onPlayerError recovery attempts before giving up. */
+private const val PLAYER_RECOVERY_MAX_ATTEMPTS = 3
 
 /**
  * Real-time composition preview.
@@ -165,6 +178,35 @@ fun PreviewStage(viewModel: EditorViewModel) {
     var videoSize by remember { mutableStateOf(VideoSize.UNKNOWN) }
     var surfaceSize by remember { mutableStateOf(0 to 0) }
     val geometryTracker = remember { ViewportGeometryTracker() }
+    // v0.5.7 (ponto 5): the CLIP's declared video geometry (probed at import
+    // and persisted with the project) is authoritative when the decoder has
+    // not reported a size (video=none in every VIEWPORT_GEOMETRY of the
+    // 2026-10-21 report — onVideoSizeChanged never fired even with clips).
+    // The preview layout never depended on the player (fitRect uses
+    // contentAspect); this makes the reported GEOMETRY equally independent.
+    val clipVideoSize = remember(currentClip?.id) {
+        val c = currentClip
+        if (c != null && c.width > 0 && c.height > 0) {
+            VideoSize(c.width, c.height, 0, 1f)
+        } else {
+            VideoSize.UNKNOWN
+        }
+    }
+    val effectiveVideoSize =
+        if (videoSize.width > 0 && videoSize.height > 0) videoSize else clipVideoSize
+    // The clip currently prepared in the player (null until the first load).
+    // Declared BEFORE the player listener so the v0.5.7 error recovery can
+    // read it (the listener outlives one composition's captured values).
+    var loadedClipId by remember { mutableStateOf<String?>(null) }
+    // v0.5.7 (ponto 4): last effect list handed to the player + bounded
+    // recovery budget. onPlayerError re-attaches the list, re-prepares at the
+    // playhead and lets the user resume — instead of stalling on a dead GL
+    // pipeline. STATE_READY refunds the budget so a healthy session never
+    // runs out; a persistently broken stream stops after MAX tries (no loop).
+    var lastEffects by remember {
+        mutableStateOf<List<androidx.media3.common.Effect>?>(null)
+    }
+    var recoveryAttempts by remember { mutableStateOf(0) }
     // Keep the icon/state and the player in lock-step: STATE_ENDED and decode
     // errors flip `isPlaying` off so the UI never shows a phantom "playing".
     DisposableEffect(player) {
@@ -174,6 +216,9 @@ fun PreviewStage(viewModel: EditorViewModel) {
                 // flips `isPlaying` off so the UI never shows a phantom
                 // "playing" (and pressing play can restart the item).
                 if (playbackState == Player.STATE_ENDED) viewModel.setPlaying(false)
+                // v0.5.7 (ponto 4): a READY pipeline proves the current
+                // effect list + media item work — refund the recovery budget.
+                if (playbackState == Player.STATE_READY) recoveryAttempts = 0
             }
 
             override fun onVideoSizeChanged(size: VideoSize) {
@@ -225,6 +270,64 @@ fun PreviewStage(viewModel: EditorViewModel) {
                     throwable = error,
                     meta = listOf("code" to error.errorCodeName),
                 )
+                // v0.5.7 (ponto 4): recover instead of stalling. The GL
+                // pipeline occasionally dies with GlException 0x3006
+                // (EGL_BAD_CONTEXT) reported as
+                // VIDEO_FRAME_PROCESSING_FAILED — usually when the effect
+                // list / surface churned while the player was BUFFERING.
+                // Recovery: re-attach the last known-good effect list,
+                // re-prepare the loaded clip AT THE PLAYHEAD and leave
+                // playing to the user. Bounded attempts (no error loop);
+                // fresh state comes from the ViewModel, never stale captures.
+                if (recoveryAttempts >= PLAYER_RECOVERY_MAX_ATTEMPTS) {
+                    DiagnosticsLogger.w(
+                        "playback", "PLAYER_RECOVERY_SKIPPED", previewOpId,
+                        "recovery budget exhausted for this session stretch",
+                        meta = listOf("code" to error.errorCodeName),
+                    )
+                    return
+                }
+                val ui = viewModel.ui.value
+                val proj = ui.project
+                val clipId = loadedClipId
+                if (proj == null || clipId == null) return
+                val index = TimelineLogic.clipIndexAt(proj.clips, ui.playheadMs)
+                val clip = proj.clips.getOrNull(index) ?: return
+                if (clip.id != clipId) return
+                recoveryAttempts += 1
+                runCatching {
+                    player.playWhenReady = false
+                    lastEffects?.let { player.setVideoEffects(it) }
+                    val clipStartMs = TimelineLogic.clipStartMs(proj.clips, index)
+                    val localMs = ProjectMath.projectToItemLocalMs(
+                        clip,
+                        (ui.playheadMs - clipStartMs).coerceAtLeast(0),
+                    )
+                    player.setMediaItem(
+                        mediaItemFor(clip),
+                        localMs.coerceAtMost(clip.effectiveDurationMs),
+                    )
+                    player.setPlaybackSpeed(clip.speed)
+                    player.prepare()
+                }.onSuccess {
+                    DiagnosticsLogger.i(
+                        "playback", "PLAYER_RECOVERED", previewOpId,
+                        "player re-prepared at playhead after error",
+                        meta = listOf(
+                            "code" to error.errorCodeName,
+                            "attempt" to recoveryAttempts.toString(),
+                            "clip" to DiagSanitizer.fingerprint(clip.id),
+                            "playheadMs" to ui.playheadMs.toString(),
+                        ),
+                    )
+                }.onFailure { t ->
+                    DiagnosticsLogger.e(
+                        "playback", "PLAYER_RECOVERY_FAILED", previewOpId,
+                        "recovery prepare threw",
+                        t,
+                        meta = listOf("code" to error.errorCodeName),
+                    )
+                }
             }
         }
         player.addListener(listener)
@@ -234,71 +337,85 @@ fun PreviewStage(viewModel: EditorViewModel) {
     // ------------------- shared effect pipeline (preview) ---------------------
     // v0.2.5 revision key: the EFFECTIVE signature for THIS clip
     // ([ClipEffectPlan.effectiveSignature]) — clip identity/trim/speed/colour
-    // + aspect + only the overlays whose windows intersect the clip. The
-    // previous key was project.overlays.hashCode(), so ANY overlay edit
-    // anywhere (even an overlay on another clip or a completely different
-    // time window) rebuilt this clip's effect list and re-prepared the
-    // decoder — one avoidable decoder init per unrelated edit. The playhead
-    // is not an input: a playhead move alone can never rebuild.
+    // + aspect. Overlays are NOT an input (v0.3.1): the preview GL list has
+    // no OverlayEffect — overlay pixels come from the Compose layer, which
+    // re-reads project state every frame, so keyframe/transform value edits
+    // can never require a GL rebuild.
     // Recomputed every recomposition (cheap; overlay counts are small) so a
     // new project snapshot with an unchanged effective config keeps the same
     // Int key and LaunchedEffect does NOT restart.
     val effectsRevision =
         ClipEffectPlan.effectiveSignature(project, currentClip, clipStart)
 
-    fun mediaItemFor(clip: com.onevideog.editor.data.Clip): MediaItem =
-        MediaItem.Builder()
-            .setUri(android.net.Uri.parse(clip.uri))
-            .setClippingConfiguration(
-                MediaItem.ClippingConfiguration.Builder()
-                    .setStartPositionMs(clip.trimStartMs)
-                    .setEndPositionMs(clip.trimEndMs)
-                    .build(),
-            )
-            .build()
-
-    var loadedClipId by remember { mutableStateOf<String?>(null) }
+    // v0.5.7 (keyframe preview crash hardening — GlException 0x3006
+    // EGL_BAD_CONTEXT -> PLAYER_ERROR VIDEO_FRAME_PROCESSING_FAILED):
+    // revision already applied to the player. A restart with the SAME
+    // revision must never re-attach/re-prepare (ponto 1: an identical list
+    // is a no-op at best and an EGL hazard at worst).
+    var lastAppliedRevision by remember { mutableStateOf<Int?>(null) }
 
     // Effect application — MUST run before the media-load effect below so the
     // first prepare() happens with the effects already set.
-    // v0.2.4: the effect list build DECODES images (1024x1024 JPEG ≈ 4 MB
-    // bitmap) and renders text bitmaps. That heavy work used to run on the
-    // MAIN thread here, stalling the UI exactly while surface/decoder
-    // operations were pending (the detach-timeout trigger). It now runs on
-    // Dispatchers.Default; only the player calls stay on the main thread.
+    // v0.5.7 hardening of the LIVE-pipeline rebuild path (pontos 1–3):
+    //  1. no-op guard — the same revision is never re-attached;
+    //  2. a same-clip rebuild debounces 300 ms and PAUSES the player before
+    //     the re-attach (restored afterwards) — the decoder is no longer
+    //     hit mid-BUFFERING; every player call runs on the player's own
+    //     application-looper thread (the build is trivial since v0.3.1 — the
+    //     preview list is video-only — so it stays on that thread too);
+    //  3. the debounce is a suspension point: a newer revision cancels this
+    //     coroutine (LaunchedEffect key change) and applies instead — two
+    //     rebuilds can never run in parallel, the last one wins.
+    // First attach / clip change stays immediate (no debounce) so the fresh
+    // list is always set BEFORE the media-load effect prepares the item.
     LaunchedEffect(effectsRevision) {
         val clip = currentClip ?: return@LaunchedEffect
-        val effects = withContext(Dispatchers.Default) {
-            DiagContext.withOp(previewOpId) {
-                ClipEffectsFactory.effectsFor(
-                    context = context,
-                    project = project,
-                    clip = clip,
-                    clipStartMs = clipStart,
-                    forPreview = true,
-                )
-            }
+        if (lastAppliedRevision == effectsRevision) return@LaunchedEffect
+        val sameClipRebuild = loadedClipId == clip.id
+        if (sameClipRebuild) {
+            delay(300)
+            if (!isActive) return@LaunchedEffect
+        }
+        val effects = DiagContext.withOp(previewOpId) {
+            ClipEffectsFactory.effectsFor(
+                context = context,
+                project = project,
+                clip = clip,
+                clipStartMs = clipStart,
+                forPreview = true,
+            )
+        }
+        val wasPlaying = player.playWhenReady
+        if (sameClipRebuild) {
+            // Pause BEFORE touching the effect list: re-attach + re-prepare
+            // happen against a quiesced pipeline.
+            player.playWhenReady = false
         }
         player.setVideoEffects(effects)
+        // v0.5.7 (ponto 4): keep the list for the error-recovery re-attach.
+        lastEffects = effects
         DiagnosticsLogger.i(
             "preview", "PREVIEW_REBUILD", previewOpId,
             "preview effect list rebuilt and attached",
             meta = listOf(
                 "clip" to DiagSanitizer.fingerprint(clip.id),
                 "overlays" to project.overlays.size.toString(),
+                "revision" to effectsRevision.toString(),
+                "debounced" to sameClipRebuild.toString(),
                 "thread" to Thread.currentThread().name,
             ),
         )
-        // When the same clip is already loaded, force a new input stream so
-        // the pending effects apply immediately; otherwise the media-load
-        // effect will prepare the item with the fresh list.
-        if (loadedClipId == clip.id) {
+        if (sameClipRebuild) {
+            // Same clip: force a new input stream so the pending list applies
+            // immediately, at the current position; restore the play state
+            // the pause suspended.
             val pos = runCatching { player.currentPosition }.getOrDefault(0L).coerceAtLeast(0)
             player.setMediaItem(mediaItemFor(clip), pos)
             player.setPlaybackSpeed(clip.speed)
             player.prepare()
-            player.playWhenReady = viewModel.ui.value.isPlaying
+            player.playWhenReady = wasPlaying
         }
+        lastAppliedRevision = effectsRevision
     }
 
     LaunchedEffect(currentClip?.id, viewModel.seekToken.collectAsState().value) {
@@ -487,11 +604,11 @@ fun PreviewStage(viewModel: EditorViewModel) {
             // v0.2.5: one bounded evidence event whenever ANY of the three
             // dimension sources changes (deduped by the tracker — layout
             // passes fire far more often than the geometry actually moves).
-            LaunchedEffect(videoSize, surfaceSize, containerW, containerH, fitted.width, fitted.height, contentAspect) {
+            LaunchedEffect(effectiveVideoSize, surfaceSize, containerW, containerH, fitted.width, fitted.height, contentAspect) {
                 if (geometryTracker.shouldLog(
                         ViewportGeometryTracker.Geometry(
-                            videoW = videoSize.width,
-                            videoH = videoSize.height,
+                            videoW = effectiveVideoSize.width,
+                            videoH = effectiveVideoSize.height,
                             surfaceW = surfaceSize.first,
                             surfaceH = surfaceSize.second,
                             viewportW = fitted.width.toInt(),
@@ -500,12 +617,20 @@ fun PreviewStage(viewModel: EditorViewModel) {
                         ),
                     )
                 ) {
+                    // v0.5.7 (ponto 5): videoSource names the geometry origin —
+                    // "decoder" (onVideoSizeChanged fired) or "clip" (the
+                    // clip's persisted probe dims) — so the next device report
+                    // can never misread video=none as a lost video track.
+                    val videoSource =
+                        if (videoSize.width > 0 && videoSize.height > 0) "decoder"
+                        else if (clipVideoSize.width > 0) "clip" else "none"
                     DiagnosticsLogger.i(
                         "preview", "VIEWPORT_GEOMETRY", previewOpId,
                         "video vs surface vs viewport dimensions",
                         meta = listOf(
-                            "videoW" to videoSize.width.toString(),
-                            "videoH" to videoSize.height.toString(),
+                            "videoW" to effectiveVideoSize.width.toString(),
+                            "videoH" to effectiveVideoSize.height.toString(),
+                            "videoSource" to videoSource,
                             // v0.5.5 (docs/AUDIT_v0.5.4_report_followup.md §5):
                             // the 2026-10-21 report had videoW=0 in EVERY
                             // geometry event, even for projects with clips,
