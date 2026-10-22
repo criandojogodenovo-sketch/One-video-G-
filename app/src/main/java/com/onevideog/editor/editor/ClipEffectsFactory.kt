@@ -186,6 +186,25 @@ object ClipEffectsFactory {
                 null
             }
             if (animSpec != null) {
+                // v0.5.8: one ANIM_TEXT_BUILD event per composite — the
+                // planning evidence the frame-level ANIM_TEXT_FRAME logs
+                // (AnimatedTextOverlay.getBitmap) correlate against.
+                DiagnosticsLogger.i(
+                    "export", "ANIM_TEXT_BUILD", DiagContext.currentOpId(),
+                    "animated text composite texture built",
+                    meta = listOf(
+                        "ovId" to DiagSanitizer.fingerprint(overlay.id),
+                        "unit" to animSpec.unit.name,
+                        "segments" to animSpec.geoms.size.toString(),
+                        "blockPx" to "${animSpec.frame.widthPx}x${animSpec.frame.heightPx}",
+                        "blockAspectW" to "%.4f".format(animSpec.blockAspectW),
+                        "frameAspect" to "%.4f".format(window.frameAspect),
+                        "contentAspect" to "%.4f".format(contentAspect),
+                        "surfaceStartMs" to surfaceStartProjectMs.toString(),
+                        "windowLocalMs" to
+                            "${window.windowStartLocalMs}..${window.windowEndLocalMs}",
+                    ),
+                )
                 builder.add(
                     AnimatedTextOverlay(
                         parent = overlay,
