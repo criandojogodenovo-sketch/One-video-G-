@@ -86,6 +86,73 @@ object ExpandedOverlays {
     )
 
     /**
+     * v0.5.7: the segment PLAN for one overlay without building segment
+     * items — the ONE planning rule shared by the preview expansion
+     * ([build]) and the export single-texture composite
+     * ([AnimatedTextOverlay]). Returns null when the overlay must NOT be
+     * segmented (then BOTH pipelines render the plain overlay):
+     *  - not TEXT or the entrance animation is disabled;
+     *  - blank text cannot be segmented;
+     *  - segment count over [MAX_SEGMENTS] even after the LETTER->WORD
+     *    fallback (G5 — logs TEXT_ANIM_LIMIT and reports the id through
+     *    [onLimited] so the caller can surface the UI warning).
+     */
+    data class AnimSpec(
+        val unit: TextAnimUnit,
+        val geoms: List<TextSegmentPlanner.SegmentGeometry>,
+        val schedules: List<TextAnimationPlanner.SegmentSchedule>,
+        val frame: TextSegmentPlanner.BlockFrame,
+        val blockAspectW: Float,
+    )
+
+    fun animationSpec(
+        overlay: OverlayItem,
+        contentAspect: Float,
+        onLimited: ((String) -> Unit)? = null,
+    ): AnimSpec? {
+        val anim = overlay.textAnimation
+        if (overlay.kind != OverlayKind.TEXT || !anim.isEnabled) return null
+        val metrics = OverlayBitmapRenderer.textMetrics(overlay)
+        val measurer = paintMeasurer(overlay, metrics)
+        var unit = anim.unit
+        var geoms = TextSegmentPlanner.plan(overlay.text, unit, metrics, measurer)
+        if (geoms.isEmpty()) return null
+        if (geoms.size > MAX_SEGMENTS) {
+            // G5: LETTER on a long text overflows -> fall back to WORD
+            // (coarser granularity, far fewer segments).
+            if (unit == TextAnimUnit.LETTER) {
+                unit = TextAnimUnit.WORD
+                geoms = TextSegmentPlanner.plan(overlay.text, unit, metrics, measurer)
+            }
+            if (geoms.size > MAX_SEGMENTS) {
+                DiagnosticsLogger.w(
+                    "preview", "TEXT_ANIM_LIMIT", DiagContext.currentOpId(),
+                    "text animation skipped: segment limit exceeded",
+                    meta = listOf(
+                        "ovId" to DiagSanitizer.fingerprint(overlay.id),
+                        "segments" to geoms.size.toString(),
+                        "limit" to MAX_SEGMENTS.toString(),
+                        "unit" to unit.name,
+                    ),
+                )
+                onLimited?.invoke(overlay.id)
+                return null
+            }
+        }
+        val frame = TextSegmentPlanner.blockFrame(overlay.text, metrics, measurer)
+        val blockAspectW = if (frame.heightPx <= 0) {
+            1f
+        } else {
+            frame.widthPx.toFloat() / frame.heightPx
+        }
+        val schedules = TextAnimationPlanner.plan(
+            anim.preset, anim.durationMs,
+            overlay.startMs, overlay.endMs, geoms.size,
+        )
+        return AnimSpec(unit, geoms, schedules, frame, blockAspectW)
+    }
+
+    /**
      * Builds the render list for [project]. The heavy work is text
      * measurement (a few dozen measureText calls) — callers memoise the
      * result per project revision (preview) or call it once per export.
@@ -176,62 +243,17 @@ object ExpandedOverlays {
         // effects=0 textures=0). Hidden layers stay dropped — the v0.3.0 rule
         // (render nothing in preview AND export) is unchanged.
         if (!overlay.visible) return emptyList()
-        val anim = overlay.textAnimation
-        if (overlay.kind != OverlayKind.TEXT || !anim.isEnabled) {
-            return listOf(overlay)
-        }
-        val metrics = OverlayBitmapRenderer.textMetrics(overlay)
-        val measurer = paintMeasurer(overlay, metrics)
-        var unit = anim.unit
-        var geoms = TextSegmentPlanner.plan(overlay.text, unit, metrics, measurer)
-        if (geoms.isEmpty()) {
-            // Blank text cannot be segmented — render the (empty) block as a
-            // regular overlay exactly like the pre-v0.5.0 pipeline did, instead
-            // of dropping the overlay from both pipelines.
-            return listOf(overlay)
-        }
-        if (geoms.size > MAX_SEGMENTS) {
-            // G5: LETTER on a long text overflows -> fall back to WORD
-            // (coarser granularity, far fewer segments).
-            if (unit == TextAnimUnit.LETTER) {
-                unit = TextAnimUnit.WORD
-                geoms = TextSegmentPlanner.plan(overlay.text, unit, metrics, measurer)
-            }
-            if (geoms.size > MAX_SEGMENTS) {
-                DiagnosticsLogger.w(
-                    "preview", "TEXT_ANIM_LIMIT", DiagContext.currentOpId(),
-                    "text animation skipped: segment limit exceeded",
-                    meta = listOf(
-                        "ovId" to DiagSanitizer.fingerprint(overlay.id),
-                        "segments" to geoms.size.toString(),
-                        "limit" to MAX_SEGMENTS.toString(),
-                        "unit" to unit.name,
-                    ),
-                )
-                limited += overlay.id
-                // G5 fallback: render the block UN-ANIMATED rather than making
-                // the overlay vanish from both pipelines (the UI surfaces
-                // `limited` as a warning — G6).
-                return listOf(overlay)
-            }
-        }
-        val frame = TextSegmentPlanner.blockFrame(overlay.text, metrics, measurer)
-        val blockAspectW = if (frame.heightPx <= 0) {
-            1f
-        } else {
-            frame.widthPx.toFloat() / frame.heightPx
-        }
-        val schedules = TextAnimationPlanner.plan(
-            anim.preset, anim.durationMs,
-            overlay.startMs, overlay.endMs, geoms.size,
-        )
+        // v0.5.7: the planning rule moved to [animationSpec] (shared with the
+        // export composite); expansion and pass-through behaviour identical.
+        val spec = animationSpec(overlay, contentAspect) { limited += it }
+            ?: return listOf(overlay)
         val segments = mutableListOf<OverlayItem>()
-        for ((index, geom) in geoms.withIndex()) {
+        for ((index, geom) in spec.geoms.withIndex()) {
             val rel = RelGeometry(
-                geom.centerXFrac, geom.centerYFrac, geom.widthFrac, blockAspectW,
+                geom.centerXFrac, geom.centerYFrac, geom.widthFrac, spec.blockAspectW,
             )
-            val schedule = schedules.getOrNull(index)
-            segments += buildSegment(overlay, index, geom.text, rel, schedule, contentAspect, unit)
+            val schedule = spec.schedules.getOrNull(index)
+            segments += buildSegment(overlay, index, geom.text, rel, schedule, contentAspect, spec.unit)
         }
         return segments
     }

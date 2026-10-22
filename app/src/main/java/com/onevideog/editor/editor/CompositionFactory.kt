@@ -156,14 +156,21 @@ object CompositionFactory {
             else -> a.ratio() ?: 16f / 9f
         }
         val blackPng = blackFrameFile(workDir, aspect) ?: return null
-        val expanded = ExpandedOverlays.build(project)
+        // v0.5.7: windows over the PARENT overlays + one texture per animated
+        // text overlay (texturesForOverlays) — same single-draw rule as the
+        // per-clip path.
         val windows = ClipEffectPlan.overlayWindowsForClip(
-            overlays = expanded.overlays,
+            overlays = project.overlays,
             clipEndMs = durationMs,
             frameAspect = aspect,
             clipStartMs = 0L,
         )
-        val overlayTextures = ClipEffectsFactory.texturesForWindows(context, windows, 0L)
+        val overlayTextures = ClipEffectsFactory.texturesForOverlays(
+            context,
+            windows,
+            0L,
+            ExpandedOverlays.projectContentAspect(project),
+        )
         val videoEffects = if (overlayTextures.isEmpty()) {
             emptyList<androidx.media3.common.Effect>()
         } else {
