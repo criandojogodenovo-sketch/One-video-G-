@@ -131,6 +131,26 @@ object OverlayBitmapRenderer {
     }
 
     /**
+     * v0.5.9: THE ONE text measurer — the Paint every text-width measurement
+     * in the app goes through (user prescription "medir a largura do texto
+     * com as mesmas métricas de fonte nos dois"): the overlay's typeface at
+     * the canonical [textMetrics] font size, the exact paint the block
+     * renderer draws with. Consumed by BOTH pipelines:
+     *  - the segment planner / animation spec ([ExpandedOverlays]);
+     *  - the preview's canonical text layout
+     *    ([com.onevideog.editor.ui.editor.OverlayTextRender] via the Compose
+     *    layer's resolveRender).
+     * One construction site means preview and export cannot drift in font
+     * metrics (a second Paint with different flags/size is now impossible).
+     */
+    fun textMeasurer(overlay: OverlayItem): Paint {
+        return Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = textMetrics(overlay).fontPx
+            typeface = typefaceFor(overlay.fontFamily, overlay.bold, overlay.italic)
+        }
+    }
+
+    /**
      * Renders the text overlay block at canonical resolution. The result is
      * cached; the render is content-only (aspect-independent).
      */

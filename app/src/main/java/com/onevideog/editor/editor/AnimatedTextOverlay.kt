@@ -11,6 +11,7 @@ import com.onevideog.editor.diag.DiagSanitizer
 import com.onevideog.editor.data.OverlayItem
 import com.onevideog.editor.data.OverlayKind
 import com.onevideog.editor.diag.DiagnosticsLogger
+import java.util.Locale
 
 /**
  * v0.5.7 (missão "texto animado = um único desenho por overlay"): ONE export
@@ -46,6 +47,13 @@ import com.onevideog.editor.diag.DiagnosticsLogger
  * the segment placement math), and every frame while the entrance is running
  * logs an ANIM_TEXT_FRAME diagnostics event (progress, parent/relative scale,
  * final block px per segment — the parity evidence the device report needs).
+ *
+ * v0.5.9: the layout is now the ONE frame-referenced function
+ * ([AnimatedTextLayout.segmentPlacement]) the preview ALSO uses — the
+ * composite derives its block px via [AnimatedTextLayout.blockRect]. The
+ * sampled-frame ANIM_TEXT_FRAME event carries x, y, scale and boxPx on the
+ * OUTPUT frame (outputWidthPx/outputHeightPx) with Locale.US decimals, so
+ * the export numbers compare field-for-field with the preview's OVERLAY_DRAW.
  */
 @UnstableApi
 class AnimatedTextOverlay(
@@ -64,6 +72,14 @@ class AnimatedTextOverlay(
     private val frameAspect: Float,
     /** Content aspect (w/h) — converts content-height fractions for the delta. */
     private val contentAspect: Float,
+    /**
+     * v0.5.9 (PONTO E): the OUTPUT frame px the composition Presentation
+     * produces — the reference the boxPx log field is computed against, so
+     * the export numbers compare 1:1 with the preview's OVERLAY_DRAW
+     * (x, y, scale, boxPx). 0 = unknown (log prints n/a).
+     */
+    private val outputWidthPx: Int = 0,
+    private val outputHeightPx: Int = 0,
 ) : BitmapOverlay() {
 
     /** One segment: its pixels, block-frame placement and RELATIVE entrance. */
@@ -125,45 +141,77 @@ class AnimatedTextOverlay(
         canvas.drawColor(android.graphics.Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
         for (segment in segments) {
             val rel = KeyframeEvaluator.evaluate(segment.relative, projectMs)
-            // v0.5.8: the SAME pure layout the parity test pins against the
-            // preview placement math (AnimatedTextOverlayParityTest).
-            val frame = AnimatedTextLayout.segmentFrame(
+            // v0.5.9: THE ONE layout function (AnimatedTextLayout.segmentPlacement,
+            // frame-referenced — the same function the preview's
+            // computePlacements uses), converted into block px for the
+            // composite canvas by AnimatedTextLayout.blockRect. Algebraically
+            // identical to the v0.5.8 block-px formula (parity test pins the
+            // round-trip), but now DERIVED from the frame placement so the
+            // two pipelines cannot drift.
+            val placement = AnimatedTextLayout.segmentPlacement(
+                parentX = parentEval.x,
+                parentY = parentEval.y,
+                parentScale = parentScale,
                 centerXFrac = segment.centerXFrac,
                 centerYFrac = segment.centerYFrac,
                 widthFrac = segment.widthFrac,
-                bitmapWidth = segment.bitmap.width,
-                bitmapHeight = segment.bitmap.height,
+                blockAspectW = blockAspectW,
+                segmentAspect = if (segment.bitmap.height <= 0) 1f
+                else segment.bitmap.width.toFloat() / segment.bitmap.height,
                 relX = rel.x,
                 relY = rel.y,
                 relScale = rel.scale,
-                relOpacity = rel.opacity,
+                frameAspect = contentAspect,
+            ) ?: continue
+            val rect = AnimatedTextLayout.blockRect(
+                placement = placement,
+                parentX = parentEval.x,
+                parentY = parentEval.y,
                 parentScale = parentScale,
                 blockHeightFrac = blockHeightFrac,
                 blockWidthPx = blockWidthPx,
                 blockHeightPx = blockHeightPx,
-            ) ?: continue
-            paint.alpha = frame.alphaInt
+            )
+            paint.alpha = AnimatedTextLayout.relAlphaInt(rel.opacity)
             canvas.drawBitmap(
                 segment.bitmap,
                 null,
                 RectF(
-                    frame.centerXpx - frame.widthPx / 2f,
-                    frame.centerYpx - frame.heightPx / 2f,
-                    frame.centerXpx + frame.widthPx / 2f,
-                    frame.centerYpx + frame.heightPx / 2f,
+                    rect.centerXpx - rect.widthPx / 2f,
+                    rect.centerYpx - rect.heightPx / 2f,
+                    rect.centerXpx + rect.widthPx / 2f,
+                    rect.centerYpx + rect.heightPx / 2f,
                 ),
                 paint,
             )
             segLog?.let { log ->
-                log.append(" op=").append("%.3f".format(rel.opacity))
-                log.append(" sc=").append("%.3f".format(rel.scale))
-                log.append(" wh=").append("%.1f".format(frame.widthPx))
-                    .append('x').append("%.1f".format(frame.heightPx))
-                log.append(" @").append("%.1f".format(frame.centerXpx))
-                    .append(',').append("%.1f".format(frame.centerYpx)).append(';')
+                log.append(" op=").append("%.3f".format(Locale.US, rel.opacity))
+                log.append(" sc=").append("%.3f".format(Locale.US, rel.scale))
+                log.append(" wh=").append("%.1f".format(Locale.US, rect.widthPx))
+                    .append('x').append("%.1f".format(Locale.US, rect.heightPx))
+                log.append(" @").append("%.1f".format(Locale.US, rect.centerXpx))
+                    .append(',').append("%.1f".format(Locale.US, rect.centerYpx)).append(';')
             }
         }
         if (logFrame && segLog != null) {
+            // v0.5.9 (PONTO E): the sampled-frame evidence the user asked for
+            // — x, y, scale (the SAME fractions the preview's OVERLAY_DRAW
+            // logs) plus boxPx: the composite block's FINAL size on the
+            // OUTPUT frame (framePx names the basis). All numbers formatted
+            // with Locale.US so the decimals parse identically everywhere.
+            val frameBasis = if (outputWidthPx > 0 && outputHeightPx > 0) {
+                "${outputWidthPx}x$outputHeightPx"
+            } else {
+                "n/a"
+            }
+            val (sx, sy) = OverlayLayout.overlayScaleSettings(
+                frameAspect, blockAspectW, parentScale,
+            )
+            val boxPx = if (outputWidthPx > 0 && outputHeightPx > 0) {
+                "${Math.round(sx * outputWidthPx)}x${Math.round(sy * outputHeightPx)}"
+            } else {
+                "n/a"
+            }
             DiagnosticsLogger.i(
                 "export", "ANIM_TEXT_FRAME", null,
                 "animated text composite frame",
@@ -171,9 +219,14 @@ class AnimatedTextOverlay(
                     "ovId" to DiagSanitizer.fingerprint(parent.id),
                     "tUs" to presentationTimeUs.toString(),
                     "projectMs" to projectMs.toString(),
-                    "parentScale" to "%.4f".format(parentScale),
-                    "blockFracW" to "%.4f".format(parentScale),
-                    "blockFracH" to "%.4f".format(blockHeightFrac),
+                    "x" to "%.4f".format(Locale.US, parentEval.x),
+                    "y" to "%.4f".format(Locale.US, parentEval.y),
+                    "scale" to "%.4f".format(Locale.US, parentEval.scale),
+                    "boxPx" to boxPx,
+                    "framePx" to frameBasis,
+                    "parentScale" to "%.4f".format(Locale.US, parentScale),
+                    "blockFracW" to "%.4f".format(Locale.US, parentScale),
+                    "blockFracH" to "%.4f".format(Locale.US, blockHeightFrac),
                     "blockPx" to "${blockWidthPx}x$blockHeightPx",
                     "segments" to segLog.toString(),
                 ),

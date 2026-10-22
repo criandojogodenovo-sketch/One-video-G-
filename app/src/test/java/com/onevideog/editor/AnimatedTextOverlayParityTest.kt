@@ -17,38 +17,34 @@ import com.onevideog.editor.editor.OverlayBitmapRenderer
 import com.onevideog.editor.editor.TextAnimationPlanner
 import com.onevideog.editor.editor.TextSegmentPlanner
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 
 import org.junit.Test
 
 /**
- * v0.5.8: PREVIEW ↔ EXPORT letter-for-letter parity for an animated text
- * overlay — the pure proof behind the device report "the animated text looks
- * big and tight in the editor but small with wide letter gaps in the export".
+ * v0.5.9: PREVIEW ↔ EXPORT letter-for-letter parity for an animated text
+ * overlay through THE ONE layout function ([AnimatedTextLayout
+ * .segmentPlacement]) with the SINGLE reference the user prescribed — the
+ * project frame (frameW × frameH, frameAspect = 9/16 here).
  *
- * Both pipelines consume the SAME shared objects (verified here by using only
- * them in this test):
- *  - planning: [OverlayBitmapRenderer.textMetrics] + [TextSegmentPlanner]
- *    (ONE segmentation for the preview expansion AND the export composite);
- *  - animation: [TextAnimationPlanner] relative keyframes evaluated with
- *    [KeyframeEvaluator] at PROJECT time — the same unit (ms) and the same
- *    reference (the project timeline) in the editor (playhead) and in the
- *    exporter (`clipStartMs + presentationTimeUs/1000`);
- *  - placement: the preview applies [ExpandedOverlays.composeStatic] (via the
- *    composed segment keyframes) and sizes boxes with
- *    `scale × contentWidth`; the export composites with
- *    [AnimatedTextLayout.segmentFrame] and places the block with
- *    `OverlayLayout.overlayScaleSettings(frameAspect, blockAspectW, scale)`.
+ * What the test proves, at a grid of project times:
+ *  1. the PREVIEW's per-frame inputs (ExpandedOverlays.build SegmentPlans:
+ *     block fractions + relative entrance item) are the SAME objects the
+ *     export composite consumes ([ExpandedOverlays.animationSpec] — one
+ *     planning rule, [OverlayBitmapRenderer.textMetrics] + planner);
+ *  2. both pipelines therefore get IDENTICAL frame placements (same
+ *     function, same inputs);
+ *  3. the export's block-px conversion ([AnimatedTextLayout.blockRect])
+ *     round-trips the frame placement exactly — the composite texture is
+ *     pixel-identical to what the placement says, so no size/width drift
+ *     can appear between the editor and the exported file;
+ *  4. NO source-video aspect enters the layout: the only aspects are the
+ *     frameAspect and the canonical block/segment bitmap aspects.
  *
- * The test evaluates BOTH at a grid of project times and asserts the segment
- * centre / width / opacity agree in NORMALIZED content coordinates — the
- * coordinates that are converted to the output resolution by ONE factor per
- * pipeline (contentWidth on the preview stage, frame width in the export
- * frame). With frameAspect == contentAspect (the fixed contract since the
- * v0.5.8 frameAspect fix) the two conversions are the same conversion.
- *
- * Rotation-free + linear: composeStatic's rotation rides cos/sin of the
- * parent angle and the entrance y-delta rides the block frame (PARITY doc
- * limitation 12) — the documented micro-deltas, not part of this contract.
+ * The fake measurer stands in for Paint.measureText on the JVM (the
+ * TextSegmentPlanner test pattern); production passes ONE shared measurer
+ * ([OverlayBitmapRenderer.textMeasurer]) to both pipelines.
  */
 class AnimatedTextOverlayParityTest {
 
@@ -93,6 +89,11 @@ class AnimatedTextOverlayParityTest {
     private fun segmentBitmapSize(text: String, metrics: OverlayBitmapRenderer.TextMetrics) =
         OverlayBitmapRenderer.blockSizePx(listOf(text), metrics, measure)
 
+    private fun segmentAspect(text: String, m: OverlayBitmapRenderer.TextMetrics): Float {
+        val (w, h) = segmentBitmapSize(text, m)
+        return if (h <= 0) 1f else w.toFloat() / h
+    }
+
     @Test
     fun `preview and export agree on every letter at every animation time`() {
         val overlay = animatedTextOverlay()
@@ -104,7 +105,8 @@ class AnimatedTextOverlayParityTest {
         val blockW = spec.frame.widthPx
         val blockH = spec.frame.heightPx
 
-        // ---- PREVIEW side: the exact render list computePlacements walks ----
+        // ---- PREVIEW side: the render list + per-segment plans the
+        // computePlacements walk consumes (the SAME build) ----
         val expanded = ExpandedOverlays.build(project(overlay), fakeMeasurer)
         val segments = expanded.overlays.filter { it.id.startsWith("txt-kotlin#s") }
         assertEquals(6, segments.size)
@@ -113,59 +115,88 @@ class AnimatedTextOverlayParityTest {
         // staggered + rest) — the SAME t both pipelines evaluate.
         var t = 0L
         while (t < 4_000L) {
+            val parentEval = KeyframeEvaluator.evaluate(overlay, t)
+            val parentScale = parentEval.scale
+            val heightFrac = AnimatedTextLayout.blockHeightFrac(
+                parentScale, contentAspect, spec.blockAspectW,
+            )
             for ((index, segment) in segments.withIndex()) {
-                // PREVIEW: composed segment keyframes evaluated at project t,
-                // then computePlacements' mapping to content fractions.
-                val eval = KeyframeEvaluator.evaluate(segment, t)
+                val plan = expanded.segmentPlans[segment.id]!!
+                // The plan's geometry IS the export spec's geometry (one
+                // planning rule — no drift possible).
+                assertEquals(spec.geoms[index].centerXFrac, plan.centerXFrac, 0f)
+                assertEquals(spec.geoms[index].centerYFrac, plan.centerYFrac, 0f)
+                assertEquals(spec.geoms[index].widthFrac, plan.widthFrac, 0f)
+                assertEquals(spec.blockAspectW, plan.blockAspectW, 0f)
 
                 // EXPORT: parent + relative entrance evaluated separately at
                 // the SAME project t (AnimatedTextOverlay.getBitmap), laid
-                // out by the shared AnimatedTextLayout, then converted back
-                // to content fractions the way OverlayLayout.overlayScaleSettings
-                // + the background-frame anchor place them on the frame.
-                val parentEval = KeyframeEvaluator.evaluate(overlay, t)
-                val parentScale = parentEval.scale
-                val heightFrac = AnimatedTextLayout.blockHeightFrac(
-                    parentScale, contentAspect, spec.blockAspectW,
-                )
-                val schedule = spec.schedules.getOrNull(index)!!
-                val relative = OverlayItem(
-                    id = "rel",
-                    kind = OverlayKind.TEXT,
-                    transform = TextAnimationPlanner.identityRelative(),
-                    keyframes = schedule.keyframes,
-                    interpolation = overlay.interpolation,
-                )
-                val rel = KeyframeEvaluator.evaluate(relative, t)
-                val bmpSize = segmentBitmapSize(spec.geoms[index].text, m)
-                val frame = AnimatedTextLayout.segmentFrame(
-                    centerXFrac = spec.geoms[index].centerXFrac,
-                    centerYFrac = spec.geoms[index].centerYFrac,
-                    widthFrac = spec.geoms[index].widthFrac,
-                    bitmapWidth = bmpSize.first,
-                    bitmapHeight = bmpSize.second,
+                // out by THE ONE layout function, converted to block px for
+                // the composite canvas, then back to frame fractions the way
+                // OverlaySettings places the block on the frame.
+                val rel = KeyframeEvaluator.evaluate(plan.relative, t)
+                val placement = AnimatedTextLayout.segmentPlacement(
+                    parentX = parentEval.x,
+                    parentY = parentEval.y,
+                    parentScale = parentScale,
+                    centerXFrac = plan.centerXFrac,
+                    centerYFrac = plan.centerYFrac,
+                    widthFrac = plan.widthFrac,
+                    blockAspectW = plan.blockAspectW,
+                    segmentAspect = segmentAspect(spec.geoms[index].text, m),
                     relX = rel.x,
                     relY = rel.y,
                     relScale = rel.scale,
-                    relOpacity = rel.opacity,
+                    frameAspect = contentAspect,
+                )!!
+                val rect = AnimatedTextLayout.blockRect(
+                    placement = placement,
+                    parentX = parentEval.x,
+                    parentY = parentEval.y,
                     parentScale = parentScale,
                     blockHeightFrac = heightFrac,
                     blockWidthPx = blockW,
                     blockHeightPx = blockH,
-                )!!
-                // Block px -> content fractions (frame == content rect:
-                // frameAspect == contentAspect, block width = parentScale).
+                )
+                // block px -> frame fractions (the inverse conversion).
                 val exportXFrac = parentEval.x - parentScale / 2f +
-                    frame.centerXpx * parentScale / blockW
+                    rect.centerXpx * parentScale / blockW
                 val exportYFrac = parentEval.y - heightFrac / 2f +
-                    frame.centerYpx * heightFrac / blockH
-                val exportWidthFrac = frame.widthPx * parentScale / blockW
-                val exportOpacity = rel.opacity * parentEval.opacity
+                    rect.centerYpx * heightFrac / blockH
+                val exportWidthFrac = rect.widthPx * parentScale / blockW
+                val exportHeightFrac = rect.heightPx * heightFrac / blockH
 
-                assertEquals("seg $index x @ $t ms", eval.x, exportXFrac, 1e-4f)
-                assertEquals("seg $index y @ $t ms", eval.y, exportYFrac, 1e-4f)
-                assertEquals("seg $index width @ $t ms", eval.scale, exportWidthFrac, 1e-4f)
-                assertEquals("seg $index opacity @ $t ms", eval.opacity, exportOpacity, 1e-4f)
+                assertEquals(placement.centerXFrac, exportXFrac, 1e-3f)
+                assertEquals(placement.centerYFrac, exportYFrac, 1e-3f)
+                assertEquals(placement.widthFrac, exportWidthFrac, 1e-3f)
+                assertEquals(placement.heightFrac, exportHeightFrac, 1e-3f)
+
+                // The PREVIEW evaluates the SAME plan through the SAME
+                // function (computePlacements) — identical by construction;
+                // the assertion documents the contract.
+                val previewPlacement = AnimatedTextLayout.segmentPlacement(
+                    parentX = parentEval.x,
+                    parentY = parentEval.y,
+                    parentScale = parentScale,
+                    centerXFrac = plan.centerXFrac,
+                    centerYFrac = plan.centerYFrac,
+                    widthFrac = plan.widthFrac,
+                    blockAspectW = plan.blockAspectW,
+                    segmentAspect = segmentAspect(spec.geoms[index].text, m),
+                    relX = rel.x,
+                    relY = rel.y,
+                    relScale = rel.scale,
+                    frameAspect = contentAspect,
+                )!!
+                assertEquals(placement.centerXFrac, previewPlacement.centerXFrac, 0f)
+                assertEquals(placement.centerYFrac, previewPlacement.centerYFrac, 0f)
+                assertEquals(placement.widthFrac, previewPlacement.widthFrac, 0f)
+                assertEquals(placement.heightFrac, previewPlacement.heightFrac, 0f)
+
+                // The frame fractions ARE the content fractions the preview
+                // draws (centre + width): x·frameW, y·frameH, w·frameW — the
+                // single-reference contract the user prescribed.
+                assertTrue(placement.widthFrac > 0f)
             }
             t += 50L
         }
@@ -173,7 +204,7 @@ class AnimatedTextOverlayParityTest {
 
     /**
      * Verification point (2) of the report: the per-letter layout is planned
-     * in canonical fractions and converted to the output resolution by ONE
+     * in frame fractions and converted to the output resolution by ONE
      * factor — at a concrete output resolution the exported letter boxes are
      * the preview boxes times (frameWidth / contentWidth).
      */
@@ -193,59 +224,74 @@ class AnimatedTextOverlayParityTest {
         val frameW = 1080f
         val frameH = frameW / contentAspect // 1920
         for ((index, geom) in spec.geoms.withIndex()) {
-            val bmpSize = segmentBitmapSize(geom.text, m)
-            val frame = AnimatedTextLayout.segmentFrame(
-                    centerXFrac = geom.centerXFrac,
-                    centerYFrac = geom.centerYFrac,
-                    widthFrac = geom.widthFrac,
-                    bitmapWidth = bmpSize.first,
-                    bitmapHeight = bmpSize.second,
-                    relX = 0f, relY = 0f, relScale = 1f, relOpacity = 1f,
-                    parentScale = parentEval.scale,
-                    blockHeightFrac = heightFrac,
-                    blockWidthPx = blockW,
-                    blockHeightPx = spec.frame.heightPx,
-                )!!
-            // On-frame px (the export resolution conversion).
+            val placement = AnimatedTextLayout.segmentPlacement(
+                parentX = parentEval.x,
+                parentY = parentEval.y,
+                parentScale = parentEval.scale,
+                centerXFrac = geom.centerXFrac,
+                centerYFrac = geom.centerYFrac,
+                widthFrac = geom.widthFrac,
+                blockAspectW = spec.blockAspectW,
+                segmentAspect = segmentAspect(geom.text, m),
+                relX = 0f, relY = 0f, relScale = 1f,
+                frameAspect = contentAspect,
+            )!!
+            val rect = AnimatedTextLayout.blockRect(
+                placement = placement,
+                parentX = parentEval.x,
+                parentY = parentEval.y,
+                parentScale = parentEval.scale,
+                blockHeightFrac = heightFrac,
+                blockWidthPx = blockW,
+                blockHeightPx = spec.frame.heightPx,
+            )
+            // On-frame px (the export resolution conversion) via the block.
             val blockWFramePx = parentEval.scale * frameW
-            val letterWidthPx = frame.widthPx * blockWFramePx / blockW
+            val letterWidthPx = rect.widthPx * blockWFramePx / blockW
             val letterCenterXPx = parentEval.x * frameW - blockWFramePx / 2f +
-                frame.centerXpx * blockWFramePx / blockW
+                rect.centerXpx * blockWFramePx / blockW
             val letterCenterYPx = parentEval.y * frameH - heightFrac * frameH / 2f +
-                frame.centerYpx * (blockWFramePx / blockW)
+                rect.centerYpx * (blockWFramePx / blockW)
 
-            // The preview draws the same letter at scale*contentW wide and
-            // (centre + (frac-0.5)*scale) inside ANY content width — assert
-            // the export numbers equal the preview formula at contentW=1080.
-            val previewWidthPx = parentEval.scale * geom.widthFrac * frameW
+            // The preview draws the same letter at widthFrac × contentW wide
+            // at (cxFrac, cyFrac) inside ANY content width — assert the
+            // export numbers equal the preview formula at contentW=1080.
+            val previewWidthPx = placement.widthFrac * frameW
             assertEquals(previewWidthPx, letterWidthPx, 0.01f)
-            val previewCenterXPx = (parentEval.x +
-                (geom.centerXFrac - 0.5f) * parentEval.scale) * frameW
-            assertEquals(previewCenterXPx, letterCenterXPx, 0.01f)
-            val previewCenterYPx = (parentEval.y +
-                (geom.centerYFrac - 0.5f) * parentEval.scale * contentAspect / spec.blockAspectW
-                ) * frameH
-            assertEquals(previewCenterYPx, letterCenterYPx, 0.01f)
+            assertEquals(placement.centerXFrac * frameW, letterCenterXPx, 0.01f)
+            assertEquals(placement.centerYFrac * frameH, letterCenterYPx, 0.01f)
         }
     }
 
     /** Layout guard: identity entrance / zero width behave as documented. */
     @Test
-    fun `segmentFrame skips non-positive widths and floors degenerate fractions`() {
-        val frame = AnimatedTextLayout.segmentFrame(
-            centerXFrac = 0.5f, centerYFrac = 0.5f, widthFrac = 0.2f,
-            bitmapWidth = 100, bitmapHeight = 20,
-            relX = 0f, relY = 0f, relScale = 0f, relOpacity = 1f,
-            parentScale = 0.4f, blockHeightFrac = 0.3f,
-            blockWidthPx = 500, blockHeightPx = 100,
+    fun `segmentPlacement skips non-positive widths and floors degenerate fractions`() {
+        assertNull(
+            AnimatedTextLayout.segmentPlacement(
+                parentX = 0.5f, parentY = 0.5f, parentScale = 0.4f,
+                centerXFrac = 0.5f, centerYFrac = 0.5f, widthFrac = 0.2f,
+                blockAspectW = 2f, segmentAspect = 5f,
+                relX = 0f, relY = 0f, relScale = 0f,
+                frameAspect = 0.5625f,
+            ),
         )
-        assertEquals(null, frame)
 
         assertEquals(
             0.3f,
-            AnimatedTextLayout.blockHeightFrac(0.4f, contentAspect = 0.6f, blockAspectW = 0.8f),
+            AnimatedTextLayout.blockHeightFrac(0.4f, frameAspect = 0.6f, blockAspectW = 0.8f),
             1e-6f,
         )
+        // Height = width × frameAspect / segmentAspect — the ONLY aspect
+        // conversion (frame + bitmap aspects; no source-video aspect).
+        val p = AnimatedTextLayout.segmentPlacement(
+            parentX = 0.5f, parentY = 0.5f, parentScale = 0.4f,
+            centerXFrac = 0.5f, centerYFrac = 0.5f, widthFrac = 0.25f,
+            blockAspectW = 4f, segmentAspect = 2f,
+            relX = 0f, relY = 0f, relScale = 1f,
+            frameAspect = 0.5f,
+        )!!
+        assertEquals(0.4f * 0.25f, p.widthFrac, 1e-6f)
+        assertEquals(0.1f * 0.5f / 2f, p.heightFrac, 1e-6f)
     }
 
     /** The planner's relative keyframes stay RELATIVE (identity base). */

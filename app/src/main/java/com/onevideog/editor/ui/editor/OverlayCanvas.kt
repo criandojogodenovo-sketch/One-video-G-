@@ -51,6 +51,7 @@ import com.onevideog.editor.data.OverlayTransform
 import com.onevideog.editor.diag.DiagSanitizer
 import com.onevideog.editor.diag.DiagnosticsLogger
 import com.onevideog.editor.diag.ImageImportStages
+import com.onevideog.editor.editor.AnimatedTextLayout
 import com.onevideog.editor.editor.ExpandedOverlays
 import com.onevideog.editor.editor.GizmoMath
 import com.onevideog.editor.editor.KeyframeEvaluator
@@ -116,6 +117,16 @@ internal data class PlacedOverlay(
  * animation segments carry ids "parent#sN" and are placed individually;
  * selection is mapped back to the parent id so gestures keep targeting the
  * whole text block.
+ *
+ * v0.5.9: animated-text segments are laid out through
+ * [AnimatedTextLayout.segmentPlacement] — THE SAME function the export
+ * composite uses, with the SAME single reference (the project frame,
+ * [contentAspect] on the preview side). The per-segment plan
+ * ([ExpandedOverlays.SegmentPlan], from the SAME build) carries the block
+ * fractions and the RELATIVE entrance item; the parent + relative are
+ * evaluated per frame exactly like [AnimatedTextOverlay.getBitmap] does.
+ * Segments without a plan fall back to their composed keyframes (previous
+ * behaviour).
  */
 internal fun computePlacements(
     overlays: List<OverlayItem>,
@@ -125,6 +136,8 @@ internal fun computePlacements(
     contentHeight: Float,
     resolveRender: (OverlayItem) -> OverlayRender?,
     selectedId: String?,
+    parents: List<OverlayItem> = emptyList(),
+    segmentPlans: Map<String, ExpandedOverlays.SegmentPlan> = emptyMap(),
 ): List<PlacedOverlay> {
     if (contentWidth <= 0f || contentHeight <= 0f) return emptyList()
     return overlays
@@ -133,7 +146,6 @@ internal fun computePlacements(
         .filter { it.startMs <= playheadMs && playheadMs < it.endMs && it.visible }
         .sortedBy { it.zOrder }
         .mapNotNull { overlay ->
-            val transform = KeyframeEvaluator.evaluate(overlay, playheadMs)
             val render = resolveRender(overlay) ?: return@mapNotNull null
             // The placement aspect is the CONTENT aspect the export scales
             // onto the frame: the canonical block for text, the decoded
@@ -144,6 +156,55 @@ internal fun computePlacements(
                     if (render.bitmap.height <= 0) 1f
                     else render.bitmap.width.toFloat() / render.bitmap.height
             }
+            // ---- v0.5.9: shared layout function for animated-text segments ----
+            val plan = segmentPlans[overlay.id]
+            if (plan != null) {
+                val parent = parents.firstOrNull { it.id == plan.parentId }
+                if (parent != null) {
+                    val parentEval = KeyframeEvaluator.evaluate(parent, playheadMs)
+                    val rel = KeyframeEvaluator.evaluate(plan.relative, playheadMs)
+                    val placement = AnimatedTextLayout.segmentPlacement(
+                        parentX = parentEval.x,
+                        parentY = parentEval.y,
+                        parentScale = parentEval.scale,
+                        centerXFrac = plan.centerXFrac,
+                        centerYFrac = plan.centerYFrac,
+                        widthFrac = plan.widthFrac,
+                        blockAspectW = plan.blockAspectW,
+                        segmentAspect = aspect,
+                        relX = rel.x,
+                        relY = rel.y,
+                        relScale = rel.scale,
+                        frameAspect = contentAspect,
+                    )
+                    if (placement != null) {
+                        val isSegment = ExpandedOverlays.isSegmentId(overlay.id)
+                        val parentId =
+                            if (isSegment) ExpandedOverlays.parentIdOf(overlay.id) else null
+                        return@mapNotNull PlacedOverlay(
+                            overlay = overlay,
+                            transform = OverlayTransform(
+                                x = placement.centerXFrac,
+                                y = placement.centerYFrac,
+                                scale = placement.widthFrac,
+                                rotationDeg = parentEval.rotationDeg,
+                                // Parent opacity x relative entrance factor —
+                                // the SAME product the export applies (bitmap
+                                // rel alpha x OverlaySettings alphaScale).
+                                opacity = parentEval.opacity * rel.opacity,
+                            ),
+                            render = render,
+                            centerX = placement.centerXFrac * contentWidth,
+                            centerY = placement.centerYFrac * contentHeight,
+                            widthPx = placement.widthFrac * contentWidth,
+                            heightPx = placement.heightFrac * contentHeight,
+                            selected = (parentId ?: overlay.id) == selectedId,
+                            parentId = parentId,
+                        )
+                    }
+                }
+            }
+            val transform = KeyframeEvaluator.evaluate(overlay, playheadMs)
             val (w, h) = OverlayLayout.previewSize(
                 contentWidth, contentHeight, aspect, transform.scale,
             )
@@ -323,6 +384,18 @@ internal fun OverlayLayer(
     parents: () -> List<OverlayItem>,
     /** Preview correlation id for the OVERLAY_DRAW evidence events. */
     opId: String,
+    /**
+     * v0.5.9: segmentId -> plan from the SAME [ExpandedOverlays.build] that
+     * produced [overlays] — routes animated-text segments through the shared
+     * [AnimatedTextLayout.segmentPlacement] (preview == export layout).
+     */
+    segmentPlans: () -> Map<String, ExpandedOverlays.SegmentPlan> = { emptyMap() },
+    /**
+     * v0.5.9 (PONTO C): false while the video is video=none/BUFFERING —
+     * nothing is placed or drawn (and the draw evidence is suppressed) until
+     * the video actually renders again. Clip-less projects always pass true.
+     */
+    drawOverlays: () -> Boolean = { true },
     onTap: (OverlayItem?) -> Unit,
     onGesture: (OverlayItem, OverlayTransform) -> Unit,
     onGestureEnd: (OverlayItem, OverlayTransform) -> Unit,
@@ -340,6 +413,8 @@ internal fun OverlayLayer(
     val contentH = contentHeightPx()
     val contentAsp = contentAspect()
     val playhead = playheadMs()
+    // v0.5.9 (PONTO C): overlays render only while the video actually does.
+    val overlaysVisible = drawOverlays()
 
     // ---- image content: async decode state (cache-backed, never inline) ----
     // v0.2.5 rule kept: the render path must never decode on the UI thread;
@@ -372,17 +447,11 @@ internal fun OverlayLayer(
         OverlayKind.TEXT -> {
             val key = OverlayBitmapRenderer.contentKey(overlay)
             val layout = textLayouts.getOrPut(key) {
-                // The measurer is the SAME paint the export block renderer
-                // uses: overlay typeface/size at canonical metrics.
-                val paint = android.graphics.Paint(
-                    android.graphics.Paint.ANTI_ALIAS_FLAG,
-                ).apply {
-                    textSize = OverlayBitmapRenderer.textMetrics(overlay).fontPx
-                    typeface = OverlayBitmapRenderer.typefaceFor(
-                        overlay.fontFamily, overlay.bold, overlay.italic,
-                    )
-                }
-                OverlayTextRender.layout(overlay) { paint.measureText(it) }
+                // v0.5.9: THE ONE shared measurer (OverlayBitmapRenderer
+                // .textMeasurer) — the exact paint the export block renderer
+                // measures/draws with; preview and export cannot drift.
+                val measurer = OverlayBitmapRenderer.textMeasurer(overlay)
+                OverlayTextRender.layout(overlay) { measurer.measureText(it) }
             }
             val typeface = textTypefaces.getOrPut(key) {
                 OverlayBitmapRenderer.typefaceFor(
@@ -396,15 +465,21 @@ internal fun OverlayLayer(
                 ?.let { OverlayRender.ImageContent(it) }
     }
 
-    val rawPlacements = computePlacements(
-        overlays = overlays,
-        playheadMs = playhead,
-        contentAspect = contentAsp,
-        contentWidth = contentW,
-        contentHeight = contentH,
-        resolveRender = ::resolveRender,
-        selectedId = selectedId,
-    )
+    val rawPlacements = if (overlaysVisible) {
+        computePlacements(
+            overlays = overlays,
+            playheadMs = playhead,
+            contentAspect = contentAsp,
+            contentWidth = contentW,
+            contentHeight = contentH,
+            resolveRender = ::resolveRender,
+            selectedId = selectedId,
+            parents = parentsList,
+            segmentPlans = segmentPlans(),
+        )
+    } else {
+        emptyList()
+    }
     val placements = applyGestureOverride(
         raw = rawPlacements,
         override = override,
@@ -417,6 +492,8 @@ internal fun OverlayLayer(
     // ---- OVERLAY_DRAW evidence (throttled: on set change or 1 Hz) ----
     val drawLogGate = remember { OverlayDrawLogGate() }
     LaunchedEffect(placements) {
+        // v0.5.9 (PONTO C): no draw evidence while the gate hides the layer.
+        if (!overlaysVisible) return@LaunchedEffect
         val sig = placements.joinToString("|") { p ->
             "${p.parentId ?: p.overlay.id}:" +
                 "${p.widthPx.roundToInt()}x${p.heightPx.roundToInt()}"
