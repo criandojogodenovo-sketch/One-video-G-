@@ -51,6 +51,7 @@ import com.onevideog.editor.data.OverlayTransform
 import com.onevideog.editor.diag.DiagSanitizer
 import com.onevideog.editor.diag.DiagnosticsLogger
 import com.onevideog.editor.diag.ImageImportStages
+import com.onevideog.editor.editor.AnimatedTextLayout
 import com.onevideog.editor.editor.ExpandedOverlays
 import com.onevideog.editor.editor.GizmoMath
 import com.onevideog.editor.editor.KeyframeEvaluator
@@ -116,6 +117,16 @@ internal data class PlacedOverlay(
  * animation segments carry ids "parent#sN" and are placed individually;
  * selection is mapped back to the parent id so gestures keep targeting the
  * whole text block.
+ *
+ * v0.5.9: animated-text segments are laid out through
+ * [AnimatedTextLayout.segmentPlacement] — THE SAME function the export
+ * composite uses, with the SAME single reference (the project frame,
+ * [contentAspect] on the preview side). The per-segment plan
+ * ([ExpandedOverlays.SegmentPlan], from the SAME build) carries the block
+ * fractions and the RELATIVE entrance item; the parent + relative are
+ * evaluated per frame exactly like [AnimatedTextOverlay.getBitmap] does.
+ * Segments without a plan fall back to their composed keyframes (previous
+ * behaviour).
  */
 internal fun computePlacements(
     overlays: List<OverlayItem>,
@@ -125,6 +136,8 @@ internal fun computePlacements(
     contentHeight: Float,
     resolveRender: (OverlayItem) -> OverlayRender?,
     selectedId: String?,
+    parents: List<OverlayItem> = emptyList(),
+    segmentPlans: Map<String, ExpandedOverlays.SegmentPlan> = emptyMap(),
 ): List<PlacedOverlay> {
     if (contentWidth <= 0f || contentHeight <= 0f) return emptyList()
     return overlays
@@ -133,7 +146,6 @@ internal fun computePlacements(
         .filter { it.startMs <= playheadMs && playheadMs < it.endMs && it.visible }
         .sortedBy { it.zOrder }
         .mapNotNull { overlay ->
-            val transform = KeyframeEvaluator.evaluate(overlay, playheadMs)
             val render = resolveRender(overlay) ?: return@mapNotNull null
             // The placement aspect is the CONTENT aspect the export scales
             // onto the frame: the canonical block for text, the decoded
@@ -144,6 +156,55 @@ internal fun computePlacements(
                     if (render.bitmap.height <= 0) 1f
                     else render.bitmap.width.toFloat() / render.bitmap.height
             }
+            // ---- v0.5.9: shared layout function for animated-text segments ----
+            val plan = segmentPlans[overlay.id]
+            if (plan != null) {
+                val parent = parents.firstOrNull { it.id == plan.parentId }
+                if (parent != null) {
+                    val parentEval = KeyframeEvaluator.evaluate(parent, playheadMs)
+                    val rel = KeyframeEvaluator.evaluate(plan.relative, playheadMs)
+                    val placement = AnimatedTextLayout.segmentPlacement(
+                        parentX = parentEval.x,
+                        parentY = parentEval.y,
+                        parentScale = parentEval.scale,
+                        centerXFrac = plan.centerXFrac,
+                        centerYFrac = plan.centerYFrac,
+                        widthFrac = plan.widthFrac,
+                        blockAspectW = plan.blockAspectW,
+                        segmentAspect = aspect,
+                        relX = rel.x,
+                        relY = rel.y,
+                        relScale = rel.scale,
+                        frameAspect = contentAspect,
+                    )
+                    if (placement != null) {
+                        val isSegment = ExpandedOverlays.isSegmentId(overlay.id)
+                        val parentId =
+                            if (isSegment) ExpandedOverlays.parentIdOf(overlay.id) else null
+                        return@mapNotNull PlacedOverlay(
+                            overlay = overlay,
+                            transform = OverlayTransform(
+                                x = placement.centerXFrac,
+                                y = placement.centerYFrac,
+                                scale = placement.widthFrac,
+                                rotationDeg = parentEval.rotationDeg,
+                                // Parent opacity x relative entrance factor —
+                                // the SAME product the export applies (bitmap
+                                // rel alpha x OverlaySettings alphaScale).
+                                opacity = parentEval.opacity * rel.opacity,
+                            ),
+                            render = render,
+                            centerX = placement.centerXFrac * contentWidth,
+                            centerY = placement.centerYFrac * contentHeight,
+                            widthPx = placement.widthFrac * contentWidth,
+                            heightPx = placement.heightFrac * contentHeight,
+                            selected = (parentId ?: overlay.id) == selectedId,
+                            parentId = parentId,
+                        )
+                    }
+                }
+            }
+            val transform = KeyframeEvaluator.evaluate(overlay, playheadMs)
             val (w, h) = OverlayLayout.previewSize(
                 contentWidth, contentHeight, aspect, transform.scale,
             )
@@ -323,6 +384,12 @@ internal fun OverlayLayer(
     parents: () -> List<OverlayItem>,
     /** Preview correlation id for the OVERLAY_DRAW evidence events. */
     opId: String,
+    /**
+     * v0.5.9: segmentId -> plan from the SAME [ExpandedOverlays.build] that
+     * produced [overlays] — routes animated-text segments through the shared
+     * [AnimatedTextLayout.segmentPlacement] (preview == export layout).
+     */
+    segmentPlans: () -> Map<String, ExpandedOverlays.SegmentPlan> = { emptyMap() },
     onTap: (OverlayItem?) -> Unit,
     onGesture: (OverlayItem, OverlayTransform) -> Unit,
     onGestureEnd: (OverlayItem, OverlayTransform) -> Unit,
@@ -404,6 +471,8 @@ internal fun OverlayLayer(
         contentHeight = contentH,
         resolveRender = ::resolveRender,
         selectedId = selectedId,
+        parents = parentsList,
+        segmentPlans = segmentPlans(),
     )
     val placements = applyGestureOverride(
         raw = rawPlacements,

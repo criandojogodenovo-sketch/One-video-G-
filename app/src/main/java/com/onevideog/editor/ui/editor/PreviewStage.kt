@@ -669,6 +669,10 @@ fun PreviewStage(viewModel: EditorViewModel) {
                 selectedOverlayId = { state.selectedOverlayId },
                 gestureOverride = { gestureState },
                 parents = { project.overlays },
+                // v0.5.9: the SAME layout function as the export composite —
+                // segments are placed per frame through
+                // AnimatedTextLayout.segmentPlacement (project-frame reference).
+                segmentPlans = { expanded.segmentPlans },
                 opId = previewOpId,
                 onTap = { overlay ->
                     // Clear any stale gesture override (a tap ends the

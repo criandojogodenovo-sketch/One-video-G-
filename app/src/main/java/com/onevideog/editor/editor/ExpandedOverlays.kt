@@ -83,6 +83,33 @@ object ExpandedOverlays {
          * UI surfaces this as a warning (G6).
          */
         val limited: Set<String>,
+        /**
+         * v0.5.9: segmentId -> its plan (block-frame geometry + the RELATIVE
+         * entrance item). The preview's computePlacements evaluates the
+         * parent + the relative entrance PER FRAME and lays the segment out
+         * with [AnimatedTextLayout.segmentPlacement] — THE SAME layout
+         * function the export composite uses, with the SAME single reference
+         * (the project frame). Without a plan (never, for segments built
+         * here) the preview falls back to the segment's composed keyframes.
+         */
+        val segmentPlans: Map<String, SegmentPlan> = emptyMap(),
+    )
+
+    /**
+     * v0.5.9: everything the preview needs to lay ONE segment out per frame
+     * through the shared [AnimatedTextLayout.segmentPlacement] — the block
+     * fractions of the segment inside the canonical block frame plus the
+     * synthetic RELATIVE entrance item (identity base + schedule keyframes).
+     */
+    data class SegmentPlan(
+        val parentId: String,
+        val centerXFrac: Float,
+        val centerYFrac: Float,
+        val widthFrac: Float,
+        /** Block bitmap aspect (w/h) — converts x-fractions to y-fractions. */
+        val blockAspectW: Float,
+        /** Identity-base synthetic whose keyframes are the RELATIVE entrance. */
+        val relative: OverlayItem,
     )
 
     /**
@@ -171,15 +198,16 @@ object ExpandedOverlays {
         val renderList = mutableListOf<OverlayItem>()
         val parentOfSegment = mutableMapOf<String, String>()
         val limited = mutableSetOf<String>()
+        val plans = mutableMapOf<String, SegmentPlan>()
         val contentAspect = projectContentAspect(project)
         for (overlay in project.overlays) {
-            val segments = expandOverlay(overlay, contentAspect, limited, measurer)
+            val segments = expandOverlay(overlay, contentAspect, limited, measurer, plans)
             for (segment in segments) {
                 parentOfSegment[segment.id] = overlay.id
                 renderList += segment
             }
         }
-        return Result(renderList, parentOfSegment, limited)
+        return Result(renderList, parentOfSegment, limited, plans)
     }
 
     /**
@@ -242,6 +270,7 @@ object ExpandedOverlays {
         contentAspect: Float,
         limited: MutableSet<String>,
         measurer: TextSegmentPlanner.Measurer? = null,
+        plans: MutableMap<String, SegmentPlan>? = null,
     ): List<OverlayItem> {
         // v0.5.5 (docs/AUDIT_v0.5.4_report_followup.md §1): overlays that need
         // no expansion must still RENDER. Since v0.5.0 this path returned
@@ -264,7 +293,30 @@ object ExpandedOverlays {
                 geom.centerXFrac, geom.centerYFrac, geom.widthFrac, spec.blockAspectW,
             )
             val schedule = spec.schedules.getOrNull(index)
-            segments += buildSegment(overlay, index, geom.text, rel, schedule, contentAspect, spec.unit)
+            // v0.5.9: the RELATIVE entrance item is built ONCE here and
+            // shared by the composed keyframes below AND the preview's
+            // per-frame plan evaluation (SegmentPlan.relative).
+            val relative = OverlayItem(
+                id = "rel",
+                kind = OverlayKind.TEXT,
+                transform = TextAnimationPlanner.identityRelative(),
+                keyframes = schedule?.keyframes ?: emptyList(),
+                interpolation = overlay.interpolation,
+            )
+            val segment = buildSegment(
+                overlay, index, geom.text, rel, schedule, contentAspect, spec.unit, relative,
+            )
+            segments += segment
+            if (plans != null) {
+                plans[segment.id] = SegmentPlan(
+                    parentId = overlay.id,
+                    centerXFrac = geom.centerXFrac,
+                    centerYFrac = geom.centerYFrac,
+                    widthFrac = geom.widthFrac,
+                    blockAspectW = spec.blockAspectW,
+                    relative = relative,
+                )
+            }
         }
         return segments
     }
@@ -283,18 +335,14 @@ object ExpandedOverlays {
         schedule: TextAnimationPlanner.SegmentSchedule?,
         contentAspect: Float,
         unit: TextAnimUnit,
+        /** v0.5.9: shared synthetic relative item (identity base + schedule). */
+        relative: OverlayItem,
     ): OverlayItem {
         val staticBase = composeStatic(parent.transform, rel, contentAspect)
         val composed = if (schedule == null) {
             emptyList()
         } else {
-            val synthetic = OverlayItem(
-                id = "rel",
-                kind = OverlayKind.TEXT,
-                transform = TextAnimationPlanner.identityRelative(),
-                keyframes = schedule.keyframes,
-                interpolation = parent.interpolation,
-            )
+            val synthetic = relative
             // Union of authored parent keyframe times (inside the window)
             // and entrance keyframe times: the parent's animation is exact
             // at every authored time; between union points the evaluator

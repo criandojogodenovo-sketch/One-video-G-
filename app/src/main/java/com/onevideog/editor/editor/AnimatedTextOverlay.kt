@@ -125,42 +125,56 @@ class AnimatedTextOverlay(
         canvas.drawColor(android.graphics.Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
         for (segment in segments) {
             val rel = KeyframeEvaluator.evaluate(segment.relative, projectMs)
-            // v0.5.8: the SAME pure layout the parity test pins against the
-            // preview placement math (AnimatedTextOverlayParityTest).
-            val frame = AnimatedTextLayout.segmentFrame(
+            // v0.5.9: THE ONE layout function (AnimatedTextLayout.segmentPlacement,
+            // frame-referenced — the same function the preview's
+            // computePlacements uses), converted into block px for the
+            // composite canvas by AnimatedTextLayout.blockRect. Algebraically
+            // identical to the v0.5.8 block-px formula (parity test pins the
+            // round-trip), but now DERIVED from the frame placement so the
+            // two pipelines cannot drift.
+            val placement = AnimatedTextLayout.segmentPlacement(
+                parentX = parentEval.x,
+                parentY = parentEval.y,
+                parentScale = parentScale,
                 centerXFrac = segment.centerXFrac,
                 centerYFrac = segment.centerYFrac,
                 widthFrac = segment.widthFrac,
-                bitmapWidth = segment.bitmap.width,
-                bitmapHeight = segment.bitmap.height,
+                blockAspectW = blockAspectW,
+                segmentAspect = if (segment.bitmap.height <= 0) 1f
+                else segment.bitmap.width.toFloat() / segment.bitmap.height,
                 relX = rel.x,
                 relY = rel.y,
                 relScale = rel.scale,
-                relOpacity = rel.opacity,
+                frameAspect = contentAspect,
+            ) ?: continue
+            val rect = AnimatedTextLayout.blockRect(
+                placement = placement,
+                parentX = parentEval.x,
+                parentY = parentEval.y,
                 parentScale = parentScale,
                 blockHeightFrac = blockHeightFrac,
                 blockWidthPx = blockWidthPx,
                 blockHeightPx = blockHeightPx,
-            ) ?: continue
-            paint.alpha = frame.alphaInt
+            )
+            paint.alpha = AnimatedTextLayout.relAlphaInt(rel.opacity)
             canvas.drawBitmap(
                 segment.bitmap,
                 null,
                 RectF(
-                    frame.centerXpx - frame.widthPx / 2f,
-                    frame.centerYpx - frame.heightPx / 2f,
-                    frame.centerXpx + frame.widthPx / 2f,
-                    frame.centerYpx + frame.heightPx / 2f,
+                    rect.centerXpx - rect.widthPx / 2f,
+                    rect.centerYpx - rect.heightPx / 2f,
+                    rect.centerXpx + rect.widthPx / 2f,
+                    rect.centerYpx + rect.heightPx / 2f,
                 ),
                 paint,
             )
             segLog?.let { log ->
                 log.append(" op=").append("%.3f".format(rel.opacity))
                 log.append(" sc=").append("%.3f".format(rel.scale))
-                log.append(" wh=").append("%.1f".format(frame.widthPx))
-                    .append('x').append("%.1f".format(frame.heightPx))
-                log.append(" @").append("%.1f".format(frame.centerXpx))
-                    .append(',').append("%.1f".format(frame.centerYpx)).append(';')
+                log.append(" wh=").append("%.1f".format(rect.widthPx))
+                    .append('x').append("%.1f".format(rect.heightPx))
+                log.append(" @").append("%.1f".format(rect.centerXpx))
+                    .append(',').append("%.1f".format(rect.centerYpx)).append(';')
             }
         }
         if (logFrame && segLog != null) {
