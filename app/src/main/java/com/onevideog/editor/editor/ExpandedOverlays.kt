@@ -1,6 +1,5 @@
 package com.onevideog.editor.editor
 
-import android.graphics.Paint
 import com.onevideog.editor.data.Keyframe
 import com.onevideog.editor.data.OvgProject
 import com.onevideog.editor.data.OverlayItem
@@ -401,17 +400,12 @@ object ExpandedOverlays {
             ?: project.clips.firstOrNull()?.sourceAspect
             ?: 16f / 9f
 
-    /** Production measurer: the SAME paint the block renderer uses. */
+    /** Production measurer: v0.5.9 — the ONE shared paint ([OverlayBitmapRenderer.textMeasurer]). */
     private fun paintMeasurer(
         overlay: OverlayItem,
         metrics: OverlayBitmapRenderer.TextMetrics,
     ): TextSegmentPlanner.Measurer {
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            textSize = metrics.fontPx
-            typeface = OverlayBitmapRenderer.typefaceFor(
-                overlay.fontFamily, overlay.bold, overlay.italic,
-            )
-        }
+        val paint = OverlayBitmapRenderer.textMeasurer(overlay)
         return TextSegmentPlanner.Measurer { paint.measureText(it) }
     }
 }

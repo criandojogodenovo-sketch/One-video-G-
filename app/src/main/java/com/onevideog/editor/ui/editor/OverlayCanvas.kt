@@ -439,17 +439,11 @@ internal fun OverlayLayer(
         OverlayKind.TEXT -> {
             val key = OverlayBitmapRenderer.contentKey(overlay)
             val layout = textLayouts.getOrPut(key) {
-                // The measurer is the SAME paint the export block renderer
-                // uses: overlay typeface/size at canonical metrics.
-                val paint = android.graphics.Paint(
-                    android.graphics.Paint.ANTI_ALIAS_FLAG,
-                ).apply {
-                    textSize = OverlayBitmapRenderer.textMetrics(overlay).fontPx
-                    typeface = OverlayBitmapRenderer.typefaceFor(
-                        overlay.fontFamily, overlay.bold, overlay.italic,
-                    )
-                }
-                OverlayTextRender.layout(overlay) { paint.measureText(it) }
+                // v0.5.9: THE ONE shared measurer (OverlayBitmapRenderer
+                // .textMeasurer) — the exact paint the export block renderer
+                // measures/draws with; preview and export cannot drift.
+                val measurer = OverlayBitmapRenderer.textMeasurer(overlay)
+                OverlayTextRender.layout(overlay) { measurer.measureText(it) }
             }
             val typeface = textTypefaces.getOrPut(key) {
                 OverlayBitmapRenderer.typefaceFor(
