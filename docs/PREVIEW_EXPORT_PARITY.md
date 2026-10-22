@@ -17,6 +17,7 @@ call the same functions — neither has a second implementation:
 | Auto-key edit (v0.5.0)   | `KeyframeEditing.applyTransformEdit`     | gizmo commit, quick panel, sheet  | (model-level — export reads the result)    |
 | Text segments (v0.5.0)   | `TextSegmentPlanner` + `OverlayBitmapRenderer.textMetrics`/`wrapTextLines` | `computePlacements` render list | `ClipEffectsFactory.overlayTextures` |
 | Text entrance (v0.5.0)   | `TextAnimationPlanner` + `ExpandedOverlays.build` (preview) / `ExpandedOverlays.animationSpec` (ONE plan, both pipelines, v0.5.7) | `computePlacements` render list | `ClipEffectsFactory.texturesForOverlays` — ONE `AnimatedTextOverlay` composite per animated text (v0.5.7) |
+| Text layout (v0.5.9)     | `AnimatedTextLayout.segmentPlacement` — THE ONE frame-referenced function (single reference: the project frame `frameW×frameH`) + `OverlayBitmapRenderer.textMeasurer` (ONE Paint) | `computePlacements` evaluates parent + relative entrance per frame and places segments with it | `AnimatedTextOverlay.getBitmap` derives the composite block px from the same placement (`blockRect`) |
 | Unified clip view (v0.5.1) | `TimelineClips` (`ClipKind` + `TimelineClip`) | timeline rows, exclusive selection, creation | (editing-layer model — export unaffected) |
 | Audio preview coords (v0.5.1) | `AudioTimeline.windowPositionAt` | `AudioPreviewController` seek/drift | (export plan unchanged — `AudioTimeline.exportPlan`) |
 | Video-less base (v0.5.1) | `ProjectMath.MIN_EMPTY_DURATION_MS` + `ClipEffectsFactory.texturesForOverlays` | black stage + `computePlacements` overlay layer | `CompositionFactory.buildBlackBaseItem` (black PNG item carrying the same textures) |
@@ -314,3 +315,29 @@ tick (stutter/silence for any trimmed clip). The export plan is unchanged.
     `playerState` so the next report can distinguish "decoder never reported
     a size" (videoW=0 with `playerState=ready`) from "player not prepared
     yet" (`idle`/`buffering`). Log meta only — zero behaviour change.
+19. **ONE animated-text layout function, ONE reference (v0.5.9).** The
+    user-reported symptom (animated text big/tight in the editor, small/
+    spread in the export) is structurally closed: preview and export now
+    BOTH lay segments out through `AnimatedTextLayout.segmentPlacement`,
+    which returns FRAME fractions — the single reference is the project
+    frame (`frameW×frameH`, `frameAspect`). No source-video aspect exists
+    anywhere in the layout path (only `frameAspect` + the canonical block/
+    segment bitmap aspects, measured by the ONE shared Paint
+    `OverlayBitmapRenderer.textMeasurer`). The export composite derives its
+    block px via `AnimatedTextLayout.blockRect` (algebraically identical to
+    the v0.5.8 formula — `AnimatedTextOverlayParityTest` pins the
+    round-trip on an 80-point time grid); the preview evaluates parent +
+    relative entrance per frame from the SAME `ExpandedOverlays.build`
+    `SegmentPlan`s the export consumes, so the two pipelines cannot drift.
+    `ANIM_TEXT_FRAME` now logs x, y, scale and boxPx ON THE OUTPUT FRAME
+    (with `framePx` naming the basis, all numbers `Locale.US`) — the exact
+    fields `OVERLAY_DRAW` logs for the preview, for 1:1 comparison.
+20. **Comparison hygiene gates (v0.5.9).** The preview does not draw
+    overlays while the video is not actually rendering — `video=none` (no
+    decoder geometry AND no clip probe dims) or the player `BUFFERING`
+    (stale frame) — so overlay pixels always correspond to a real video
+    frame; flips are logged as `OVERLAY_GATE` and clip-less projects are
+    exempt (always drawn). Stale effect rebuilds are ignored: a
+    `PREVIEW_REBUILD` whose revision is no longer the current one is
+    skipped (`PREVIEW_REBUILD_SKIPPED`), so an older effect list can never
+    overwrite a newer one.
