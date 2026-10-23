@@ -7,6 +7,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.onevideog.editor.data.AudioClipItem
 import com.onevideog.editor.data.Clip
+import com.onevideog.editor.data.ClipEffect
+import com.onevideog.editor.data.ClipTransition
+import com.onevideog.editor.data.EffectKind
 import com.onevideog.editor.data.Interpolation
 import com.onevideog.editor.data.Keyframe
 import com.onevideog.editor.data.OvgProject
@@ -15,6 +18,7 @@ import com.onevideog.editor.data.OverlayKind
 import com.onevideog.editor.data.OverlayTransform
 import com.onevideog.editor.data.ProjectAspect
 import com.onevideog.editor.data.ProjectRepository
+import com.onevideog.editor.data.TransitionKind
 import com.onevideog.editor.diag.DiagSanitizer
 import com.onevideog.editor.diag.DiagnosticsLogger
 import com.onevideog.editor.diag.ImageImportStages
@@ -89,7 +93,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 return@launch
             }
             val project = loaded.migrated()
-            history.reset(project)
+            // v0.6.0 (H6): a stale document (clip removed/moved elsewhere) can
+            // carry transitions the planner no longer accepts — drop them on
+            // open so the preview and the export can never disagree.
+            val sanitized = TransitionPlanner.sanitize(project)
+            logDroppedTransitions(project, sanitized)
+            history.reset(sanitized)
             val missing = project.clips
                 .filter { !importer.isReadable(Uri.parse(it.uri)) }
                 .map { it.id }
@@ -107,7 +116,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             )
             withContext(Dispatchers.Main) {
                 _ui.value = UiState(
-                    project = project,
+                    project = sanitized,
                     missingClipIds = missing,
                     canUndo = history.canUndo,
                     canRedo = history.canRedo,
@@ -408,6 +417,159 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setAspect(aspect: ProjectAspect) {
         commitProject { it.withAspect(aspect) }
+    }
+
+    // region transitions between clips (v0.6.0, Fase H) ------------------------
+
+    /**
+     * Sets (or replaces) the transition between two ADJACENT video clips.
+     * The UI clamps [durationMs] to the legal window
+     * ([TransitionPlanner.maxLegalDurationMs]); this guard rejects anything
+     * the planner would discard anyway — an invalid transition never enters
+     * the document (logged TRANSITION_INVALID, no commit).
+     */
+    fun setTransition(clipIdA: String, clipIdB: String, kind: TransitionKind, durationMs: Long) {
+        val project = _ui.value.project ?: return
+        val existing = project.transitions.firstOrNull {
+            it.betweenClipIds.first == clipIdA && it.betweenClipIds.second == clipIdB
+        }
+        val transition = ClipTransition(
+            id = existing?.id ?: TimelineLogic.newId(),
+            betweenClipIds = clipIdA to clipIdB,
+            kind = kind,
+            durationMs = durationMs.coerceIn(
+                TransitionPlanner.MIN_DURATION_MS,
+                TransitionPlanner.MAX_DURATION_MS,
+            ),
+        )
+        val reason = TransitionPlanner.validate(project.clips, transition)
+        if (reason != null) {
+            DiagnosticsLogger.w(
+                "timeline", "TRANSITION_INVALID", null,
+                "transition rejected by the planner",
+                meta = listOf(
+                    "clipA" to DiagSanitizer.fingerprint(clipIdA),
+                    "clipB" to DiagSanitizer.fingerprint(clipIdB),
+                    "kind" to kind.name,
+                    "durationMs" to transition.durationMs.toString(),
+                    "reason" to reason.name,
+                ),
+            )
+            return
+        }
+        commitProject { p ->
+            val others = p.transitions.filterNot {
+                it.betweenClipIds.first == clipIdA && it.betweenClipIds.second == clipIdB
+            }
+            p.copy(transitions = others + transition)
+        }
+        DiagnosticsLogger.i(
+            "timeline", "TRANSITION_SET", null,
+            "transition set between adjacent clips",
+            meta = listOf(
+                "clipA" to DiagSanitizer.fingerprint(clipIdA),
+                "clipB" to DiagSanitizer.fingerprint(clipIdB),
+                "kind" to kind.name,
+                "durationMs" to transition.durationMs.toString(),
+            ),
+        )
+    }
+
+    /** Removes the transition between the two clips (no-op when absent). */
+    fun clearTransition(clipIdA: String, clipIdB: String) {
+        val project = _ui.value.project ?: return
+        val exists = project.transitions.any {
+            it.betweenClipIds.first == clipIdA && it.betweenClipIds.second == clipIdB
+        }
+        if (!exists) return
+        commitProject { p ->
+            p.copy(
+                transitions = p.transitions.filterNot {
+                    it.betweenClipIds.first == clipIdA && it.betweenClipIds.second == clipIdB
+                },
+            )
+        }
+        DiagnosticsLogger.i(
+            "timeline", "TRANSITION_REMOVED", null,
+            "transition removed",
+            meta = listOf(
+                "clipA" to DiagSanitizer.fingerprint(clipIdA),
+                "clipB" to DiagSanitizer.fingerprint(clipIdB),
+            ),
+        )
+    }
+
+    // region per-clip 2D effects (v0.6.0, Fase I) -----------------------------
+
+    /**
+     * Upserts one 2D effect on the clip ([intensity] 0..1). Enforces the
+     * [ClipEffectsFactory.MAX_EFFECTS_PER_CLIP] limit: adding a 4th kind is
+     * IGNORED (logged EFFECT_LIMIT; the UI also warns). Effects are decoder
+     * inputs — the commit re-prepares the preview through the signature.
+     */
+    fun setClipEffect(clipId: String, kind: EffectKind, intensity: Float) {
+        var rejected = false
+        commitProject { p ->
+            val clips = TimelineLogic.withClip(p.clips, clipId) { clip ->
+                val exists = clip.effects.any { it.kind == kind }
+                if (!exists && clip.effects.size >= ClipEffectsFactory.MAX_EFFECTS_PER_CLIP) {
+                    rejected = true
+                    clip
+                } else {
+                    val effect = ClipEffect(kind, intensity.coerceIn(0f, 1f))
+                    val updated = if (exists) {
+                        clip.effects.map { if (it.kind == kind) effect else it }
+                    } else {
+                        clip.effects + effect
+                    }
+                    clip.copy(effects = updated)
+                }
+            }
+            p.copy(clips = clips)
+        }
+        if (rejected) {
+            DiagnosticsLogger.w(
+                "timeline", "EFFECT_LIMIT", null,
+                "per-clip effect limit reached — change ignored",
+                meta = listOf(
+                    "clip" to DiagSanitizer.fingerprint(clipId),
+                    "kind" to kind.name,
+                    "max" to ClipEffectsFactory.MAX_EFFECTS_PER_CLIP.toString(),
+                ),
+            )
+            return
+        }
+        DiagnosticsLogger.i(
+            "timeline", "EFFECT_SET", null,
+            "clip effect upserted",
+            meta = listOf(
+                "clip" to DiagSanitizer.fingerprint(clipId),
+                "kind" to kind.name,
+                "intensity" to String.format(java.util.Locale.US, "%.2f", intensity),
+            ),
+        )
+    }
+
+    /** Removes one 2D effect from the clip (no-op when absent). */
+    fun removeClipEffect(clipId: String, kind: EffectKind) {
+        val project = _ui.value.project ?: return
+        val clip = project.clips.firstOrNull { it.id == clipId } ?: return
+        if (clip.effects.none { it.kind == kind }) return
+        commitProject { p ->
+            p.copy(
+                clips = TimelineLogic.withClip(p.clips, clipId) {
+                    it.copy(effects = it.effects.filterNot { e -> e.kind == kind })
+                },
+            )
+        }
+        DiagnosticsLogger.i(
+            "timeline", "EFFECT_REMOVED", null,
+            "clip effect removed",
+            meta = listOf(
+                "clip" to DiagSanitizer.fingerprint(clipId),
+                "kind" to kind.name,
+            ),
+        )
     }
 
     // region overlays (text/image, transforms, keyframes) ---------------------
@@ -1252,13 +1414,43 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun currentProjectId(): String? = _ui.value.project?.id
 
+    /**
+     * v0.6.0: evidence for H6 — one TRANSITION_INVALID event per transition
+     * the sanitizer dropped between [before] and [after].
+     */
+    private fun logDroppedTransitions(before: OvgProject, after: OvgProject) {
+        if (before.transitions.size == after.transitions.size) return
+        val keptIds = after.transitions.map { it.id }.toSet()
+        for (dropped in before.transitions) {
+            if (dropped.id in keptIds) continue
+            val reason = TransitionPlanner.validate(before.clips, dropped)
+            DiagnosticsLogger.w(
+                "timeline", "TRANSITION_INVALID", null,
+                "transition dropped by sanitize",
+                meta = listOf(
+                    "clipA" to DiagSanitizer.fingerprint(dropped.betweenClipIds.first),
+                    "clipB" to DiagSanitizer.fingerprint(dropped.betweenClipIds.second),
+                    "kind" to dropped.kind.name,
+                    "durationMs" to dropped.durationMs.toString(),
+                    "reason" to (reason?.name ?: "UNKNOWN"),
+                ),
+            )
+        }
+    }
+
     private fun commitProject(transform: (OvgProject) -> OvgProject) {
         commitProjectOrNull(transform)
     }
 
     private fun commitProjectOrNull(transform: (OvgProject) -> OvgProject?) {
         val current = _ui.value.project ?: return
-        val next = transform(current) ?: return
+        val transformed = transform(current) ?: return
+        // v0.6.0 (H6): EVERY commit passes through the transition sanitizer —
+        // a clip removal/move/split that breaks adjacency drops the orphaned
+        // transition in the same snapshot (automatic cleanup, documented in
+        // TransitionPlannerTest). Dropped transitions are logged.
+        val next = TransitionPlanner.sanitize(transformed)
+        logDroppedTransitions(transformed, next)
         // v0.2.5 no-op guard: a transform that produces an identical snapshot
         // (e.g. a tap-gesture "commit" with unchanged transform) must not
         // create an undo step, an autosave, or a new project reference — the

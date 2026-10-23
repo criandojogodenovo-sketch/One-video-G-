@@ -23,6 +23,7 @@ import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.AudioFile
+import androidx.compose.material.icons.filled.BlurOn
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.IosShare
@@ -81,6 +82,9 @@ fun EditorScreen(
     val state by viewModel.ui.collectAsState()
     val context = LocalContext.current
     var activeTool by remember { mutableStateOf<Tool?>(null) }
+    // v0.6.0 (H5): the transition sheet is opened from the timeline badge
+    // between two adjacent video clips (pair of clip ids).
+    var transitionPair by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     LaunchedEffect(projectId) { viewModel.open(projectId) }
 
@@ -250,6 +254,7 @@ fun EditorScreen(
                 viewModel = viewModel,
                 onAddAudio = { audioLauncher.launch(arrayOf("audio/*")) },
                 onOpenTool = { activeTool = it },
+                onOpenTransition = { pair -> transitionPair = pair },
             )
 
             ToolBarRow(
@@ -319,6 +324,16 @@ fun EditorScreen(
             viewModel = viewModel,
             onDismiss = { activeTool = null },
             onOpenTool = { activeTool = it },
+        )
+    }
+
+    // v0.6.0 (H5): the transition sheet for the tapped adjacent pair.
+    transitionPair?.let { pair ->
+        TransitionSheet(
+            viewModel = viewModel,
+            clipIdA = pair.first,
+            clipIdB = pair.second,
+            onDismiss = { transitionPair = null },
         )
     }
 
@@ -462,6 +477,7 @@ private fun ToolBarRow(
             Tool.SPEED to Icons.Filled.Speed,
             Tool.ASPECT to Icons.Filled.AspectRatio,
             Tool.COLOR to Icons.Filled.Palette,
+            Tool.EFFECTS to Icons.Filled.BlurOn,
             Tool.TEXT to Icons.Filled.TextFields,
             Tool.IMAGE to Icons.Filled.Photo,
             Tool.AUDIO to Icons.Filled.AudioFile,

@@ -306,4 +306,28 @@
     <string name="anim_duration">Duração da entrada: %1$d ms</string>
     <string name="anim_limit_letter">Este texto tem mais de %1$d letras — a animação passa a palavras inteiras.</string>
     <string name="anim_limit_word">Este texto tem mais de %1$d palavras — a animação de entrada fica desativada.</string>
+
+    <!-- v0.6.0: efeitos 2D por clipe (Fase I) -->
+    <string name="tools_effects">Efeitos</string>
+    <string name="effects_title">Efeitos do clipe</string>
+    <string name="effects_none_hint">Ative um efeito e ajuste a intensidade. Os efeitos aparecem na pré-visualização e na exportação.</string>
+    <string name="effect_blur">Desfoque</string>
+    <string name="effect_vignette">Vinheta</string>
+    <string name="effect_sharpen">Nitidez</string>
+    <string name="effect_intensity">Intensidade %1$d%%</string>
+    <string name="effects_limit_note">Até %1$d efeitos por clipe. Os efeitos são processados na GPU e podem reduzir a fluidez da pré-visualização em dispositivos modestos.</string>
+    <string name="effects_limit_reached">Este clipe já tem o máximo de %1$d efeitos. Desligue um antes de acrescentar outro.</string>
+
+    <!-- v0.6.0: transições entre clipes (Fase H) -->
+    <string name="transitions_title">Transição</string>
+    <string name="transition_none">Nenhuma</string>
+    <string name="trans_kind_crossfade">Crossfade</string>
+    <string name="trans_kind_wipe_left">Varrer para a esquerda</string>
+    <string name="trans_kind_wipe_right">Varrer para a direita</string>
+    <string name="trans_kind_slide_up">Deslizar para cima</string>
+    <string name="trans_kind_slide_down">Deslizar para baixo</string>
+    <string name="trans_duration">Duração: %1$d ms</string>
+    <string name="trans_remove">Remover transição</string>
+    <string name="trans_note">Renderizada no fim do clipe anterior e no início do seguinte — na pré-visualização e na exportação.</string>
+    <string name="a11y_transition_badge">Transição entre clipes</string>
 </resources>

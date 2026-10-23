@@ -55,6 +55,14 @@ import java.util.Locale
 @UnstableApi
 object ClipEffectsFactory {
 
+    /**
+     * v0.6.0 (I7): maximum concurrent 2D effects per clip. Enforced in the
+     * ViewModel (adding a 4th is ignored) and trimmed here at build time;
+     * the UI warns. Effects run full-frame GL shaders — more than 3 would
+     * meaningfully degrade low-end playback.
+     */
+    const val MAX_EFFECTS_PER_CLIP = 3
+
     /** Preview GL output target height (keeps GPU memory bounded on 4 GB devices). */
     private const val PREVIEW_TARGET_H = 720
 
@@ -92,6 +100,16 @@ object ClipEffectsFactory {
                 ColorAdjustmentEffect(clip.color.brightness, clip.color.contrast, clip.color.saturation),
             )
         }
+        // v0.6.0 (Fase I, I5): per-clip 2D effects AFTER speed/colour and
+        // BEFORE overlays — the user's ordering contract for the pipeline.
+        // Same call for preview and export: the shaders are identical in
+        // both paths (preview/export parity by construction).
+        effects.addAll(ClipGlEffects.effectsFor(clip.effects))
+        // v0.6.0 (Fase H): transition windows on THIS clip — the out window
+        // on the tail (previous clip) and the in window on the head (next
+        // clip). Same list, same shaders, both pipelines (Media3 1.4.1 has
+        // no Transition API — see TransitionEffects docs).
+        effects.addAll(TransitionEffects.effectsForClip(project, clip, clipStartMs))
         // v0.3.1: preview overlays are rendered by the Compose layer, so the
         // preview GL list must NOT contain the OverlayEffect (a second draw
         // would double-expose the overlays where the GL pipeline does work).
@@ -372,8 +390,11 @@ object ClipEffectPlan {
 
     /**
      * Signature of everything the PREVIEW effect list for [clip] VISUALLY
-     * depends on (v0.2.5, revised v0.3.1): clip identity/trim/speed/colour
-     * and the project aspect.
+     * depends on (v0.2.5, revised v0.3.1, revised v0.6.0): clip
+     * identity/trim/speed/colour, the project aspect, the clip's 2D effects
+     * (I5 — effects are GL shader inputs, they MUST re-prepare the decoder,
+     * unlike overlays) and the project transitions (H — transition windows
+     * render through the same GL pipeline).
      *
      * The preview uses this as its effects-rebuild revision key. Consequences:
      *  - a playhead move alone NEVER changes the signature (it is not an
@@ -387,6 +408,10 @@ object ClipEffectPlan {
      *    texture changes, and that requirement is gone. Every overlay edit
      *    used to pay one decoder init + frame flash; now it pays a redraw.
      *  - clip identity/trim/speed/colour/aspect changes DO change it.
+     *  - v0.6.0: clip.effects or project.transitions changes DO change it
+     *    (the GL list itself changes; this is the same class of edit as
+     *    colour — one decoder re-prepare per effects edit is accepted and
+     *    documented; transition/effect edits are rare, explicit user actions).
      * Pure — unit-tested.
      */
     fun effectiveSignature(
@@ -400,6 +425,8 @@ object ClipEffectPlan {
         h = 31 * h + clip.trimEndMs.hashCode()
         h = 31 * h + clip.speed.hashCode()
         h = 31 * h + clip.color.hashCode()
+        h = 31 * h + clip.effects.hashCode()
+        h = 31 * h + project.transitions.hashCode()
         h = 31 * h + project.aspect.hashCode()
         return h
     }

@@ -306,4 +306,28 @@
     <string name="anim_duration">Entrance duration: %1$d ms</string>
     <string name="anim_limit_letter">This text has more than %1$d letters — the animation falls back to whole words.</string>
     <string name="anim_limit_word">This text has more than %1$d words — the entrance animation is disabled for it.</string>
+
+    <!-- v0.6.0: per-clip 2D effects (Fase I) -->
+    <string name="tools_effects">Effects</string>
+    <string name="effects_title">Clip effects</string>
+    <string name="effects_none_hint">Turn an effect on and set its intensity. Effects render in the preview and in the export.</string>
+    <string name="effect_blur">Blur</string>
+    <string name="effect_vignette">Vignette</string>
+    <string name="effect_sharpen">Sharpen</string>
+    <string name="effect_intensity">Intensity %1$d%%</string>
+    <string name="effects_limit_note">Up to %1$d effects per clip. Effects run on the GPU and may reduce playback smoothness on low-end devices.</string>
+    <string name="effects_limit_reached">This clip already has the maximum of %1$d effects. Turn one off before adding another.</string>
+
+    <!-- v0.6.0: transitions between clips (Fase H) -->
+    <string name="transitions_title">Transition</string>
+    <string name="transition_none">None</string>
+    <string name="trans_kind_crossfade">Crossfade</string>
+    <string name="trans_kind_wipe_left">Wipe left</string>
+    <string name="trans_kind_wipe_right">Wipe right</string>
+    <string name="trans_kind_slide_up">Slide up</string>
+    <string name="trans_kind_slide_down">Slide down</string>
+    <string name="trans_duration">Duration: %1$d ms</string>
+    <string name="trans_remove">Remove transition</string>
+    <string name="trans_note">Rendered on the end of the previous clip and the start of the next one — in the preview and in the export.</string>
+    <string name="a11y_transition_badge">Transition between clips</string>
 </resources>
