@@ -38,8 +38,10 @@ enum class Tool(val labelRes: Int) {
     SPLIT(R.string.tools_split),
     VOLUME(R.string.tools_volume),
     SPEED(R.string.tools_speed),
+    SPEED_RAMP(R.string.tools_speed_ramp),
     ASPECT(R.string.tools_aspect),
     COLOR(R.string.tools_color),
+    CURVES(R.string.tools_curves),
     EFFECTS(R.string.tools_effects),
     TEXT(R.string.tools_text),
     IMAGE(R.string.tools_image),
@@ -79,8 +81,10 @@ fun ToolSheet(
                 Tool.SPLIT -> SplitPanel(viewModel, clip != null)
                 Tool.VOLUME -> if (clip != null) VolumePanel(viewModel, clip) else InfoLine(stringResource(R.string.split_no_clip))
                 Tool.SPEED -> if (clip != null) SpeedPanel(viewModel, clip) else InfoLine(stringResource(R.string.split_no_clip))
+                Tool.SPEED_RAMP -> if (clip != null) SpeedRampPanel(viewModel, clip) else InfoLine(stringResource(R.string.split_no_clip))
                 Tool.ASPECT -> AspectPanel(viewModel, project.aspectEnum)
                 Tool.COLOR -> if (clip != null) ColorPanel(viewModel, clip) else InfoLine(stringResource(R.string.split_no_clip))
+                Tool.CURVES -> if (clip != null) ColorCurvesPanel(viewModel, clip) else InfoLine(stringResource(R.string.split_no_clip))
                 Tool.EFFECTS -> if (clip != null) ClipEffectsPanel(viewModel, clip) else InfoLine(stringResource(R.string.split_no_clip))
                 Tool.TEXT -> OverlayEditorPanel(viewModel, com.onevideog.editor.data.OverlayKind.TEXT)
                 Tool.IMAGE -> OverlayEditorPanel(viewModel, com.onevideog.editor.data.OverlayKind.IMAGE)

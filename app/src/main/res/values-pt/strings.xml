@@ -330,4 +330,32 @@
     <string name="trans_remove">Remover transição</string>
     <string name="trans_note">Renderizada no fim do clipe anterior e no início do seguinte — na pré-visualização e na exportação.</string>
     <string name="a11y_transition_badge">Transição entre clipes</string>
+
+    <!-- v0.7.0 (Fase J): curvas de cor por clipe -->
+    <string name="tools_curves">Curvas</string>
+    <string name="curves_title">Curvas de cor</string>
+    <string name="curves_hint">Arraste os pontos para tratar sombras, médios e realces. Toque no gráfico para adicionar um ponto, toque duas vezes num ponto para o remover (até 8).</string>
+    <string name="curves_channel_master">Geral</string>
+    <string name="curves_channel_red">Vermelho</string>
+    <string name="curves_channel_green">Verde</string>
+    <string name="curves_channel_blue">Azul</string>
+    <string name="curves_preset_linear">Linear</string>
+    <string name="curves_preset_scurve">Curva S</string>
+    <string name="curves_preset_fade">Desbotado</string>
+    <string name="curves_preset_cinematic">Cinematográfica</string>
+    <string name="curves_clear">Sem curvas</string>
+    <string name="curves_note">As curvas são processadas na GPU a cada fotograma; uso intenso pode reduzir a fluidez da pré-visualização em dispositivos modestos.</string>
+
+    <!-- v0.7.0 (Fase K): rampas de velocidade por clipe -->
+    <string name="tools_speed_ramp">Rampa</string>
+    <string name="ramp_title">Rampa de velocidade</string>
+    <string name="ramp_hint">Toque no gráfico para adicionar um ponto, arraste para moldar a velocidade, toque duas vezes num ponto para o remover. O comprimento do clipe na linha temporal muda com a rampa.</string>
+    <string name="ramp_preset_normal">Normal 1.0x</string>
+    <string name="ramp_preset_slow">Lenta 0.5x</string>
+    <string name="ramp_preset_ultra">Ultra lenta 0.25x</string>
+    <string name="ramp_preset_bullet">Bullet time 0.1x</string>
+    <string name="ramp_preset_fast">Rápida 2x</string>
+    <string name="ramp_segments">Segmentos: %1$d / %2$d</string>
+    <string name="ramp_duration">Comprimento do clipe: %1$s → %2$s</string>
+    <string name="ramp_note">Até %1$d segmentos de velocidade constante por clipe. Rampas complexas podem perder fotogramas em dispositivos modestos; o áudio acompanha a velocidade sem correção de tom.</string>
 </resources>

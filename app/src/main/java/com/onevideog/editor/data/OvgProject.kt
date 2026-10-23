@@ -56,6 +56,60 @@ data class ColorAdjustments(
     val isDefault: Boolean get() = brightness == 0f && contrast == 1f && saturation == 1f
 }
 
+// ---------------------------------------------------------------------------
+// Schema v4 (v0.7.0, Fase J): per-clip advanced colour grading — tonal curves
+// (Photoshop/Lightroom-style control points per channel). Applied through the
+// shared GLSL pipeline (ColorCurvesEffect, one GlEffect for Master+R+G+B) by
+// BOTH pipelines via ClipEffectsFactory.effectsFor — same shader string, same
+// LUTs, preview/export parity by construction. Validation and the monotonic
+// cubic spline live in com.onevideog.editor.editor.CurveMath (pure, JVM).
+// ---------------------------------------------------------------------------
+
+/** One curve control point; x and y are normalized 0..1 (x = input, y = output). */
+@Serializable
+data class CurvePoint(
+    val x: Float,
+    val y: Float,
+)
+
+/**
+ * A tonal curve: control points mapped to a 256-entry LUT by
+ * [com.onevideog.editor.editor.CurveMath.buildLut] (Fritsch–Carlson monotonic
+ * cubic spline — no oscillation/overshoot between points).
+ */
+@Serializable
+data class Curve(
+    val points: List<CurvePoint>,
+)
+
+/** The four tonal curves of one clip, applied in order Master → R → G → B. */
+@Serializable
+data class ColorCurves(
+    val master: Curve,
+    val red: Curve,
+    val green: Curve,
+    val blue: Curve,
+)
+
+// ---------------------------------------------------------------------------
+// Schema v4 (v0.7.0, Fase K): per-clip speed ramps (variable speed).
+// Planned by com.onevideog.editor.editor.SpeedRampPlanner (pure): the ramp
+// lives on the constant-speed basis [0, effectiveDurationMs]; between points
+// the factor interpolates linearly and the planner quantizes it into at most
+// 16 constant-speed segments (export = one EditedMediaItem per segment).
+// ---------------------------------------------------------------------------
+
+/**
+ * One speed-ramp control point. [localTimeMs] is the clip-local time on the
+ * CONSTANT-SPEED basis (0..effectiveDurationMs); [factor] is 0.1..4.0
+ * (0.5 = half speed, 2.0 = double speed).
+ */
+@Serializable
+data class SpeedPoint(
+    val localTimeMs: Long,
+    val factor: Float,
+)
+
 /** One video clip on the timeline. Source times are in milliseconds of the source file. */
 @Serializable
 data class Clip(
@@ -73,6 +127,14 @@ data class Clip(
     // v0.6.0 (Fase I): per-clip 2D effects. The default keeps every
     // pre-v0.6.0 document byte-compatible (decodes to an empty list).
     val effects: List<ClipEffect> = emptyList(),
+    // v0.7.0 (Fase J): advanced colour curves. The default (null) keeps every
+    // pre-v0.7.0 document byte-compatible: no curves, no LUT effect, the
+    // v3 behaviour exactly.
+    val curves: ColorCurves? = null,
+    // v0.7.0 (Fase K): speed ramps. The default (empty) keeps every
+    // pre-v0.7.0 document byte-compatible: constant [speed], unchanged
+    // effectiveDurationMs.
+    val speedRamps: List<SpeedPoint> = emptyList(),
 ) {
     val effectiveDurationMs: Long
         get() = ((trimEndMs - trimStartMs).coerceAtLeast(0) / speed).roundToLong()
@@ -442,10 +504,11 @@ data class OvgProject(
     }
 
     companion object {
-        // v0.6.0 (schema v3): transitions + per-clip effects. v2 documents
-        // decode with the new fields at their defaults (no transitions, no
-        // effects) and keep behaving exactly as before.
-        const val SCHEMA_VERSION = 3
+        // v0.7.0 (schema v4): per-clip colour curves + speed ramps. v3/v2
+        // documents decode with curves = null and speedRamps = emptyList and
+        // keep behaving exactly as before (their defaults are the "off"
+        // states — byte-compatible migration, no field rewriting needed).
+        const val SCHEMA_VERSION = 4
 
         private fun legacyY(position: String): Float = when (
             runCatching { OverlayPosition.valueOf(position) }.getOrDefault(OverlayPosition.BOTTOM)

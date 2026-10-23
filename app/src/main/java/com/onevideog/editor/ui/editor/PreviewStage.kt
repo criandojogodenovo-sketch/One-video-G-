@@ -40,6 +40,7 @@ import com.onevideog.editor.editor.EditorViewModel
 import com.onevideog.editor.editor.OverlayLayout
 import com.onevideog.editor.editor.PlayheadGate
 import com.onevideog.editor.editor.ProjectMath
+import com.onevideog.editor.editor.SpeedRampPlanner
 import com.onevideog.editor.editor.TimelineLogic
 import com.onevideog.editor.editor.ViewportGeometryTracker
 import kotlinx.coroutines.delay
@@ -54,7 +55,23 @@ private fun playbackStateName(state: Int): String = when (state) {
     else -> "#$state"
 }
 
-/** The ONE MediaItem builder for the preview player (clip window preserved). */
+/**
+ * v0.7.0 (K4): the preview playback speed for [clip] at [playheadMs] — the
+ * ramp segment's speed at the playhead (ramp-aware; EXACTLY [Clip.speed]
+ * for clips without valid ramps, so pre-v0.7.0 behaviour is unchanged).
+ */
+private fun rampAwareSpeed(
+    clip: com.onevideog.editor.data.Clip,
+    playheadMs: Long,
+    clipStartMs: Long,
+): Float {
+    if (clip.speedRamps.isEmpty()) return clip.speed
+    return SpeedRampPlanner.speedAtProjectLocalMs(
+        clip,
+        (playheadMs - clipStartMs).coerceAtLeast(0),
+    )
+}
+
 private fun mediaItemFor(clip: com.onevideog.editor.data.Clip): MediaItem =
     MediaItem.Builder()
         .setUri(android.net.Uri.parse(clip.uri))
@@ -313,7 +330,7 @@ fun PreviewStage(viewModel: EditorViewModel) {
                         mediaItemFor(clip),
                         localMs.coerceAtMost(clip.effectiveDurationMs),
                     )
-                    player.setPlaybackSpeed(clip.speed)
+                    player.setPlaybackSpeed(rampAwareSpeed(clip, ui.playheadMs, clipStartMs))
                     player.prepare()
                 }.onSuccess {
                     DiagnosticsLogger.i(
@@ -439,7 +456,12 @@ fun PreviewStage(viewModel: EditorViewModel) {
             // the pause suspended.
             val pos = runCatching { player.currentPosition }.getOrDefault(0L).coerceAtLeast(0)
             player.setMediaItem(mediaItemFor(clip), pos)
-            player.setPlaybackSpeed(clip.speed)
+            // v0.7.0 (K4): the segment speed at the position the playhead maps
+            // to (ramp-aware; exactly clip.speed without ramps).
+            val projectLocal = ProjectMath.itemLocalToProjectMs(clip, pos)
+            player.setPlaybackSpeed(
+                SpeedRampPlanner.speedAtProjectLocalMs(clip, projectLocal),
+            )
             player.prepare()
             player.playWhenReady = wasPlaying
         }
@@ -473,7 +495,11 @@ fun PreviewStage(viewModel: EditorViewModel) {
         )
         if (loadedClipId == currentClip.id) {
             // Same clip: a seek is enough — never tear the decoder down.
-            player.setPlaybackSpeed(currentClip.speed)
+            // v0.7.0 (K4): ramp-aware playback speed (the segment the playhead
+            // lands in; exactly clip.speed without ramps).
+            player.setPlaybackSpeed(
+                rampAwareSpeed(currentClip, state.playheadMs, clipStart),
+            )
             player.seekTo(localMs.coerceAtMost(currentClip.effectiveDurationMs))
             player.playWhenReady = state.isPlaying
         } else {
@@ -481,7 +507,9 @@ fun PreviewStage(viewModel: EditorViewModel) {
                 mediaItemFor(currentClip),
                 localMs.coerceAtMost(currentClip.effectiveDurationMs),
             )
-            player.setPlaybackSpeed(currentClip.speed)
+            player.setPlaybackSpeed(
+                rampAwareSpeed(currentClip, state.playheadMs, clipStart),
+            )
             player.prepare()
             player.playWhenReady = state.isPlaying
             loadedClipId = currentClip.id
@@ -522,10 +550,25 @@ fun PreviewStage(viewModel: EditorViewModel) {
             val pos = player.currentPosition
             val projectPos = clipStart + ProjectMath.itemLocalToProjectMs(clip, pos)
             if (!PlayheadGate.shouldPublish(state.playheadMs, projectPos)) continue
-            val windowDur = clip.effectiveDurationMs
-            if (pos >= windowDur - 40) {
+            // v0.7.0 (K4): follow the ramp across segment boundaries —
+            // playbackSpeed is a LIVE player parameter (no decoder rebuild,
+            // no effect re-attach); the speed INSIDE a segment stays constant
+            // (jumps between segments — documented in PREVIEW_EXPORT_PARITY).
+            val segSpeed = SpeedRampPlanner.speedAtProjectLocalMs(clip, projectPos - clipStart)
+            if (kotlin.math.abs(player.playbackParameters.speed - segSpeed) > 0.01f) {
+                runCatching { player.setPlaybackSpeed(segSpeed) }
+            }
+            // Player position is SOURCE-domain; the pre-ramp threshold
+            // compared it against the OUTPUT duration (equal at speed 1).
+            // With ramps the source span IS the player's domain — use it.
+            val endPos = if (clip.speedRamps.isEmpty()) {
+                clip.effectiveDurationMs
+            } else {
+                clip.trimEndMs - clip.trimStartMs
+            }
+            if (pos >= endPos - 40) {
                 if (clipIndex < project.clips.lastIndex) {
-                    viewModel.seekTo(clipStart + windowDur)
+                    viewModel.seekTo(clipStart + endPos)
                 } else {
                     viewModel.setPlaying(false)
                     viewModel.seekTo(durationMs)

@@ -2,7 +2,7 @@
 
 ## Principle
 
-There is exactly **one** authoritative project model (`OvgProject`, schema v2)
+There is exactly **one** authoritative project model (`OvgProject`, schema v4)
 and **one** set of pure math objects. The preview and the export pipeline both
 call the same functions — neither has a second implementation:
 
@@ -20,6 +20,10 @@ call the same functions — neither has a second implementation:
 | Text layout (v0.5.9)     | `AnimatedTextLayout.segmentPlacement` — THE ONE frame-referenced function (single reference: the project frame `frameW×frameH`) + `OverlayBitmapRenderer.textMeasurer` (ONE Paint) | `computePlacements` evaluates parent + relative entrance per frame and places segments with it | `AnimatedTextOverlay.getBitmap` derives the composite block px from the same placement (`blockRect`) |
 | Transition windows (v0.6.0) | `TransitionPlanner` (pure plan) + `TransitionShaders` (ONE GLSL string + ONE CPU spec) + `TransitionEffects.effectsForClip` | same effect list via `ExoPlayer.setVideoEffects` — the preview renders the LIVE shader, not a static mock | `ClipEffectsFactory.effectsFor` appends the same `TransitionEffect` instances per clip |
 | Per-clip 2D effects (v0.6.0) | `ClipEffectMath` (GLSL + CPU spec) + `ClipGlEffects.effectsFor` | same effect list via `ExoPlayer.setVideoEffects` | `ClipEffectsFactory.effectsFor` appends the same blur/vignette/sharpen instances |
+| Colour curves (v0.7.0) | `CurveMath` (Fritsch–Carlson monotonic spline + 256-entry LUT + CPU spec `applyCurves` + ONE GLSL string) + `ColorCurvesEffects.effectsFor` | same effect list via `ExoPlayer.setVideoEffects` — the SAME LUT bytes, quantized identically | `ClipEffectsFactory.effectsFor` appends the same `ColorCurvesEffect` (Master → R → G → B in one shader) |
+| Speed ramps (v0.7.0) | `SpeedRampPlanner` (pure plan: segments, ramp-aware `outputDurationMs`, `projectToItemLocalMs`/`itemLocalToProjectMs`) | timeline/playhead mappings via `ProjectMath`/`TimelineLogic`; playback speed follows the segment (`SpeedRampPlanner.speedAtProjectLocalMs`) | `CompositionFactory.planVideoSequence` → one constant-speed `EditedMediaItem` per segment (max 16) with the segment's source trim and speed |
+| Colour curves (v0.7.0) | `CurveMath` (Fritsch–Carlson monotonic spline + 256-entry LUT + CPU spec `applyCurves` + ONE GLSL string) + `ColorCurvesEffects.effectsFor` | same effect list via `ExoPlayer.setVideoEffects` — the SAME LUT bytes, quantized identically | `ClipEffectsFactory.effectsFor` appends the same `ColorCurvesEffect` (Master → R → G → B in one shader) |
+| Speed ramps (v0.7.0) | `SpeedRampPlanner` (pure plan: segments, ramp-aware `outputDurationMs`, `projectToItemLocalMs`/`itemLocalToProjectMs`) | timeline/playhead mappings via `ProjectMath`/`TimelineLogic`; playback speed follows the segment (`SpeedRampPlanner.speedAtProjectLocalMs`) | `CompositionFactory.planVideoSequence` → one constant-speed `EditedMediaItem` per segment (max 16) with the segment's source trim and speed |
 | Unified clip view (v0.5.1) | `TimelineClips` (`ClipKind` + `TimelineClip`) | timeline rows, exclusive selection, creation | (editing-layer model — export unaffected) |
 | Audio preview coords (v0.5.1) | `AudioTimeline.windowPositionAt` | `AudioPreviewController` seek/drift | (export plan unchanged — `AudioTimeline.exportPlan`) |
 | Video-less base (v0.5.1) | `ProjectMath.MIN_EMPTY_DURATION_MS` + `ClipEffectsFactory.texturesForOverlays` | black stage + `computePlacements` overlay layer | `CompositionFactory.buildBlackBaseItem` (black PNG item carrying the same textures) |
@@ -223,6 +227,32 @@ tick (stutter/silence for any trimmed clip). The export plan is unchanged.
    with the text; the pre-v0.5.7 per-segment pipeline slid in screen space
    (un-rotated). Un-rotated parents (the norm) render pixel-identically:
    same segment bitmaps, same planned positions, same evaluator times.
+13. **Colour curves are 8-bit LUTs (v0.7.0).** The four tonal curves are
+   sampled into 256-entry LUTs; the GPU stores them in 8-bit LUMINANCE
+   textures and the CPU reference (`CurveMath.lutBytes`) quantizes to the
+   SAME 8-bit table, so preview/export/CPU agree within <= 1 LSB. A curve
+   is therefore not bit-identical to a floating-point per-pixel mapping
+   (banding on extreme curves is possible in both paths equally).
+14. **Speed-ramp preview jumps between segments (v0.7.0, K4).** The preview
+   plays ONE ExoPlayer item and follows the ramp through live
+   `setPlaybackSpeed` changes at segment boundaries — the speed INSIDE a
+   segment is constant, so the preview approximates the ramp in steps
+   (the export renders the exact quantized plan: one constant-speed item
+   per segment, up to 16). Scrubbing maps through the same segment plan
+   (`SpeedRampPlanner.projectToItemLocalMs`), so playhead positions match
+   the export even where the motion between them is stepped.
+15. **Ramp audio keeps the original pitch (v0.7.0, K5).** Each ramp segment
+   speeds its audio with `SonicAudioProcessor` (tempo change, no pitch
+   correction — the same processor the constant-speed path already used).
+   Complex pitch-preserving time stretch would need a custom FFT
+   AudioProcessor and is intentionally deferred; quality on extreme
+   factors (0.1x/4x) degrades the same way constant-speed audio does.
+16. **Split does not redistribute ramps (v0.7.0).** Splitting a ramped clip
+   copies the ramp to both halves on the ORIGINAL constant-speed basis;
+   points outside a half's new domain are dropped automatically by
+   `SpeedRampPlanner.sanitizePoints` (self-healing), but the ramp is not
+   re-scaled to the new extents. Trim behaves the same way (out-of-domain
+   points are ignored, never crash).
 
 ## What "parity" means here (verification status)
 

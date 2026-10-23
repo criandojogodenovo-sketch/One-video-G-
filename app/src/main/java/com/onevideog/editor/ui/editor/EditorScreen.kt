@@ -35,6 +35,8 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.filled.Timeline
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.FilledTonalButton
@@ -475,8 +477,10 @@ private fun ToolBarRow(
             Tool.SPLIT to Icons.Filled.Add,
             Tool.VOLUME to Icons.Filled.VolumeUp,
             Tool.SPEED to Icons.Filled.Speed,
+            Tool.SPEED_RAMP to Icons.Filled.Timeline,
             Tool.ASPECT to Icons.Filled.AspectRatio,
             Tool.COLOR to Icons.Filled.Palette,
+            Tool.CURVES to Icons.Filled.Tune,
             Tool.EFFECTS to Icons.Filled.BlurOn,
             Tool.TEXT to Icons.Filled.TextFields,
             Tool.IMAGE to Icons.Filled.Photo,

@@ -3,15 +3,20 @@ package com.onevideog.editor.editor
 import com.onevideog.editor.data.Clip
 import com.onevideog.editor.data.ClipEffect
 import com.onevideog.editor.data.ClipTransition
+import com.onevideog.editor.data.ColorCurves
+import com.onevideog.editor.data.Curve
+import com.onevideog.editor.data.CurvePoint
 import com.onevideog.editor.data.EffectKind
 import com.onevideog.editor.data.OvgProject
 import com.onevideog.editor.data.OverlayItem
 import com.onevideog.editor.data.OverlayKind
+import com.onevideog.editor.data.SpeedPoint
 import com.onevideog.editor.data.TransitionKind
 import com.onevideog.editor.data.projectJson
 import kotlinx.serialization.encodeToString
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -27,9 +32,16 @@ import org.junit.Test
  */
 class ClipEffectsTest {
 
-    private fun clip(id: String = "c1", durMs: Long = 10_000, effects: List<ClipEffect> = emptyList()) = Clip(
+    private fun clip(
+        id: String = "c1",
+        durMs: Long = 10_000,
+        effects: List<ClipEffect> = emptyList(),
+        curves: ColorCurves? = null,
+        ramps: List<SpeedPoint> = emptyList(),
+    ) = Clip(
         id = id, uri = "u", displayName = "d", sourceDurationMs = durMs,
         trimStartMs = 0, trimEndMs = durMs, effects = effects,
+        curves = curves, speedRamps = ramps,
     )
 
     private fun project(
@@ -89,6 +101,80 @@ class ClipEffectsTest {
         // the new fields decode at their schema-v3 defaults (empty lists),
         // so a v2 document behaves exactly like a v3 one without them.
         assertEquals(2, decoded.schemaVersion)
+    }
+
+    // ------------------------------------------------- v0.7.0 (schema v4)
+
+    @Test
+    fun `a v3 document decodes to schema v4 defaults - curves null and ramps empty`() {
+        // A v0.6.0 document: no "curves" on clips, no "speedRamps". The v4
+        // defaults (null / emptyList) keep it loadable and byte-compatible —
+        // the v3 behaviour exactly (no curves, constant speed).
+        val v3Json = """
+            {"schemaVersion":3,"id":"p","name":"n","createdAtEpochMs":1,"updatedAtEpochMs":2,
+             "clips":[{"id":"c1","uri":"u","displayName":"d","sourceDurationMs":5000,
+                       "trimStartMs":0,"trimEndMs":5000}],
+             "overlays":[],"audioClips":[],"transitions":[]}
+        """.trimIndent()
+        val decoded = projectJson.decodeFromString<OvgProject>(v3Json)
+        assertEquals(3, decoded.schemaVersion)
+        assertNull(decoded.clips[0].curves)
+        assertTrue(decoded.clips[0].speedRamps.isEmpty())
+        // And the behaviour: the planner treats it as constant speed.
+        assertEquals(
+            decoded.clips[0].effectiveDurationMs,
+            SpeedRampPlanner.outputDurationMs(decoded.clips[0]),
+        )
+    }
+
+    @Test
+    fun `curves and speed ramps survive a JSON round trip`() {
+        val curves = ColorCurves(
+            master = Curve(listOf(CurvePoint(0f, 0.05f), CurvePoint(0.5f, 0.55f), CurvePoint(1f, 0.95f))),
+            red = Curve(listOf(CurvePoint(0f, 0f), CurvePoint(1f, 1f))),
+            green = Curve(listOf(CurvePoint(0f, 0.02f), CurvePoint(1f, 0.98f))),
+            blue = Curve(listOf(CurvePoint(0f, 0f), CurvePoint(1f, 0.9f))),
+        )
+        val source = clip(
+            curves = curves,
+            effects = listOf(ClipEffect(EffectKind.BLUR, 0.3f)),
+        ).copy(
+            speedRamps = listOf(
+                SpeedPoint(0, 1f), SpeedPoint(4_000, 0.5f), SpeedPoint(10_000, 2f),
+            ),
+        )
+        val json = projectJson.encodeToString(source)
+        val decoded = projectJson.decodeFromString<Clip>(json)
+        assertEquals(source, decoded)
+        assertEquals(curves, decoded.curves)
+        assertEquals(3, decoded.speedRamps.size)
+        assertEquals(0.5f, decoded.speedRamps[1].factor, 1e-6f)
+    }
+
+    @Test
+    fun `a full v4 project round trips through the document json`() {
+        val decorated = clip("a", effects = listOf(ClipEffect(EffectKind.VIGNETTE, 0.6f)))
+            .copy(
+                curves = ColorCurves(
+                    master = Curve(listOf(CurvePoint(0f, 0f), CurvePoint(1f, 1f))),
+                    red = Curve(listOf(CurvePoint(0f, 0.1f), CurvePoint(1f, 0.9f))),
+                    green = Curve(listOf(CurvePoint(0f, 0f), CurvePoint(1f, 1f))),
+                    blue = Curve(listOf(CurvePoint(0f, 0f), CurvePoint(1f, 1f))),
+                ),
+                speedRamps = listOf(SpeedPoint(0, 2f), SpeedPoint(10_000, 0.25f)),
+            )
+        val source = OvgProject(
+            id = "p", name = "n", createdAtEpochMs = 1, updatedAtEpochMs = 2,
+        ).copy(
+            clips = listOf(decorated, clip("b")),
+            transitions = listOf(
+                ClipTransition(id = "t1", betweenClipIds = "a" to "b", kind = TransitionKind.CROSSFADE),
+            ),
+        )
+        val json = projectJson.encodeToString(source)
+        val decoded = projectJson.decodeFromString<OvgProject>(json)
+        assertEquals(source, decoded)
+        assertEquals(4, decoded.schemaVersion)
     }
 
     // ---------------------------------------------------- effectiveSignature

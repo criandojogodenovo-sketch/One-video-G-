@@ -11,13 +11,22 @@ object TimelineLogic {
     /** Minimum duration (source ms) of a clip after a split or trim. */
     const val MIN_CLIP_SOURCE_MS = 100L
 
-    /** Total timeline duration, accounting for per-clip speed. */
-    fun totalDurationMs(clips: List<Clip>): Long = clips.sumOf { it.effectiveDurationMs }
+    /** Total timeline duration, accounting for per-clip speed.
+     *
+     * v0.7.0: per-clip durations are the RAMP-AWARE footprints
+     * ([SpeedRampPlanner.outputDurationMs]) — same value ProjectMath and the
+     * export composition read, so the timeline can never disagree with the
+     * export (the v0.3.0 single-duration rule).
+     */
+    fun totalDurationMs(clips: List<Clip>): Long =
+        clips.sumOf { SpeedRampPlanner.outputDurationMs(it) }
 
     /** Start position of [index] on the timeline. */
     fun clipStartMs(clips: List<Clip>, index: Int): Long {
         var acc = 0L
-        for (i in 0 until index.coerceAtMost(clips.size)) acc += clips[i].effectiveDurationMs
+        for (i in 0 until index.coerceAtMost(clips.size)) {
+            acc += SpeedRampPlanner.outputDurationMs(clips[i])
+        }
         return acc
     }
 
@@ -30,7 +39,7 @@ object TimelineLogic {
         if (clips.isEmpty()) return -1
         var acc = 0L
         for ((i, clip) in clips.withIndex()) {
-            val end = acc + clip.effectiveDurationMs
+            val end = acc + SpeedRampPlanner.outputDurationMs(clip)
             if (positionMs < end || i == clips.lastIndex) return i
             acc = end
         }
@@ -39,7 +48,8 @@ object TimelineLogic {
 
     /** Timeline end position of the clip at [index]. */
     fun clipEndAt(clips: List<Clip>, index: Int): Long =
-        clipStartMs(clips, index) + (clips.getOrNull(index)?.effectiveDurationMs ?: 0L)
+        clipStartMs(clips, index) +
+            (clips.getOrNull(index)?.let { SpeedRampPlanner.outputDurationMs(it) } ?: 0L)
 
     /**
      * Splits the clip containing [positionMs] into two clips. Returns null

@@ -20,7 +20,7 @@ import kotlin.math.sin
  *  - PREVIEW: [com.onevideog.editor.ui.editor.OverlayLayer] /
  *    computePlacements render the expanded list (Compose owns preview
  *    overlay pixels — v0.3.1 contract untouched);
- *  - EXPORT: [ClipEffectsFactory.overlayTextures] builds one
+ *  - EXPORT: [ClipEffectsFactory.texturesForOverlays] builds one
  *    [KeyframedOverlay] per segment through the SAME
  *    [ClipEffectPlan.overlayWindowsForClip] windows.
  *

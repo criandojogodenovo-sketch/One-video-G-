@@ -17,6 +17,7 @@ import com.onevideog.editor.data.Clip
 import com.onevideog.editor.data.ExportResolutionEnum
 import com.onevideog.editor.data.OvgProject
 import com.onevideog.editor.data.ProjectAspect
+import com.onevideog.editor.diag.DiagSanitizer
 import com.onevideog.editor.diag.DiagnosticsLogger
 import java.io.File
 
@@ -50,6 +51,67 @@ object CompositionFactory {
         val tempFiles: List<File>,
     )
 
+    /**
+     * One planned video item of the sequence (v0.7.0, K3): a WHOLE clip when
+     * it has no speed ramps (ramped = false — the v0.6.0 one-item-per-clip
+     * path, unchanged), or ONE constant-speed SEGMENT of a ramped clip
+     * (ramped = true — each segment becomes its own EditedMediaItem with
+     * SpeedChangeEffect([speed]) and the clipping window trimmed to the
+     * segment's source range). Pure — JVM-tested by CompositionFactoryTest.
+     */
+    data class PlannedItem(
+        val clipId: String,
+        /** Project-timeline start of the CLIP this item belongs to. */
+        val clipStartMs: Long,
+        val segmentIndex: Int,
+        val segmentCount: Int,
+        /** In-file source window of this item (ClippingConfiguration). */
+        val sourceStartMs: Long,
+        val sourceEndMs: Long,
+        /** The SpeedChangeEffect factor of this item. */
+        val speed: Float,
+        /** Project-timeline start / length of THIS item's output. */
+        val outputStartMs: Long,
+        val outputDurationMs: Long,
+        /** True when the item is one segment of a ramped clip. */
+        val ramped: Boolean,
+    )
+
+    /**
+     * THE single video-sequence plan (v0.7.0): one entry per export item, in
+     * sequence order, with ramp-aware output positions. [build] consumes
+     * this plan — preview ([ProjectMath]/[TimelineLogic]) reads the same
+     * numbers from the same planner, so the timeline is the export plan.
+     */
+    fun planVideoSequence(project: OvgProject): List<PlannedItem> {
+        val items = mutableListOf<PlannedItem>()
+        var clipStart = 0L
+        for (clip in project.clips) {
+            val segments = SpeedRampPlanner.planSegments(clip)
+            // v0.6.0 path preserved: a clip WITHOUT a real ramp (single
+            // segment at clip.speed) exports as ONE item exactly as before.
+            val ramped = segments.size > 1 || segments[0].speed != clip.speed
+            var segOut = 0L
+            for ((i, seg) in segments.withIndex()) {
+                items += PlannedItem(
+                    clipId = clip.id,
+                    clipStartMs = clipStart,
+                    segmentIndex = i,
+                    segmentCount = segments.size,
+                    sourceStartMs = seg.sourceStartMs,
+                    sourceEndMs = seg.sourceEndMs,
+                    speed = seg.speed,
+                    outputStartMs = clipStart + segOut,
+                    outputDurationMs = seg.outputDurationMs,
+                    ramped = ramped,
+                )
+                segOut += seg.outputDurationMs
+            }
+            clipStart += SpeedRampPlanner.outputDurationMs(clip)
+        }
+        return items
+    }
+
     fun build(
         context: Context,
         project: OvgProject,
@@ -68,7 +130,7 @@ object CompositionFactory {
         // (the v0.3.0 device-reported temporal bug).
         val plannedDurationMs = ProjectMath.projectDurationMs(project)
 
-        // ---- video sequence ----
+        // ---- video sequence (v0.7.0: from THE plan — planVideoSequence) ----
         // v0.5.9 (PONTO E): the OUTPUT frame px the composition Presentation
         // produces — the exact basis for the ANIM_TEXT_* boxPx evidence.
         // Fixed aspects: the real even-rounded ExportConfig size; SOURCE:
@@ -79,11 +141,35 @@ object CompositionFactory {
         } else {
             ExportConfig.outputSize(resolution, aspect0)
         }
+        val clipsById = project.clips.associateBy { it.id }
         val videoItems = ImmutableList.builder<EditedMediaItem>()
-        var clipStart = 0L
+        for (item in planVideoSequence(project)) {
+            val clip = clipsById[item.clipId] ?: continue
+            if (!item.ramped) {
+                // v0.6.0 whole-clip path (unchanged).
+                videoItems.add(
+                    buildClipItem(context, project, clip, item.clipStartMs, fixedOutput, resolution.targetHeight),
+                )
+            } else {
+                // v0.7.0 (K3): one constant-speed item per ramp segment.
+                videoItems.add(
+                    buildSegmentItem(context, project, clip, item, fixedOutput, resolution.targetHeight),
+                )
+            }
+        }
+        // K7 evidence: a ramp that produced the maximum segment count was
+        // truncated (its tail is absorbed into the last segment).
         for (clip in project.clips) {
-            videoItems.add(buildClipItem(context, project, clip, clipStart, fixedOutput, resolution.targetHeight))
-            clipStart += clip.effectiveDurationMs
+            if (SpeedRampPlanner.wasTruncated(clip)) {
+                DiagnosticsLogger.w(
+                    "export", "SPEED_RAMP_LIMIT", null,
+                    "speed ramp exceeded the segment limit — truncated to MAX_SEGMENTS",
+                    meta = listOf(
+                        "clip" to DiagSanitizer.fingerprint(clip.id),
+                        "max" to SpeedRampPlanner.MAX_SEGMENTS.toString(),
+                    ),
+                )
+            }
         }
 
         // v0.5.1 (empty project): with NO base video the composition still
@@ -292,6 +378,61 @@ object CompositionFactory {
             clip = clip,
             clipStartMs = clipStartMs,
             forPreview = false,
+            outputWidthPx = outW,
+            outputHeightPx = outH,
+        )
+
+        return EditedMediaItem.Builder(mediaItem)
+            .setEffects(Effects(audioProcessors, videoEffects))
+            .build()
+    }
+
+    /**
+     * v0.7.0 (K3): ONE constant-speed segment of a ramped clip as its own
+     * EditedMediaItem — clipping window = the segment's source range,
+     * SpeedChangeEffect = the segment speed (video AND audio: the clip's own
+     * audio follows the video speed without pitch adjustment — the K5
+     * documented limitation), and the shared effect pipeline with the
+     * transition/overlay windows rebased into the segment timebase (see
+     * [ClipEffectsFactory.effectsForSegment]).
+     */
+    private fun buildSegmentItem(
+        context: Context,
+        project: OvgProject,
+        clip: Clip,
+        item: PlannedItem,
+        fixedOutput: ExportConfig.OutputSize?,
+        targetHeight: Int,
+    ): EditedMediaItem {
+        val mediaItem = MediaItem.Builder()
+            .setUri(Uri.parse(clip.uri))
+            .setClippingConfiguration(
+                MediaItem.ClippingConfiguration.Builder()
+                    .setStartPositionMs(item.sourceStartMs)
+                    .setEndPositionMs(item.sourceEndMs)
+                    .build(),
+            )
+            .build()
+
+        val audioProcessors = mutableListOf<androidx.media3.common.audio.AudioProcessor>()
+        audioProcessors.add(VolumeAudioProcessor(clip.volume))
+        if (item.speed != 1f) {
+            audioProcessors.add(SonicAudioProcessor().apply { setSpeed(item.speed) })
+        }
+
+        val outW = fixedOutput?.width
+            ?: Math.round(targetHeight * (clip.sourceAspect ?: 16f / 9f))
+        val outH = fixedOutput?.height ?: targetHeight
+        val segStartLocal = item.outputStartMs - item.clipStartMs
+        val videoEffects = ClipEffectsFactory.effectsForSegment(
+            context = context,
+            project = project,
+            clip = clip,
+            clipStartMs = item.clipStartMs,
+            forPreview = false,
+            speedOverride = item.speed,
+            segmentOutputStartMs = segStartLocal,
+            segmentOutputEndMs = segStartLocal + item.outputDurationMs,
             outputWidthPx = outW,
             outputHeightPx = outH,
         )
