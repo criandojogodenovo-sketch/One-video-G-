@@ -1,5 +1,6 @@
 package com.onevideog.editor.ui.editor
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -30,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
@@ -149,6 +151,33 @@ internal fun AudioTrackRow(
                 },
             contentAlignment = Alignment.CenterStart,
         ) {
+            // v0.8.0 (P3/Q3): the clip's gain envelope (fades + keyframes),
+            // drawn from the SAME AudioGainMath the preview/export apply —
+            // the bar shows the automation the user will hear. Constant
+            // volume draws a flat line (visually calm).
+            val envelopeColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f * barAlpha)
+            Canvas(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .width(with(LocalDensity.current) { scale.spanToPx(durationMs).toDp() }),
+            ) {
+                val envelope = com.onevideog.editor.editor.AudioGainMath
+                    .envelopePreview(audioClip)
+                if (envelope.size > 1) {
+                    val step = size.width / (envelope.size - 1)
+                    val path = androidx.compose.ui.graphics.Path()
+                    envelope.forEachIndexed { i, g ->
+                        val x = i * step
+                        val y = size.height * (1f - g.coerceIn(0f, 2f) / 2f)
+                        if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                    }
+                    drawPath(
+                        path,
+                        color = envelopeColor,
+                        style = Stroke(width = 2f),
+                    )
+                }
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     Icons.Filled.MusicNote,

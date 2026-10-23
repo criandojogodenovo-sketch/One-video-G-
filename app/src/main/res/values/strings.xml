@@ -159,6 +159,16 @@
     <string name="audio_loop">Loop until video ends</string>
     <string name="audio_plan_note">Looping audio repeats up to %1$d times. Audio you hear in the preview is mixed into the export.</string>
     <string name="music_none">No audio tracks yet</string>
+    <!-- v0.8.0: audio gain automation (fades, keyframes, noise gate, crossfade) -->
+    <string name="audio_fade_in">Fade in</string>
+    <string name="audio_fade_out">Fade out</string>
+    <string name="audio_keyframes">Volume automation</string>
+    <string name="audio_keyframe_hint">Tap: add point · Drag: move · Double-tap: remove</string>
+    <string name="audio_keyframes_clear">Clear volume curve</string>
+    <string name="audio_noise_gate">Noise gate</string>
+    <string name="audio_noise_gate_hint">Attenuates low background hiss between speech (simple gate — advanced noise reduction is not included).</string>
+    <string name="audio_crossfade">Crossfade with neighbour</string>
+    <string name="audio_crossfade_hint">Overlaps this clip with the nearest audio clip and sets both fades — the overlap mixes automatically (linear crossfade).</string>
 
     <!-- Export -->
     <string name="export_title">Export</string>

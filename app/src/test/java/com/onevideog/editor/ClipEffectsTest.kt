@@ -1,5 +1,7 @@
 package com.onevideog.editor.editor
 
+import com.onevideog.editor.data.AudioClipItem
+import com.onevideog.editor.data.AudioKeyframe
 import com.onevideog.editor.data.Clip
 import com.onevideog.editor.data.ClipEffect
 import com.onevideog.editor.data.ClipTransition
@@ -15,6 +17,7 @@ import com.onevideog.editor.data.TransitionKind
 import com.onevideog.editor.data.projectJson
 import kotlinx.serialization.encodeToString
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -165,6 +168,10 @@ class ClipEffectsTest {
             )
         val source = OvgProject(
             id = "p", name = "n", createdAtEpochMs = 1, updatedAtEpochMs = 2,
+            // A v4-TAGGED document (schemaVersion is informational and
+            // preserved as-is on a round trip — the v5 default applies to
+            // NEW documents, not to re-encodes of old ones).
+            schemaVersion = 4,
         ).copy(
             clips = listOf(decorated, clip("b")),
             transitions = listOf(
@@ -175,6 +182,68 @@ class ClipEffectsTest {
         val decoded = projectJson.decodeFromString<OvgProject>(json)
         assertEquals(source, decoded)
         assertEquals(4, decoded.schemaVersion)
+    }
+
+    // ------------------------------------------------- v0.8.0 (schema v5, audio)
+
+    @Test
+    fun `a v4 document decodes to schema v5 audio defaults`() {
+        // A v0.7.0 document: audioClips carry no fades/keyframes/gate. The
+        // v5 defaults keep it loadable and byte-compatible — the v4 audio
+        // behaviour exactly (constant volume, no automation).
+        val v4Json = """
+            {"schemaVersion":4,"id":"p","name":"n","createdAtEpochMs":1,"updatedAtEpochMs":2,
+             "clips":[],"overlays":[],
+             "audioClips":[{"id":"a1","uri":"u","displayName":"music","sourceDurationMs":30000,
+                            "startMs":0,"trimStartMs":0,"trimEndMs":30000,"volume":0.8}],
+             "transitions":[]}
+        """.trimIndent()
+        val decoded = projectJson.decodeFromString<OvgProject>(v4Json)
+        assertEquals(4, decoded.schemaVersion)
+        val audio = decoded.audioClips[0]
+        assertEquals(0L, audio.fadeInMs)
+        assertEquals(0L, audio.fadeOutMs)
+        assertTrue(audio.gainKeyframes.isEmpty())
+        assertFalse(audio.noiseGate)
+        assertFalse(audio.hasGainAutomation)
+        // And the behaviour: the gain math treats it as constant volume.
+        assertEquals(
+            audio.volume,
+            com.onevideog.editor.editor.AudioGainMath.gainAt(audio, 12_345),
+            1e-6f,
+        )
+    }
+
+    @Test
+    fun `audio gain automation survives a JSON round trip`() {
+        val source = OvgProject(
+            id = "p", name = "n", createdAtEpochMs = 1, updatedAtEpochMs = 2,
+        ).copy(
+            audioClips = listOf(
+                AudioClipItem(
+                    id = "a1", uri = "u", displayName = "narration",
+                    sourceDurationMs = 30_000, startMs = 2_000,
+                    trimStartMs = 500, trimEndMs = 25_000,
+                    volume = 1.4f, fadeInMs = 1_500, fadeOutMs = 2_500,
+                    gainKeyframes = listOf(
+                        AudioKeyframe(0, 0.5f),
+                        AudioKeyframe(4_000, 2f),
+                        AudioKeyframe(9_000, 0.8f),
+                    ),
+                    noiseGate = true,
+                ),
+            ),
+        )
+        val json = projectJson.encodeToString(source)
+        val decoded = projectJson.decodeFromString<OvgProject>(json)
+        assertEquals(source, decoded)
+        val audio = decoded.audioClips[0]
+        assertEquals(1_500L, audio.fadeInMs)
+        assertEquals(2_500L, audio.fadeOutMs)
+        assertEquals(3, audio.gainKeyframes.size)
+        assertEquals(2f, audio.gainKeyframes[1].volume, 1e-6f)
+        assertTrue(audio.noiseGate)
+        assertEquals(5, decoded.schemaVersion)
     }
 
     // ---------------------------------------------------- effectiveSignature

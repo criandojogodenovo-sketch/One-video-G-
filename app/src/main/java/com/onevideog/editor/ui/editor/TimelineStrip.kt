@@ -220,20 +220,34 @@ fun TimelineStrip(
                     }
                     Spacer(Modifier.width(240.dp))
                 }
-                // Audio tracks — v0.5.1: EVERY clip gets its own row (the
-                // old 4-row cap hid the remaining clips behind a "+N" label
-                // while they still played and exported); the column scrolls.
+                // Audio tracks — v0.8.0 (P2): clips are packed into lanes
+                // by AudioLanePacker (deterministic; overlapping clips get
+                // different rows, non-overlapping ones share). The lane is
+                // DISPLAY-ONLY — it is computed here at render time and
+                // never stored in the model; audio still overlaps and mixes
+                // in preview/export exactly as before. Every clip stays
+                // visible (no row cap — the v0.5.1 contract).
                 val videoEndMs = com.onevideog.editor.editor.ProjectMath
                     .videoDurationMs(project.clips)
-                project.audioClips.forEach { audioClip ->
-                    AudioTrackRow(
-                        audioClip = audioClip,
-                        scale = scale,
-                        selected = audioClip.id == state.selectedAudioClipId,
-                        viewModel = viewModel,
-                        onOpenTool = onOpenTool,
-                        videoEndMs = videoEndMs,
-                    )
+                val audioAssignments = remember(project.audioClips) {
+                    com.onevideog.editor.editor.AudioLanePacker.pack(project.audioClips)
+                }
+                val audioLaneCount = (audioAssignments.maxOfOrNull { it.lane } ?: -1) + 1
+                for (lane in 0 until audioLaneCount) {
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        audioAssignments
+                            .filter { it.lane == lane }
+                            .forEach { assignment ->
+                                AudioTrackRow(
+                                    audioClip = assignment.clip,
+                                    scale = scale,
+                                    selected = assignment.clip.id == state.selectedAudioClipId,
+                                    viewModel = viewModel,
+                                    onOpenTool = onOpenTool,
+                                    videoEndMs = videoEndMs,
+                                )
+                            }
+                    }
                 }
                 if (project.audioClips.isEmpty()) {
                     Text(

@@ -159,6 +159,16 @@
     <string name="audio_loop">Repetir até o vídeo acabar</string>
     <string name="audio_plan_note">O áudio em repetição repete até %1$d vezes. O áudio que ouve na pré-visualização é misturado na exportação.</string>
     <string name="music_none">Ainda não há faixas de áudio</string>
+    <!-- v0.8.0: automação de ganho de áudio (fades, keyframes, porta de ruído, crossfade) -->
+    <string name="audio_fade_in">Entrada (fade in)</string>
+    <string name="audio_fade_out">Saída (fade out)</string>
+    <string name="audio_keyframes">Automação de volume</string>
+    <string name="audio_keyframe_hint">Toque: adicionar ponto · Arrastar: mover · Toque duplo: remover</string>
+    <string name="audio_keyframes_clear">Limpar curva de volume</string>
+    <string name="audio_noise_gate">Porta de ruído</string>
+    <string name="audio_noise_gate_hint">Atenua o chiado de fundo entre falas (porta simples — redução avançada de ruído não está incluída).</string>
+    <string name="audio_crossfade">Crossfade com o vizinho</string>
+    <string name="audio_crossfade_hint">Sobrepõe este clipe ao clipe de áudio mais próximo e define os dois fades — a sobreposição mistura automaticamente (crossfade linear).</string>
 
     <!-- Exportar -->
     <string name="export_title">Exportar</string>
