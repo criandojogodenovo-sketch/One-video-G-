@@ -98,4 +98,51 @@ class AudioTimelineExportPlanTest {
         assertEquals(8_000, segment.sourceEndMs)
         assertEquals(5_000, segment.timelineStartMs)
     }
+
+    // ------------------------------------- v0.8.0: gain automation orthogonality
+
+    @Test
+    fun `fades and keyframes do not change the export plan`() {
+        // Gain automation (P3/Q3) is orthogonal to placement: the plan —
+        // lead silence, segment windows, tail silence, total duration —
+        // must be IDENTICAL with and without fades/keyframes/gate.
+        val plain = audio(startMs = 10_000, trimStartMs = 1_000, trimEndMs = 21_000)
+        val decorated = plain.copy(
+            fadeInMs = 1_500,
+            fadeOutMs = 2_500,
+            gainKeyframes = listOf(
+                com.onevideog.editor.data.AudioKeyframe(0, 0.5f),
+                com.onevideog.editor.data.AudioKeyframe(5_000, 2f),
+            ),
+            noiseGate = true,
+        )
+        assertEquals(AudioTimeline.exportPlan(plain, VIDEO), AudioTimeline.exportPlan(decorated, VIDEO))
+        assertEquals(VIDEO, AudioTimeline.exportPlan(decorated, VIDEO).totalDurationMs)
+    }
+
+    @Test
+    fun `a clamped decorated clip still plans exactly to the video end`() {
+        // Audio extending past the video end is clipped at the video end;
+        // the fades travel with the clip (the fadeOut tail that falls past
+        // the clamp is simply never exported).
+        val plan = AudioTimeline.exportPlan(
+            audio(startMs = 55_000, trimStartMs = 0, trimEndMs = 20_000)
+                .copy(fadeInMs = 2_000, fadeOutMs = 3_000),
+            VIDEO,
+        )
+        assertEquals(1, plan.segments.size)
+        assertEquals(5_000, plan.segments[0].durationMs)
+        assertEquals(55_000, plan.segments[0].timelineStartMs)
+        assertEquals(0, plan.tailSilenceMs)
+        assertEquals(VIDEO, plan.totalDurationMs)
+        // The gain math still sees the FULL clip-local domain — the fade
+        // envelope is defined on the trimmed range, not on the clamped one.
+        val clip = audio(startMs = 55_000, trimStartMs = 0, trimEndMs = 20_000)
+            .copy(fadeInMs = 2_000, fadeOutMs = 3_000)
+        assertEquals(
+            1f,
+            com.onevideog.editor.editor.AudioGainMath.fadeEnvelope(16_999, clip.trimmedDurationMs, 2_000, 3_000),
+            1e-4f,
+        )
+    }
 }

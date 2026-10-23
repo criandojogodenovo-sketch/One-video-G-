@@ -335,6 +335,28 @@ data class OverlayItem(
     val isText: Boolean get() = kind == OverlayKind.TEXT
 }
 
+// ---------------------------------------------------------------------------
+// Schema v5 (v0.8.0, Fases P+Q): audio gain automation + treatment.
+// Per-clip fades, volume keyframes and a noise gate. ALL gain math lives in
+// ONE pure object (com.onevideog.editor.editor.AudioGainMath — Q1) with TWO
+// consumers: the preview (GainAutomationAudioProcessor injected into each
+// audio ExoPlayer's DefaultAudioSink) and the export (the same processor
+// class in every audio EditedMediaItem's Effects) — preview↔export gain
+// parity BY CONSTRUCTION. Lanes are display-only (AudioLanePacker, computed
+// at render time, never stored).
+// ---------------------------------------------------------------------------
+
+/**
+ * One audio volume-automation control point (v0.8.0, Q3). [timeMs] is
+ * clip-local (0 = the first sample AFTER the trim start); [volume] is a
+ * multiplier 0..2 (1.0 = the clip's own [AudioClipItem.volume] unchanged).
+ */
+@Serializable
+data class AudioKeyframe(
+    val timeMs: Long,
+    val volume: Float,
+)
+
 /**
  * An independent audio clip placed at an absolute project time.
  * Audio clips mix with the video's own audio and with each other.
@@ -352,11 +374,28 @@ data class AudioClipItem(
     val volume: Float = 1f,
     // legacy background-music behaviour: repeat until the project ends
     val loop: Boolean = false,
+    // v0.8.0 (schema v5, P3): linear gain ramps at the clip edges, in
+    // clip-local ms (0 = after trim). The defaults keep every pre-v0.8.0
+    // document byte-compatible: no fades, constant [volume] — exactly the
+    // v4 behaviour. On looping clips each loop segment restarts the envelope
+    // (documented in PREVIEW_EXPORT_PARITY.md).
+    val fadeInMs: Long = 0,
+    val fadeOutMs: Long = 0,
+    // v0.8.0 (schema v5, Q3): volume automation points (clip-local time,
+    // multiplier 0..2). The default (empty) keeps the constant [volume].
+    val gainKeyframes: List<AudioKeyframe> = emptyList(),
+    // v0.8.0 (schema v5, Q4): simple time-domain noise gate (NOT ML/spectral
+    // — documented honest scoping like K's "no pitch adjust").
+    val noiseGate: Boolean = false,
 ) {
     val trimmedDurationMs: Long
         get() = (trimEndMs - trimStartMs).coerceAtLeast(0)
 
     val endMs: Long get() = startMs + trimmedDurationMs
+
+    /** True when any gain automation is configured (fades/keyframes/gate). */
+    val hasGainAutomation: Boolean
+        get() = fadeInMs > 0 || fadeOutMs > 0 || gainKeyframes.isNotEmpty() || noiseGate
 }
 
 // ---------------------------------------------------------------------------
@@ -504,11 +543,12 @@ data class OvgProject(
     }
 
     companion object {
-        // v0.7.0 (schema v4): per-clip colour curves + speed ramps. v3/v2
-        // documents decode with curves = null and speedRamps = emptyList and
-        // keep behaving exactly as before (their defaults are the "off"
-        // states — byte-compatible migration, no field rewriting needed).
-        const val SCHEMA_VERSION = 4
+        // v0.8.0 (schema v5): audio gain automation (fades, keyframes, noise
+        // gate). v4/v3/v2 documents decode with fadeInMs = fadeOutMs = 0,
+        // gainKeyframes = emptyList and noiseGate = false and keep behaving
+        // exactly as before (their defaults are the "off" states —
+        // byte-compatible migration, no field rewriting needed).
+        const val SCHEMA_VERSION = 5
 
         private fun legacyY(position: String): Float = when (
             runCatching { OverlayPosition.valueOf(position) }.getOrDefault(OverlayPosition.BOTTOM)

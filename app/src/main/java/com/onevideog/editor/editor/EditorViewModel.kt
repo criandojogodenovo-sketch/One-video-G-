@@ -6,6 +6,7 @@ import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.onevideog.editor.data.AudioClipItem
+import com.onevideog.editor.data.AudioKeyframe
 import com.onevideog.editor.data.Clip
 import com.onevideog.editor.data.ClipEffect
 import com.onevideog.editor.data.ClipTransition
@@ -1329,6 +1330,129 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setAudioLoop(clipId: String, loop: Boolean) {
         updateAudioClip(clipId) { it.copy(loop = loop) }
+    }
+
+    // v0.8.0 (P3/Q3/Q4) — audio gain automation edits. All of them write the
+    // model ONLY; preview and export derive the actual gain from the shared
+    // AudioGainMath through the shared GainAutomationAudioProcessor.
+
+    /**
+     * Sets the clip fades (clip-local ms). Fades are clamped to
+     * [0, trimmedDurationMs]; a fade longer than the clip is therefore not
+     * storable from the UI (the math still tolerates it for external
+     * documents — tested edge case).
+     */
+    fun setAudioFades(clipId: String, fadeInMs: Long, fadeOutMs: Long) {
+        updateAudioClip(clipId) { clip ->
+            val max = clip.trimmedDurationMs
+            clip.copy(fadeInMs = fadeInMs.coerceIn(0, max), fadeOutMs = fadeOutMs.coerceIn(0, max))
+        }
+        val clip = _ui.value.project?.audioClips?.firstOrNull { it.id == clipId } ?: return
+        DiagnosticsLogger.i(
+            "timeline", "AUDIO_GAIN_SET", null,
+            "audio fades set",
+            meta = listOf(
+                "clip" to DiagSanitizer.fingerprint(clipId),
+                "fadeInMs" to clip.fadeInMs.toString(),
+                "fadeOutMs" to clip.fadeOutMs.toString(),
+            ),
+        )
+    }
+
+    /**
+     * Commits the volume-automation curve (Q3): invalid points are dropped
+     * (AUDIO_KEYFRAME_INVALID), equal timestamps deduped and the 16-point
+     * cap enforced (AUDIO_KEYFRAME_LIMIT) — the sanitize result is what the
+     * model stores, so preview and export can never see an invalid point.
+     */
+    fun setAudioKeyframes(clipId: String, keyframes: List<AudioKeyframe>) {
+        var dropped = 0
+        var capped = false
+        updateAudioClip(clipId) { clip ->
+            val (valid, droppedCount) = AudioGainMath.sanitizeKeyframes(
+                keyframes, clip.trimmedDurationMs,
+            )
+            dropped = droppedCount
+            capped = keyframes.size > AudioGainMath.MAX_KEYFRAMES
+            clip.copy(gainKeyframes = valid)
+        }
+        if (dropped > 0) {
+            DiagnosticsLogger.w(
+                "timeline", "AUDIO_KEYFRAME_INVALID", null,
+                "audio keyframes dropped by validation",
+                meta = listOf(
+                    "clip" to DiagSanitizer.fingerprint(clipId),
+                    "dropped" to dropped.toString(),
+                    "submitted" to keyframes.size.toString(),
+                ),
+            )
+        }
+        if (capped) {
+            DiagnosticsLogger.w(
+                "timeline", "AUDIO_KEYFRAME_LIMIT", null,
+                "audio keyframes exceeded the per-clip cap — truncated",
+                meta = listOf(
+                    "clip" to DiagSanitizer.fingerprint(clipId),
+                    "max" to AudioGainMath.MAX_KEYFRAMES.toString(),
+                ),
+            )
+        }
+        val clip = _ui.value.project?.audioClips?.firstOrNull { it.id == clipId } ?: return
+        DiagnosticsLogger.i(
+            "timeline", "AUDIO_GAIN_SET", null,
+            if (clip.gainKeyframes.isEmpty()) "audio keyframes cleared" else "audio keyframes set",
+            meta = listOf(
+                "clip" to DiagSanitizer.fingerprint(clipId),
+                "points" to clip.gainKeyframes.size.toString(),
+            ),
+        )
+    }
+
+    /** Toggles the simple time-domain noise gate (Q4). */
+    fun setAudioNoiseGate(clipId: String, enabled: Boolean) {
+        updateAudioClip(clipId) { it.copy(noiseGate = enabled) }
+        DiagnosticsLogger.i(
+            "timeline", "AUDIO_GAIN_SET", null,
+            if (enabled) "audio noise gate on" else "audio noise gate off",
+            meta = listOf("clip" to DiagSanitizer.fingerprint(clipId)),
+        )
+    }
+
+    /**
+     * Applies the crossfade plan (P4) between [clipId] and its nearest
+     * audio neighbour: creates the overlap, sets both fades. No-op when the
+     * clip has no neighbour (single audio track).
+     */
+    fun applyAudioCrossfade(clipId: String, requestedMs: Long = AudioCrossfade.DEFAULT_CROSSFADE_MS) {
+        val project = _ui.value.project ?: return
+        val selected = project.audioClips.firstOrNull { it.id == clipId } ?: return
+        val neighbour = AudioCrossfade.neighbour(project.audioClips, selected) ?: return
+        val (earlier, later) = if (neighbour.endMs <= selected.startMs) {
+            neighbour to selected
+        } else {
+            selected to neighbour
+        }
+        val plan = AudioCrossfade.plan(earlier, later, requestedMs)
+        commitProjectOrNull { p ->
+            p.copy(
+                audioClips = p.audioClips.map { clip ->
+                    when (clip.id) {
+                        plan.earlier.id -> plan.earlier
+                        plan.later.id -> plan.later
+                        else -> clip
+                    }
+                },
+            )
+        }
+        DiagnosticsLogger.i(
+            "timeline", "AUDIO_CROSSFADE", null,
+            "audio crossfade applied",
+            meta = listOf(
+                "earlier" to DiagSanitizer.fingerprint(plan.earlier.id),
+                "later" to DiagSanitizer.fingerprint(plan.later.id),
+                "overlapMs" to plan.overlapMs.toString(),
+            ),
+        )
     }
 
     fun removeAudioClip(clipId: String) {

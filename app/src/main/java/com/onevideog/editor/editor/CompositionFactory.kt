@@ -450,6 +450,16 @@ object CompositionFactory {
      * sequence in the Composition has the same duration — unequal durations
      * make the 1.4.1 composition undefined. Legacy looping music keeps the
      * sequence-level loop (fills the composition duration itself).
+     *
+     * v0.8.0 (Q2): every audible audio item now carries ONE
+     * [GainAutomationAudioProcessor] (profile from [GainAutomationAudioProcessor.profileOf])
+     * instead of the constant VolumeAudioProcessor — the SAME processor
+     * class the preview sink uses, reading the SAME AudioGainMath, so the
+     * exported gain (fades, keyframes, gate, volume) equals the previewed
+     * gain by construction. Identity profiles configure as NOT_SET —
+     * zero cost, the v0.7.0 behaviour exactly. The processor instance is
+     * per EditedMediaItem (never shared); silence padding items carry no
+     * processor.
      */
     private fun buildAudioSequence(
         clip: AudioClipItem,
@@ -471,7 +481,12 @@ object CompositionFactory {
             )
                 .setEffects(
                     Effects(
-                        listOf(VolumeAudioProcessor(clip.volume)),
+                        listOf(
+                            GainAutomationAudioProcessor(
+                                GainAutomationAudioProcessor.profileOf(clip),
+                                alwaysActive = false,
+                            ),
+                        ),
                         emptyList(),
                     ),
                 )

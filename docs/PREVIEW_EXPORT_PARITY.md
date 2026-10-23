@@ -2,7 +2,7 @@
 
 ## Principle
 
-There is exactly **one** authoritative project model (`OvgProject`, schema v4)
+There is exactly **one** authoritative project model (`OvgProject`, schema v5)
 and **one** set of pure math objects. The preview and the export pipeline both
 call the same functions — neither has a second implementation:
 
@@ -22,8 +22,7 @@ call the same functions — neither has a second implementation:
 | Per-clip 2D effects (v0.6.0) | `ClipEffectMath` (GLSL + CPU spec) + `ClipGlEffects.effectsFor` | same effect list via `ExoPlayer.setVideoEffects` | `ClipEffectsFactory.effectsFor` appends the same blur/vignette/sharpen instances |
 | Colour curves (v0.7.0) | `CurveMath` (Fritsch–Carlson monotonic spline + 256-entry LUT + CPU spec `applyCurves` + ONE GLSL string) + `ColorCurvesEffects.effectsFor` | same effect list via `ExoPlayer.setVideoEffects` — the SAME LUT bytes, quantized identically | `ClipEffectsFactory.effectsFor` appends the same `ColorCurvesEffect` (Master → R → G → B in one shader) |
 | Speed ramps (v0.7.0) | `SpeedRampPlanner` (pure plan: segments, ramp-aware `outputDurationMs`, `projectToItemLocalMs`/`itemLocalToProjectMs`) | timeline/playhead mappings via `ProjectMath`/`TimelineLogic`; playback speed follows the segment (`SpeedRampPlanner.speedAtProjectLocalMs`) | `CompositionFactory.planVideoSequence` → one constant-speed `EditedMediaItem` per segment (max 16) with the segment's source trim and speed |
-| Colour curves (v0.7.0) | `CurveMath` (Fritsch–Carlson monotonic spline + 256-entry LUT + CPU spec `applyCurves` + ONE GLSL string) + `ColorCurvesEffects.effectsFor` | same effect list via `ExoPlayer.setVideoEffects` — the SAME LUT bytes, quantized identically | `ClipEffectsFactory.effectsFor` appends the same `ColorCurvesEffect` (Master → R → G → B in one shader) |
-| Speed ramps (v0.7.0) | `SpeedRampPlanner` (pure plan: segments, ramp-aware `outputDurationMs`, `projectToItemLocalMs`/`itemLocalToProjectMs`) | timeline/playhead mappings via `ProjectMath`/`TimelineLogic`; playback speed follows the segment (`SpeedRampPlanner.speedAtProjectLocalMs`) | `CompositionFactory.planVideoSequence` → one constant-speed `EditedMediaItem` per segment (max 16) with the segment's source trim and speed |
+| Audio gain automation (v0.8.0) | `AudioGainMath` (THE ONE gain math: `gainAt = volume × keyframeAt × fadeEnvelope`) + `GainAutomationAudioProcessor` (ONE processor class, TWO injections) + `AudioLanePacker` (display-only lanes) | one `GainAutomationAudioProcessor` per audio clip ExoPlayer, injected via `DefaultAudioSink.setAudioProcessors` (`DefaultRenderersFactory.buildAudioSink`, 1.4.1 3-arg form); the profile is swapped + re-anchored every sync tick — live edits, no re-prepare | every audio `EditedMediaItem` in `buildAudioSequence` carries the SAME processor (identity → `NOT_SET` passthrough); timeline lanes drawn from `AudioLanePacker.pack` |
 | Unified clip view (v0.5.1) | `TimelineClips` (`ClipKind` + `TimelineClip`) | timeline rows, exclusive selection, creation | (editing-layer model — export unaffected) |
 | Audio preview coords (v0.5.1) | `AudioTimeline.windowPositionAt` | `AudioPreviewController` seek/drift | (export plan unchanged — `AudioTimeline.exportPlan`) |
 | Video-less base (v0.5.1) | `ProjectMath.MIN_EMPTY_DURATION_MS` + `ClipEffectsFactory.texturesForOverlays` | black stage + `computePlacements` overlay layer | `CompositionFactory.buildBlackBaseItem` (black PNG item carrying the same textures) |
@@ -405,3 +404,51 @@ tick (stutter/silence for any trimmed clip). The export plan is unchanged.
     Up to 3 effects per clip (`ClipEffectsFactory.MAX_EFFECTS_PER_CLIP`,
     enforced in the ViewModel, trimmed in the glue, warned in the sheet);
     intensity 0 builds no GL instance (no GPU cost).
+23. **Audio gain automation is ONE math, ONE processor, TWO injections
+    (v0.8.0).** `AudioGainMath.gainAt(volume, keyframes, durationMs,
+    fadeInMs, fadeOutMs, t)` is the ONLY gain formula in the codebase; both
+    pipelines apply it through the SAME `GainAutomationAudioProcessor`
+    (export: one instance per audio `EditedMediaItem`, t=0 = the item's
+    first sample — sample-exact; preview: one instance per audio clip
+    ExoPlayer injected via `DefaultAudioSink.setAudioProcessors`, gain
+    timeline re-anchored to the player clock every 100 ms sync tick, so
+    edits apply live with NO decoder re-prepare — audio is not part of
+    `effectiveSignature`, which stays video-only). Documented preview
+    approximations: (a) the gain for a sample is computed when the sample
+    is PROCESSED, which leads the moment it is HEARD by the sink buffer
+    depth (~50–200 ms device-dependent) — time-varying fades/curves
+    therefore land slightly early in the PREVIEW; constant gains are
+    unaffected; the EXPORT is sample-exact. (b) `AUDIO_SYNC` logs the
+    audio↔video drift at every re-seek for device-side validation. The
+    v0.3.0 duration contract is untouched: fades/keyframes/gate change
+    NOTHING about placement — `AudioTimeline.exportPlan` output is
+    byte-identical with and without automation (locked by
+    `AudioTimelineExportPlanTest`).
+24. **Crossfade is a simplified LINEAR overlap (v0.8.0).** Overlapping
+    audio clips with fades crossfade automatically through the linear
+    `fadeEnvelope` on both sides — the sum mid-overlap is NOT constant-power
+    (a dip of a few dB is audible on long overlaps). Equal-power curves are
+    a future phase. The "crossfade" button/gesture creates the overlap
+    (`AudioCrossfade.plan`: nearest neighbour, overlap = 800 ms clamped to
+    both durations, floor 150 ms) and sets BOTH fades — one model commit,
+    no destructive PCM editing.
+25. **Noise gate is a simple time-domain gate (v0.8.0).** NOT ML and NOT
+    spectral subtraction: an envelope follower + threshold (0.02 ≈
+    -34 dBFS, attack ~2 ms, release ~120 ms) attenuates low-level
+    background between phrases. Noise DURING speech stays (the gate is
+    open while level ≥ threshold); music-with-hiss is not a target.
+    Advanced (ML/spectral) reduction is a future phase — the same honest
+    scoping as J (no scopes) and K (no pitch adjust).
+26. **Pitch adjust is still absent (v0.8.0).** The K5 limitation carries
+    over unchanged: clip audio that follows speed changes has no pitch
+    correction, and audio gain automation does not interact with pitch.
+27. **Looping audio restarts its gain envelope per loop segment (v0.8.0).**
+    Fades/keyframes are defined on the clip-local domain
+    [0, trimmedDurationMs]; a legacy looping clip repeats that domain, so
+    each loop iteration fades in/out again (musically sensible for
+    background loops; documented so the behaviour is not read as a bug).
+    Audio keyframes cap at 16 per clip (`AudioGainMath.MAX_KEYFRAMES`,
+    `AUDIO_KEYFRAME_LIMIT`); invalid points are dropped at commit time
+    (`AUDIO_KEYFRAME_INVALID`) and defensively re-sanitized in
+    `GainAutomationAudioProcessor.profileOf` (documents edited externally
+    cannot poison the pipeline).
