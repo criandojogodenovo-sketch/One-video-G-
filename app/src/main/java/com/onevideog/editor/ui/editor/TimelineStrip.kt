@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -24,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -80,6 +82,7 @@ fun TimelineStrip(
     viewModel: EditorViewModel,
     onAddAudio: () -> Unit,
     onOpenTool: (Tool) -> Unit,
+    onOpenTransition: (Pair<String, String>) -> Unit = {},
 ) {
     val state by viewModel.ui.collectAsState()
     val project = state.project ?: return
@@ -175,9 +178,22 @@ fun TimelineStrip(
                     zoom = state.zoom,
                     scrollPx = { scroll.value },
                 )
-                // Video track
+                // Video track — v0.6.0 (H4): between every adjacent pair a
+                // TransitionBadge (⚡ when a transition exists, a dim + when
+                // the pair has none) opens the TransitionSheet.
                 Row {
                     project.clips.forEachIndexed { index, clip ->
+                        if (index > 0) {
+                            val previous = project.clips[index - 1]
+                            val transition = project.transitions.firstOrNull {
+                                it.betweenClipIds.first == previous.id &&
+                                    it.betweenClipIds.second == clip.id
+                            }
+                            TransitionBadge(
+                                hasTransition = transition != null,
+                                onClick = { onOpenTransition(previous.id to clip.id) },
+                            )
+                        }
                         ClipBlock(
                             clip = clip,
                             index = index,
@@ -401,6 +417,35 @@ private fun ScrubRuler(
                 }
             }
         }
+    }
+}
+
+/**
+ * v0.6.0 (H4): the marker between two adjacent video clips. ⚡ when a
+ * transition exists (accent tint), a dim + when the pair has none. Tap opens
+ * the TransitionSheet for the pair — the badge is a VIEW marker only: the
+ * rendered transition lives in the shared effect pipeline (see
+ * TransitionEffects), never in this composable.
+ */
+@Composable
+private fun TransitionBadge(hasTransition: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .width(22.dp)
+            .height(48.dp)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            if (hasTransition) Icons.Filled.Bolt else Icons.Filled.Add,
+            contentDescription = stringResource(R.string.a11y_transition_badge),
+            tint = if (hasTransition) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+            },
+            modifier = Modifier.size(16.dp),
+        )
     }
 }
 

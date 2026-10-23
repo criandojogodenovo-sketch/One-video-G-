@@ -25,6 +25,24 @@ enum class ProjectAspect(val labelRes: Int) {
     }
 }
 
+/**
+ * v0.6.0 (Fase I): per-clip 2D effects, rendered by the shared GLSL effect
+ * pipeline (preview AND export — same [com.onevideog.editor.editor.ClipEffectsFactory]
+ * list, same shaders).
+ *
+ * [intensity] is normalized 0..1; each effect maps it to its own physical
+ * parameter (blur sigma, vignette depth, sharpen amount) in the pure math
+ * objects under com.onevideog.editor.editor.
+ */
+enum class EffectKind { BLUR, VIGNETTE, SHARPEN }
+
+@Serializable
+data class ClipEffect(
+    val kind: EffectKind,
+    // 0..1 (0 = effect off, 1 = maximum); coerced on use.
+    val intensity: Float = 0.5f,
+)
+
 /** Basic colour adjustments, applied to the video (preview and export). */
 @Serializable
 data class ColorAdjustments(
@@ -52,6 +70,9 @@ data class Clip(
     val volume: Float = 1f,
     val speed: Float = 1f,
     val color: ColorAdjustments = ColorAdjustments(),
+    // v0.6.0 (Fase I): per-clip 2D effects. The default keeps every
+    // pre-v0.6.0 document byte-compatible (decodes to an empty list).
+    val effects: List<ClipEffect> = emptyList(),
 ) {
     val effectiveDurationMs: Long
         get() = ((trimEndMs - trimStartMs).coerceAtLeast(0) / speed).roundToLong()
@@ -66,6 +87,38 @@ data class Clip(
     val sourceAspect: Float?
         get() = if (width > 0 && height > 0) width.toFloat() / height else null
 }
+
+// ---------------------------------------------------------------------------
+// Schema v3 (v0.6.0, Fase H): transitions between adjacent video clips.
+//
+// Media3 1.4.1 has NO Transition API (verified against the 1.4.1 sources:
+// Composition.Builder has no setTransitions; Transition/CrossFadeTransition
+// do not exist yet — they arrive in a later Media3). Transitions are
+// therefore rendered as per-clip GLSL effects built by the SAME shared
+// pipeline the 2D effects use (ClipEffectsFactory.effectsFor), which the
+// preview applies through ExoPlayer.setVideoEffects and the export through
+// EditedMediaItem.setEffects — preview and export render the identical
+// shader by construction.
+// ---------------------------------------------------------------------------
+
+/** Kinds of transition rendered on the window between two adjacent clips. */
+enum class TransitionKind { CROSSFADE, WIPE_LEFT, WIPE_RIGHT, SLIDE_UP, SLIDE_DOWN }
+
+/**
+ * A transition between two ADJACENT video clips ([betweenClipIds].first is
+ * the earlier clip, .second the later one — adjacency is re-validated by
+ * [com.onevideog.editor.editor.TransitionPlanner] whenever the sequence
+ * changes; invalid transitions are dropped, never allowed to break export).
+ */
+@Serializable
+data class ClipTransition(
+    val id: String,
+    val betweenClipIds: Pair<String, String>,
+    val kind: TransitionKind = TransitionKind.CROSSFADE,
+    // Total window length on the project timeline, clamped by
+    // TransitionPlanner to 200..1000 ms and to <= 50% of BOTH clips.
+    val durationMs: Long = 500L,
+)
 
 // ---------------------------------------------------------------------------
 // Schema v2: unified overlays (text/image) with free transforms + keyframes,
@@ -302,6 +355,10 @@ data class OvgProject(
     // schema v2
     val overlays: List<OverlayItem> = emptyList(),
     val audioClips: List<AudioClipItem> = emptyList(),
+    // schema v3 (v0.6.0): transitions between adjacent video clips. The
+    // default keeps every v2 document readable unchanged (empty list —
+    // "no transitions", exactly the v2 behaviour).
+    val transitions: List<ClipTransition> = emptyList(),
     // schema v1 (read for compatibility, emptied on write after migration)
     val textOverlays: List<TextOverlayItem> = emptyList(),
     val imageOverlays: List<ImageOverlayItem> = emptyList(),
@@ -385,7 +442,10 @@ data class OvgProject(
     }
 
     companion object {
-        const val SCHEMA_VERSION = 2
+        // v0.6.0 (schema v3): transitions + per-clip effects. v2 documents
+        // decode with the new fields at their defaults (no transitions, no
+        // effects) and keep behaving exactly as before.
+        const val SCHEMA_VERSION = 3
 
         private fun legacyY(position: String): Float = when (
             runCatching { OverlayPosition.valueOf(position) }.getOrDefault(OverlayPosition.BOTTOM)

@@ -40,6 +40,7 @@ enum class Tool(val labelRes: Int) {
     SPEED(R.string.tools_speed),
     ASPECT(R.string.tools_aspect),
     COLOR(R.string.tools_color),
+    EFFECTS(R.string.tools_effects),
     TEXT(R.string.tools_text),
     IMAGE(R.string.tools_image),
     AUDIO(R.string.tools_audio),
@@ -80,6 +81,7 @@ fun ToolSheet(
                 Tool.SPEED -> if (clip != null) SpeedPanel(viewModel, clip) else InfoLine(stringResource(R.string.split_no_clip))
                 Tool.ASPECT -> AspectPanel(viewModel, project.aspectEnum)
                 Tool.COLOR -> if (clip != null) ColorPanel(viewModel, clip) else InfoLine(stringResource(R.string.split_no_clip))
+                Tool.EFFECTS -> if (clip != null) ClipEffectsPanel(viewModel, clip) else InfoLine(stringResource(R.string.split_no_clip))
                 Tool.TEXT -> OverlayEditorPanel(viewModel, com.onevideog.editor.data.OverlayKind.TEXT)
                 Tool.IMAGE -> OverlayEditorPanel(viewModel, com.onevideog.editor.data.OverlayKind.IMAGE)
                 Tool.AUDIO -> AudioPanel(viewModel)

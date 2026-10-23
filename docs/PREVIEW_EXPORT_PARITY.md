@@ -18,6 +18,8 @@ call the same functions — neither has a second implementation:
 | Text segments (v0.5.0)   | `TextSegmentPlanner` + `OverlayBitmapRenderer.textMetrics`/`wrapTextLines` | `computePlacements` render list | `ClipEffectsFactory.overlayTextures` |
 | Text entrance (v0.5.0)   | `TextAnimationPlanner` + `ExpandedOverlays.build` (preview) / `ExpandedOverlays.animationSpec` (ONE plan, both pipelines, v0.5.7) | `computePlacements` render list | `ClipEffectsFactory.texturesForOverlays` — ONE `AnimatedTextOverlay` composite per animated text (v0.5.7) |
 | Text layout (v0.5.9)     | `AnimatedTextLayout.segmentPlacement` — THE ONE frame-referenced function (single reference: the project frame `frameW×frameH`) + `OverlayBitmapRenderer.textMeasurer` (ONE Paint) | `computePlacements` evaluates parent + relative entrance per frame and places segments with it | `AnimatedTextOverlay.getBitmap` derives the composite block px from the same placement (`blockRect`) |
+| Transition windows (v0.6.0) | `TransitionPlanner` (pure plan) + `TransitionShaders` (ONE GLSL string + ONE CPU spec) + `TransitionEffects.effectsForClip` | same effect list via `ExoPlayer.setVideoEffects` — the preview renders the LIVE shader, not a static mock | `ClipEffectsFactory.effectsFor` appends the same `TransitionEffect` instances per clip |
+| Per-clip 2D effects (v0.6.0) | `ClipEffectMath` (GLSL + CPU spec) + `ClipGlEffects.effectsFor` | same effect list via `ExoPlayer.setVideoEffects` | `ClipEffectsFactory.effectsFor` appends the same blur/vignette/sharpen instances |
 | Unified clip view (v0.5.1) | `TimelineClips` (`ClipKind` + `TimelineClip`) | timeline rows, exclusive selection, creation | (editing-layer model — export unaffected) |
 | Audio preview coords (v0.5.1) | `AudioTimeline.windowPositionAt` | `AudioPreviewController` seek/drift | (export plan unchanged — `AudioTimeline.exportPlan`) |
 | Video-less base (v0.5.1) | `ProjectMath.MIN_EMPTY_DURATION_MS` + `ClipEffectsFactory.texturesForOverlays` | black stage + `computePlacements` overlay layer | `CompositionFactory.buildBlackBaseItem` (black PNG item carrying the same textures) |
@@ -341,3 +343,35 @@ tick (stutter/silence for any trimmed clip). The export plan is unchanged.
     `PREVIEW_REBUILD` whose revision is no longer the current one is
     skipped (`PREVIEW_REBUILD_SKIPPED`), so an older effect list can never
     overwrite a newer one.
+21. **Transitions render as windows on the adjacent clips (v0.6.0).**
+    Media3 1.4.1 has NO Transition API (verified against the shipped
+    artifacts: `Composition.Builder` has no `setTransitions`; the
+    `Transition`/`CrossFadeTransition` classes do not exist — they arrive
+    in later Media3). Transitions are therefore rendered as per-clip GLSL
+    effects built by the SAME shared pipeline as the 2D effects: the OUT
+    window on the tail of the previous clip (identity -> black/shifted-out)
+    and the IN window on the head of the next clip (black/off-frame ->
+    identity). CROSSFADE is a linear fade THROUGH BLACK; WIPE/SLIDE are a
+    directional push through black in the kind's direction. Because a
+    sequential 1.4.1 composition has no second stream to blend, the total
+    perceived window is out+in = 2×durationMs and the mid-point passes
+    through black instead of a true two-frame blend — identical on both
+    pipelines by construction (same shader string, same uniforms, same
+    plan windows from `TransitionPlanner`). The preview is NOT a static
+    mock: `ExoPlayer.setVideoEffects` runs the identical shader, so both
+    WIPE/SLIDE and CROSSFADE preview live. Transitions never change the
+    sequence length (the v0.3.0 duration contract is untouched) and
+    invalid ones (non-adjacent pair, window > 50% of either clip) are
+    dropped by `TransitionPlanner.sanitize` on every commit and project
+    open (`TRANSITION_INVALID` evidence).
+22. **Effect and transition edits re-prepare the decoder (v0.6.0).**
+    `ClipEffectPlan.effectiveSignature` now includes `clip.effects` and
+    `project.transitions`: they change the GL effect LIST itself (shader
+    instances are inputs to the decoder's output stage), so each effect/
+    transition edit pays one decoder re-prepare — the same class of edit
+    as a colour change. The v0.3.1 contract is untouched: overlay edits
+    still NEVER change the signature (locked by
+    `ClipEffectsTest.overlay edits still never change the signature`).
+    Up to 3 effects per clip (`ClipEffectsFactory.MAX_EFFECTS_PER_CLIP`,
+    enforced in the ViewModel, trimmed in the glue, warned in the sheet);
+    intensity 0 builds no GL instance (no GPU cost).
