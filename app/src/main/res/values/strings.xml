@@ -330,4 +330,32 @@
     <string name="trans_remove">Remove transition</string>
     <string name="trans_note">Rendered on the end of the previous clip and the start of the next one — in the preview and in the export.</string>
     <string name="a11y_transition_badge">Transition between clips</string>
+
+    <!-- v0.7.0 (Fase J): per-clip colour curves -->
+    <string name="tools_curves">Curves</string>
+    <string name="curves_title">Colour curves</string>
+    <string name="curves_hint">Drag the points to grade shadows, midtones and highlights. Tap the graph to add a point, double-tap a point to remove it (up to 8).</string>
+    <string name="curves_channel_master">Master</string>
+    <string name="curves_channel_red">Red</string>
+    <string name="curves_channel_green">Green</string>
+    <string name="curves_channel_blue">Blue</string>
+    <string name="curves_preset_linear">Linear</string>
+    <string name="curves_preset_scurve">S-Curve</string>
+    <string name="curves_preset_fade">Fade</string>
+    <string name="curves_preset_cinematic">Cinematic</string>
+    <string name="curves_clear">No curves</string>
+    <string name="curves_note">Curves run on the GPU per frame; heavy use can reduce playback smoothness on low-end devices.</string>
+
+    <!-- v0.7.0 (Fase K): per-clip speed ramps -->
+    <string name="tools_speed_ramp">Ramp</string>
+    <string name="ramp_title">Speed ramp</string>
+    <string name="ramp_hint">Tap the graph to add a point, drag to shape the speed, double-tap a point to remove it. The clip’s length on the timeline changes with the ramp.</string>
+    <string name="ramp_preset_normal">Normal 1.0x</string>
+    <string name="ramp_preset_slow">Slow 0.5x</string>
+    <string name="ramp_preset_ultra">Ultra slow 0.25x</string>
+    <string name="ramp_preset_bullet">Bullet time 0.1x</string>
+    <string name="ramp_preset_fast">Fast 2x</string>
+    <string name="ramp_segments">Segments: %1$d / %2$d</string>
+    <string name="ramp_duration">Clip length: %1$s → %2$s</string>
+    <string name="ramp_note">Up to %1$d constant-speed segments per clip. Complex ramps can drop frames on low-end devices; the audio follows the speed without pitch correction.</string>
 </resources>

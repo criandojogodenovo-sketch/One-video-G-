@@ -55,11 +55,38 @@ object TransitionEffects {
      * when it is the NEXT clip (head window). A clip between two
      * transitions carries both. Empty when no valid transition touches the
      * clip — the common case (no GPU cost).
+     *
+     * v0.7.0 (K3): windows live on the clip's OUTPUT timeline (ramp-aware
+     * via [SpeedRampPlanner.outputDurationMs]); for a ramped clip the export
+     * splits it into segments and calls [effectsForClipSegment] with each
+     * segment's output span — windows are SHIFTED (not truncated) into the
+     * segment timebase, so the progress mapping is exact even when a
+     * segment boundary cuts the window (windowStart may be negative: the
+     * shader clamps progress, frames outside the window render identity).
      */
     fun effectsForClip(
         project: OvgProject,
         clip: Clip,
         clipStartMs: Long,
+    ): List<Effect> = effectsForClipSegment(
+        project,
+        clip,
+        segmentOutputStartMs = 0L,
+        segmentOutputEndMs = SpeedRampPlanner.outputDurationMs(clip),
+    )
+
+    /**
+     * The transition windows of [clip] rebased to ONE export segment (its
+     * output span [segmentOutputStartMs, segmentOutputEndMs) in clip-local
+     * output time). Windows entirely outside the segment produce no effect
+     * instance (no GPU cost); inside, the window start is shifted by the
+     * segment start (may be negative — exact progress mapping, see above).
+     */
+    fun effectsForClipSegment(
+        project: OvgProject,
+        clip: Clip,
+        segmentOutputStartMs: Long,
+        segmentOutputEndMs: Long,
     ): List<Effect> {
         if (project.transitions.isEmpty() || project.clips.isEmpty()) return emptyList()
         val plans = TransitionPlanner.plansFor(project.clips, project.transitions)
@@ -67,20 +94,27 @@ object TransitionEffects {
         val effects = mutableListOf<Effect>()
         for (plan in plans) {
             if (plan.clipA.id == clip.id) {
-                effects += TransitionEffect(
-                    kind = plan.transition.kind,
-                    phase = PHASE_OUT,
-                    windowStartLocalMs = plan.windowStartLocalMsOnA,
-                    durationMs = plan.durationMs,
-                )
+                val windowStart = plan.windowStartLocalMsOnA
+                val windowEnd = windowStart + plan.durationMs
+                if (windowEnd > segmentOutputStartMs && windowStart < segmentOutputEndMs) {
+                    effects += TransitionEffect(
+                        kind = plan.transition.kind,
+                        phase = PHASE_OUT,
+                        windowStartLocalMs = windowStart - segmentOutputStartMs,
+                        durationMs = plan.durationMs,
+                    )
+                }
             }
             if (plan.clipB.id == clip.id) {
-                effects += TransitionEffect(
-                    kind = plan.transition.kind,
-                    phase = PHASE_IN,
-                    windowStartLocalMs = 0L,
-                    durationMs = plan.durationMs,
-                )
+                val windowEnd = plan.durationMs
+                if (windowEnd > segmentOutputStartMs && segmentOutputStartMs < segmentOutputEndMs) {
+                    effects += TransitionEffect(
+                        kind = plan.transition.kind,
+                        phase = PHASE_IN,
+                        windowStartLocalMs = 0L - segmentOutputStartMs,
+                        durationMs = plan.durationMs,
+                    )
+                }
             }
         }
         return effects

@@ -9,6 +9,9 @@ import com.onevideog.editor.data.AudioClipItem
 import com.onevideog.editor.data.Clip
 import com.onevideog.editor.data.ClipEffect
 import com.onevideog.editor.data.ClipTransition
+import com.onevideog.editor.data.ColorCurves
+import com.onevideog.editor.data.Curve
+import com.onevideog.editor.data.CurvePoint
 import com.onevideog.editor.data.EffectKind
 import com.onevideog.editor.data.Interpolation
 import com.onevideog.editor.data.Keyframe
@@ -18,6 +21,7 @@ import com.onevideog.editor.data.OverlayKind
 import com.onevideog.editor.data.OverlayTransform
 import com.onevideog.editor.data.ProjectAspect
 import com.onevideog.editor.data.ProjectRepository
+import com.onevideog.editor.data.SpeedPoint
 import com.onevideog.editor.data.TransitionKind
 import com.onevideog.editor.diag.DiagSanitizer
 import com.onevideog.editor.diag.DiagnosticsLogger
@@ -568,6 +572,163 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             meta = listOf(
                 "clip" to DiagSanitizer.fingerprint(clipId),
                 "kind" to kind.name,
+            ),
+        )
+    }
+
+    // region per-clip colour curves (v0.7.0, Fase J) ---------------------------
+
+    /**
+     * Sets (or clears, with null) the clip's tonal curves (J5). Every one of
+     * the four channels is validated by [CurveMath] BEFORE the commit: an
+     * invalid curve never enters the document (logged CURVE_INVALID, no
+     * commit — the same reject-don't-clamp rule as TRANSITION_INVALID). An
+     * all-identity set is normalized to null (no GPU cost). Curves are
+     * decoder inputs — the commit re-prepares the preview through the
+     * signature (same class as effects).
+     */
+    fun setClipCurves(clipId: String, curves: ColorCurves?) {
+        if (curves != null) {
+            val invalid = listOf("master" to curves.master, "red" to curves.red,
+                "green" to curves.green, "blue" to curves.blue)
+                .firstOrNull { (channel, curve) ->
+                    CurveMath.validate(curve)?.also { reason ->
+                        DiagnosticsLogger.w(
+                            "timeline", "CURVE_INVALID", null,
+                            "curve rejected by validation",
+                            meta = listOf(
+                                "clip" to DiagSanitizer.fingerprint(clipId),
+                                "channel" to channel,
+                                "reason" to reason.name,
+                                "points" to curve.points.size.toString(),
+                            ),
+                        )
+                    } != null
+                }
+            if (invalid != null) return
+        }
+        // All-identity curves are semantically "no curves": store null so the
+        // pipeline skips the LUT effect entirely (no GPU cost) and the JSON
+        // stays minimal.
+        val toStore = curves?.takeIf {
+            !(CurveMath.isIdentity(it.master) && CurveMath.isIdentity(it.red) &&
+                CurveMath.isIdentity(it.green) && CurveMath.isIdentity(it.blue))
+        }
+        val project = _ui.value.project ?: return
+        val existing = project.clips.firstOrNull { it.id == clipId }?.curves
+        if (existing == toStore) return
+        commitProject { p ->
+            p.copy(
+                clips = TimelineLogic.withClip(p.clips, clipId) { it.copy(curves = toStore) },
+            )
+        }
+        DiagnosticsLogger.i(
+            "timeline", "CURVES_SET", null,
+            if (toStore == null) "clip curves cleared" else "clip curves set",
+            meta = listOf(
+                "clip" to DiagSanitizer.fingerprint(clipId),
+                "master" to (toStore?.master?.points?.size ?: 0).toString(),
+                "red" to (toStore?.red?.points?.size ?: 0).toString(),
+                "green" to (toStore?.green?.points?.size ?: 0).toString(),
+                "blue" to (toStore?.blue?.points?.size ?: 0).toString(),
+            ),
+        )
+    }
+
+    /**
+     * Convenience for the sheet: updates ONE channel of the clip's curves,
+     * keeping the others (missing channels default to the linear identity).
+     */
+    fun setClipCurveChannel(clipId: String, channel: CurveMath.Channel, curve: Curve) {
+        val project = _ui.value.project ?: return
+        val existing = project.clips.firstOrNull { it.id == clipId }?.curves
+        val linear = Curve(listOf(CurvePoint(0f, 0f), CurvePoint(1f, 1f)))
+        val next = when (channel) {
+            CurveMath.Channel.MASTER -> ColorCurves(
+                master = curve,
+                red = existing?.red ?: linear,
+                green = existing?.green ?: linear,
+                blue = existing?.blue ?: linear,
+            )
+            CurveMath.Channel.RED -> ColorCurves(
+                master = existing?.master ?: linear,
+                red = curve,
+                green = existing?.green ?: linear,
+                blue = existing?.blue ?: linear,
+            )
+            CurveMath.Channel.GREEN -> ColorCurves(
+                master = existing?.master ?: linear,
+                red = existing?.red ?: linear,
+                green = curve,
+                blue = existing?.blue ?: linear,
+            )
+            CurveMath.Channel.BLUE -> ColorCurves(
+                master = existing?.master ?: linear,
+                red = existing?.red ?: linear,
+                green = existing?.green ?: linear,
+                blue = curve,
+            )
+        }
+        setClipCurves(clipId, next)
+    }
+
+    // region per-clip speed ramps (v0.7.0, Fase K) -----------------------------
+
+    /**
+     * Sets (or clears, with an empty list) the clip's speed ramps (K6).
+     * Invalid points are DROPPED (logged SPEED_RAMP_INVALID, spec K1); fewer
+     * than 2 valid points clears the ramps (constant clip.speed); a ramp
+     * producing more than [SpeedRampPlanner.MAX_SEGMENTS] segments is
+     * accepted but logged SPEED_RAMP_LIMIT (the planner truncates, K7).
+     * Ramps are decoder inputs — the commit re-prepares the preview through
+     * the signature.
+     */
+    fun setSpeedRamps(clipId: String, ramps: List<SpeedPoint>) {
+        val project = _ui.value.project ?: return
+        val clip = project.clips.firstOrNull { it.id == clipId } ?: return
+        for ((point, reason) in SpeedRampPlanner.invalidPoints(clip, ramps)) {
+            DiagnosticsLogger.w(
+                "timeline", "SPEED_RAMP_INVALID", null,
+                "speed ramp point dropped",
+                meta = listOf(
+                    "clip" to DiagSanitizer.fingerprint(clipId),
+                    "localTimeMs" to point.localTimeMs.toString(),
+                    "reason" to reason.name,
+                ),
+            )
+        }
+        val sanitized = SpeedRampPlanner.sanitizePoints(clip, ramps) ?: emptyList()
+        if (sanitized == clip.speedRamps) return
+        val truncated = SpeedRampPlanner.wasTruncated(clip.copy(speedRamps = sanitized))
+        if (truncated) {
+            DiagnosticsLogger.w(
+                "timeline", "SPEED_RAMP_LIMIT", null,
+                "speed ramp exceeds the segment limit — will truncate to MAX_SEGMENTS",
+                meta = listOf(
+                    "clip" to DiagSanitizer.fingerprint(clipId),
+                    "max" to SpeedRampPlanner.MAX_SEGMENTS.toString(),
+                ),
+            )
+        }
+        commitProject { p ->
+            p.copy(
+                clips = TimelineLogic.withClip(p.clips, clipId) {
+                    it.copy(speedRamps = sanitized)
+                },
+            )
+        }
+        DiagnosticsLogger.i(
+            "timeline", "SPEED_RAMP_SET", null,
+            if (sanitized.isEmpty()) "speed ramps cleared (constant speed)" else "speed ramps set",
+            meta = listOf(
+                "clip" to DiagSanitizer.fingerprint(clipId),
+                "points" to sanitized.size.toString(),
+                "segments" to SpeedRampPlanner.planSegments(
+                    clip.copy(speedRamps = sanitized),
+                ).size.toString(),
+                "outputDurationMs" to SpeedRampPlanner.outputDurationMs(
+                    clip.copy(speedRamps = sanitized),
+                ).toString(),
             ),
         )
     }

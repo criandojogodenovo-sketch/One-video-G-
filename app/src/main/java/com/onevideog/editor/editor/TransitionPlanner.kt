@@ -74,11 +74,17 @@ object TransitionPlanner {
     fun maxLegalDurationMs(clipA: Clip, clipB: Clip): Long =
         minOf(
             MAX_DURATION_MS,
-            clipA.effectiveDurationMs / 2,
-            clipB.effectiveDurationMs / 2,
+            SpeedRampPlanner.outputDurationMs(clipA) / 2,
+            SpeedRampPlanner.outputDurationMs(clipB) / 2,
         )
 
-    /** Pure legal-duration check used by the planner, the UI and the tests. */
+    /**
+     * Pure legal-duration check used by the planner, the UI and the tests.
+     * v0.7.0: the 50%-of-both rule reads the RAMP-AWARE clip footprint
+     * ([SpeedRampPlanner.outputDurationMs]) — transition windows live on the
+     * project timeline, which is what ramps change. Clips without ramps get
+     * exactly the pre-v0.7.0 value (the constant-speed duration).
+     */
     fun validate(
         clips: List<Clip>,
         transition: ClipTransition,
@@ -96,8 +102,8 @@ object TransitionPlanner {
         // range reason.
         val a = clips[indexA]
         val b = clips[indexB]
-        if (transition.durationMs * 2 > a.effectiveDurationMs ||
-            transition.durationMs * 2 > b.effectiveDurationMs
+        if (transition.durationMs * 2 > SpeedRampPlanner.outputDurationMs(a) ||
+            transition.durationMs * 2 > SpeedRampPlanner.outputDurationMs(b)
         ) {
             return InvalidReason.DURATION_EXCEEDS_HALF
         }
@@ -125,7 +131,7 @@ object TransitionPlanner {
             indexB = indexA + 1,
             clipA = a,
             clipB = clips[indexA + 1],
-            windowStartLocalMsOnA = (a.effectiveDurationMs - transition.durationMs)
+            windowStartLocalMsOnA = (SpeedRampPlanner.outputDurationMs(a) - transition.durationMs)
                 .coerceAtLeast(0),
             durationMs = transition.durationMs,
         )

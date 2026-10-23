@@ -23,8 +23,16 @@ object ProjectMath {
      */
     const val MIN_EMPTY_DURATION_MS = 5_000L
 
-    /** Duration of the concatenated video sequence (timeline ms). */
-    fun videoDurationMs(clips: List<Clip>): Long = clips.sumOf { it.effectiveDurationMs }
+    /** Duration of the concatenated video sequence (timeline ms).
+     *
+     * v0.7.0 (Fase K): per-clip durations are the RAMP-AWARE footprints
+     * ([SpeedRampPlanner.outputDurationMs]) — a speed ramp changes the real
+     * length of its clip, so the sequence length (and with it the v0.3.0
+     * projectDurationMs contract) follows by construction. Clips without
+     * ramps contribute exactly the pre-v0.7.0 value.
+     */
+    fun videoDurationMs(clips: List<Clip>): Long =
+        clips.sumOf { SpeedRampPlanner.outputDurationMs(it) }
 
     /** End time of the latest overlay window (0 when there are none). */
     fun overlayEndMs(overlays: List<OverlayItem>): Long =
@@ -93,13 +101,16 @@ object ProjectMath {
     /**
      * Maps an absolute project time inside the clip at [index] to the local
      * time of the clipped, speed-adjusted media item (0-based window).
+     *
+     * v0.7.0 (K4): ramp-aware — delegates to [SpeedRampPlanner] (which
+     * returns EXACTLY the pre-v0.7.0 value for clips without valid ramps).
      */
     fun projectToItemLocalMs(clip: Clip, projectLocalMs: Long): Long =
-        (projectLocalMs.coerceAtLeast(0) * clip.speed).roundToLong()
+        SpeedRampPlanner.projectToItemLocalMs(clip, projectLocalMs)
 
-    /** Inverse of [projectToItemLocalMs]. */
+    /** Inverse of [projectToItemLocalMs]. v0.7.0: ramp-aware (see above). */
     fun itemLocalToProjectMs(clip: Clip, itemLocalMs: Long): Long =
-        (itemLocalMs.coerceAtLeast(0) / clip.speed).roundToLong()
+        SpeedRampPlanner.itemLocalToProjectMs(clip, itemLocalMs)
 
     /**
      * Clamps a playhead request (scrub tap/drag, transport seek) into the

@@ -63,6 +63,15 @@ object ClipEffectsFactory {
      */
     const val MAX_EFFECTS_PER_CLIP = 3
 
+    /**
+     * v0.7.0 (J4): THE canonical per-clip pipeline order — a documented
+     * contract (PREVIEW_EXPORT_PARITY) locked by ClipEffectsFactoryTest.
+     * [effectsFor] builds exactly this order: constant speed, then basic
+     * colour, then the v0.7.0 tonal CURVES, then the v0.6.0 2D effects,
+     * then the transition windows, then (export only) the overlay textures.
+     */
+    val PIPELINE_ORDER = listOf("speed", "color", "curves", "effects2d", "transitions", "overlays")
+
     /** Preview GL output target height (keeps GPU memory bounded on 4 GB devices). */
     private const val PREVIEW_TARGET_H = 720
 
@@ -89,34 +98,113 @@ object ClipEffectsFactory {
          */
         outputWidthPx: Int = 0,
         outputHeightPx: Int = 0,
+    ): List<Effect> = effectsForSegment(
+        context = context,
+        project = project,
+        clip = clip,
+        clipStartMs = clipStartMs,
+        forPreview = forPreview,
+        speedOverride = null,
+        segmentOutputStartMs = 0L,
+        segmentOutputEndMs = SpeedRampPlanner.outputDurationMs(clip),
+        outputWidthPx = outputWidthPx,
+        outputHeightPx = outputHeightPx,
+    )
+
+    /**
+     * v0.7.0 (K3): the effect list for ONE EXPORT SEGMENT of a ramped clip.
+     * [speedOverride] replaces [Clip.speed] as the SpeedChangeEffect factor
+     * (the segment's constant speed); the transition windows and the overlay
+     * windows — which live on the clip's OUTPUT timeline — are rebased into
+     * the segment timebase [segmentOutputStartMs, segmentOutputEndMs).
+     * With speedOverride = null and the full output span this is EXACTLY the
+     * whole-clip list ([effectsFor] delegates here — one implementation).
+     */
+    fun effectsForSegment(
+        context: Context,
+        project: OvgProject,
+        clip: com.onevideog.editor.data.Clip,
+        clipStartMs: Long,
+        forPreview: Boolean,
+        speedOverride: Float?,
+        segmentOutputStartMs: Long,
+        segmentOutputEndMs: Long,
+        outputWidthPx: Int = 0,
+        outputHeightPx: Int = 0,
     ): List<Effect> {
         val startedAt = SystemClock.elapsedRealtime()
         val effects = mutableListOf<Effect>()
-        if (clip.speed != 1f) {
-            effects.add(SpeedChangeEffect(clip.speed))
+        // 1) speed (PIPELINE_ORDER[0]) — the segment's constant speed when
+        // the export splits a ramped clip (speedOverride), else clip.speed.
+        val speed = speedOverride ?: clip.speed
+        if (speed != 1f) {
+            effects.add(SpeedChangeEffect(speed))
         }
+        // 2) basic colour (PIPELINE_ORDER[1]).
         if (!clip.color.isDefault) {
             effects.add(
                 ColorAdjustmentEffect(clip.color.brightness, clip.color.contrast, clip.color.saturation),
             )
         }
-        // v0.6.0 (Fase I, I5): per-clip 2D effects AFTER speed/colour and
-        // BEFORE overlays — the user's ordering contract for the pipeline.
+        // 3) v0.7.0 (Fase J, J4): advanced tonal curves AFTER basic colour and
+        // BEFORE the 2D effects — the user's ordering contract. Same call for
+        // preview and export: the shader and the four LUT textures are
+        // identical in both paths (preview/export parity by construction).
+        // curves == null / all-identity builds NOTHING (no GPU cost).
+        effects.addAll(ColorCurvesEffects.effectsFor(clip.curves))
+        // 4) v0.6.0 (Fase I, I5): per-clip 2D effects AFTER speed/colour/curves
+        // and BEFORE overlays — the user's ordering contract for the pipeline.
         // Same call for preview and export: the shaders are identical in
         // both paths (preview/export parity by construction).
         effects.addAll(ClipGlEffects.effectsFor(clip.effects))
-        // v0.6.0 (Fase H): transition windows on THIS clip — the out window
+        // 5) v0.6.0 (Fase H): transition windows on THIS clip — the out window
         // on the tail (previous clip) and the in window on the head (next
         // clip). Same list, same shaders, both pipelines (Media3 1.4.1 has
-        // no Transition API — see TransitionEffects docs).
-        effects.addAll(TransitionEffects.effectsForClip(project, clip, clipStartMs))
-        // v0.3.1: preview overlays are rendered by the Compose layer, so the
+        // no Transition API — see TransitionEffects docs). v0.7.0: windows
+        // are rebased into the segment timebase for ramped clips (K3).
+        effects.addAll(
+            TransitionEffects.effectsForClipSegment(
+                project, clip, segmentOutputStartMs, segmentOutputEndMs,
+            ),
+        )
+        // 6) v0.3.1: preview overlays are rendered by the Compose layer, so the
         // preview GL list must NOT contain the OverlayEffect (a second draw
         // would double-expose the overlays where the GL pipeline does work).
         val textures = if (forPreview) {
             ImmutableList.of()
         } else {
-            overlayTextures(context, project, clip, clipStartMs, outputWidthPx, outputHeightPx)
+            // v0.7.0 (K3): the clip's overlay windows live on the clip's
+            // OUTPUT timeline; intersect them with the segment span and shift
+            // them into the segment timebase (empty intersection -> no
+            // texture instance for this segment — no duplicated GPU memory).
+            val segmentWindows = ClipEffectPlan.overlayWindowsForClip(
+                project = project,
+                clip = clip,
+                clipStartMs = clipStartMs,
+            ).mapNotNull { window ->
+                val s = maxOf(window.windowStartLocalMs, segmentOutputStartMs)
+                val e = minOf(window.windowEndLocalMs, segmentOutputEndMs)
+                if (e <= s) {
+                    null
+                } else {
+                    window.copy(
+                        windowStartLocalMs = s - segmentOutputStartMs,
+                        windowEndLocalMs = e - segmentOutputStartMs,
+                    )
+                }
+            }
+            if (segmentWindows.isEmpty()) {
+                ImmutableList.of()
+            } else {
+                texturesForOverlays(
+                    context,
+                    segmentWindows,
+                    clipStartMs + segmentOutputStartMs,
+                    ExpandedOverlays.projectContentAspect(project),
+                    outputWidthPx,
+                    outputHeightPx,
+                )
+            }
         }
         if (textures.isNotEmpty()) {
             effects.add(OverlayEffect(textures))
@@ -136,6 +224,7 @@ object ClipEffectsFactory {
                 "textures" to textures.size.toString(),
                 "elapsedMs" to (SystemClock.elapsedRealtime() - startedAt).toString(),
                 "forPreview" to forPreview.toString(),
+                "segmentMs" to "$segmentOutputStartMs..$segmentOutputEndMs",
                 "thread" to Thread.currentThread().name,
             ),
         )
@@ -162,49 +251,13 @@ object ClipEffectsFactory {
     }
 
     /**
-     * Texture overlays for [clip], FIFO order by zOrder (Media3 draws the
-     * LAST overlay on top, so the list must be ascending by zOrder — see
-     * [OverlayLayout] docs and OverlayEffect's contract).
-     *
-     * v0.5.7: windows are planned over the PARENT overlays (no segment
-     * expansion here) and an animated text overlay becomes ONE
-     * [AnimatedTextOverlay] composite texture instead of one
-     * [KeyframedOverlay] per word/letter segment — same plan, same windows,
-     * same z-order, one GL draw. The planning rules (G5 fallback + limit)
-     * stay in [ExpandedOverlays.animationSpec], shared with the preview.
-     */
-    fun overlayTextures(
-        context: Context,
-        project: OvgProject,
-        clip: com.onevideog.editor.data.Clip,
-        clipStartMs: Long,
-        /** v0.5.9: output frame px for the composite's boxPx log (0 = n/a). */
-        outputWidthPx: Int = 0,
-        outputHeightPx: Int = 0,
-    ): ImmutableList<androidx.media3.effect.TextureOverlay> {
-        val contentAspect = ExpandedOverlays.projectContentAspect(project)
-        val windows = ClipEffectPlan.overlayWindowsForClip(
-            project = project,
-            clip = clip,
-            clipStartMs = clipStartMs,
-        )
-        return texturesForOverlays(
-            context,
-            windows,
-            clipStartMs,
-            contentAspect,
-            outputWidthPx,
-            outputHeightPx,
-        )
-    }
-
-    /**
      * v0.5.1: window -> textures, the ONE builder for every export surface
-     * (per-clip video items AND the empty-project black base item). Same
-     * bitmaps, same z-order, same keyframe math — no per-surface duplication.
-     * [surfaceStartProjectMs] is the project time of the item's local t=0 (the
-     * video clip's timeline start, or 0 for the black base).
-     * [contentAspect] drives the animated-text composite (v0.5.7).
+     * (per-clip video items — whole clips AND ramped segments — AND the
+     * empty-project black base item). Same bitmaps, same z-order, same
+     * keyframe math — no per-surface duplication. [surfaceStartProjectMs] is
+     * the project time of the item's local t=0 (the video clip's timeline
+     * start — or the segment's —, or 0 for the black base). [contentAspect]
+     * drives the animated-text composite (v0.5.7).
      */
     fun texturesForOverlays(
         context: Context,
@@ -336,7 +389,11 @@ object ClipEffectPlan {
         clipStartMs: Long,
     ): List<OverlayWindow> = overlayWindowsForClip(
         overlays = project.overlays,
-        clipEndMs = clipStartMs + clip.effectiveDurationMs,
+        // v0.7.0: the clip's project span uses the RAMP-AWARE footprint
+        // (SpeedRampPlanner.outputDurationMs) — overlay windows live on the
+        // project timeline, which is what speed ramps change. Clips without
+        // ramps get exactly the pre-v0.7.0 value.
+        clipEndMs = clipStartMs + SpeedRampPlanner.outputDurationMs(clip),
         // v0.5.8: frameAspect is the aspect of the frame the overlays are
         // composited onto — the OUTPUT frame. For a fixed-aspect project that
         // IS the project ratio (CompositionFactory builds the composition
@@ -390,11 +447,12 @@ object ClipEffectPlan {
 
     /**
      * Signature of everything the PREVIEW effect list for [clip] VISUALLY
-     * depends on (v0.2.5, revised v0.3.1, revised v0.6.0): clip
-     * identity/trim/speed/colour, the project aspect, the clip's 2D effects
-     * (I5 — effects are GL shader inputs, they MUST re-prepare the decoder,
-     * unlike overlays) and the project transitions (H — transition windows
-     * render through the same GL pipeline).
+     * depends on (v0.2.5, revised v0.3.1, revised v0.6.0, revised v0.7.0):
+     * clip identity/trim/speed/colour, the project aspect, the clip's 2D
+     * effects (I5), the project transitions (H) and — v0.7.0 — the clip's
+     * tonal curves (J4) and speed ramps (K): they change the GL effect list
+     * (curves are GL inputs; ramps change the segment plan and the speed
+     * mapping), so they MUST re-prepare the decoder, same class as effects.
      *
      * The preview uses this as its effects-rebuild revision key. Consequences:
      *  - a playhead move alone NEVER changes the signature (it is not an
@@ -412,6 +470,8 @@ object ClipEffectPlan {
      *    (the GL list itself changes; this is the same class of edit as
      *    colour — one decoder re-prepare per effects edit is accepted and
      *    documented; transition/effect edits are rare, explicit user actions).
+     *  - v0.7.0: clip.curves / clip.speedRamps changes DO change it (same
+     *    class as effects — locked by ClipEffectsFactoryTest).
      * Pure — unit-tested.
      */
     fun effectiveSignature(
@@ -425,6 +485,8 @@ object ClipEffectPlan {
         h = 31 * h + clip.trimEndMs.hashCode()
         h = 31 * h + clip.speed.hashCode()
         h = 31 * h + clip.color.hashCode()
+        h = 31 * h + clip.curves.hashCode()
+        h = 31 * h + clip.speedRamps.hashCode()
         h = 31 * h + clip.effects.hashCode()
         h = 31 * h + project.transitions.hashCode()
         h = 31 * h + project.aspect.hashCode()
