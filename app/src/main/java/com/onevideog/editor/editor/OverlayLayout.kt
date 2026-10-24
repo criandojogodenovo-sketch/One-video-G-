@@ -119,9 +119,12 @@ object OverlayLayout {
         backgroundWidthPx: Int,
         widthFrac: Float,
     ): Float {
-        val bitmapW = bitmapWidthPx.coerceAtLeast(1)
-        val bgW = if (backgroundWidthPx > 0) backgroundWidthPx else bitmapW
-        return widthFrac * bgW / bitmapW
+        // Degenerate content (0/negative width): no meaningful px basis —
+        // return the width fraction unscaled (a 1-px bitmap draws
+        // widthFrac px: invisible, never AMPLIFIED by a bogus ratio).
+        if (bitmapWidthPx <= 0) return widthFrac
+        val bgW = if (backgroundWidthPx > 0) backgroundWidthPx else bitmapWidthPx
+        return widthFrac * bgW / bitmapWidthPx
     }
 
     /** Model rotation (clockwise-positive) -> export rotation (CCW). */

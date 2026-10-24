@@ -91,10 +91,10 @@ class OverlayLayoutTest {
         assertEquals(679.35f, drawnW, 0.5f)
         assertEquals(108.4f, drawnH, 0.5f)
         // Degenerate inputs stay sane: zero background falls back to the
-        // bitmap's own width (natural px, never collapsed), 0-width bitmap
-        // is clamped to 1.
+        // bitmap's own width (natural px, never collapsed); a zero-width
+        // bitmap never gets amplified by a bogus ratio.
         assertEquals(0.5f, OverlayLayout.overlayExportScale(2400, 0, 0.5f), 1e-4f)
-        assertEquals(2f, OverlayLayout.overlayExportScale(0, 1080, 0.5f), 1e-4f)
+        assertEquals(0.5f, OverlayLayout.overlayExportScale(0, 1080, 0.5f), 1e-4f)
     }
 
     @Test
