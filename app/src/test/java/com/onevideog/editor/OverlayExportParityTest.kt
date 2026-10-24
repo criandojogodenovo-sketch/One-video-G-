@@ -125,8 +125,14 @@ class OverlayExportParityTest {
         sx: Float,
         sy: Float,
         rotationDegrees: Float,
+        bgAnchorX: Float = 0f,
+        bgAnchorY: Float = 0f,
     ): List<Pair<Float, Float>> {
-        val m = media3OverlayVertexMatrix(bgW, bgH, bitmapW, bitmapH, sx, sy, rotationDegrees)
+        val m = media3OverlayVertexMatrix(
+            bgW, bgH, bitmapW, bitmapH, sx, sy, rotationDegrees,
+            bgAnchorX = bgAnchorX,
+            bgAnchorY = bgAnchorY,
+        )
         val corners = listOf(-1f to -1f, 1f to -1f, -1f to 1f, 1f to 1f)
         return corners.map { (cx, cy) ->
             val vx = cx
