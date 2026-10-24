@@ -1,10 +1,14 @@
 package com.onevideog.editor.editor
 
 import android.graphics.Bitmap
+import androidx.media3.common.util.Size
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.BitmapOverlay
 import androidx.media3.effect.OverlaySettings
 import com.onevideog.editor.data.OverlayItem
+import com.onevideog.editor.diag.DiagContext
+import com.onevideog.editor.diag.DiagSanitizer
+import com.onevideog.editor.diag.DiagnosticsLogger
 
 /**
  * A Media3 overlay driven by the project model: visibility window, transform
@@ -41,6 +45,25 @@ class KeyframedOverlay(
         }
     }
 
+    /**
+     * v0.8.1 (BUG A fix): the px width of the frame this overlay composites
+     * onto, delivered by the Media3 pipeline — OverlayShaderProgram.configure
+     * calls [configure] with the background size before the first frame
+     * (verified in the 1.4.1 sources). [overlayScaleSettings]-era code
+     * guessed the geometry from aspects only and collapsed rotated text;
+     * the scale is now derived from these REAL px ([OverlayLayout
+     * .overlayExportScale]). Fallback when configure never fired: the
+     * bitmap's own width (drawn at natural px — visible, never collapsed),
+     * with a one-shot diagnostics warn.
+     */
+    private var backgroundWidthPx: Int = 0
+    private var warnedNoBackground = false
+
+    override fun configure(videoSize: Size) {
+        super.configure(videoSize)
+        backgroundWidthPx = videoSize.width
+    }
+
     override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings {
         val localMs = presentationTimeUs / 1000
         if (contentBitmap == null || localMs !in windowStartLocalMs until windowEndLocalMs) {
@@ -50,15 +73,33 @@ class KeyframedOverlay(
         val projectMs = clipStartMs + Math.round(localMs.toFloat())
         val transform = KeyframeEvaluator.evaluate(overlay, projectMs)
         val (ndcX, ndcY) = OverlayLayout.toBackgroundNdc(transform.x, transform.y)
-        val bitmapAspect = OverlayBitmapRenderer.bitmapAspect(contentBitmap)
-        val (sx, sy) = OverlayLayout.overlayScaleSettings(frameAspect, bitmapAspect, transform.scale)
+        val bitmap = contentBitmap
+        val s = OverlayLayout.overlayExportScale(
+            bitmap?.width ?: 1,
+            backgroundWidthPx,
+            transform.scale,
+        )
+        if (backgroundWidthPx <= 0 && !warnedNoBackground) {
+            warnedNoBackground = true
+            DiagnosticsLogger.w(
+                "export", "OVERLAY_BG_SIZE_FALLBACK", DiagContext.currentOpId(),
+                "configure(videoSize) never fired — overlay scaled to its own px width",
+                meta = listOf(
+                    "ovId" to DiagSanitizer.fingerprint(overlay.id),
+                    "frameAspect" to frameAspect.toString(),
+                ),
+            )
+        }
         return OverlaySettings.Builder()
             .setBackgroundFrameAnchor(
                 ndcX.coerceIn(-1f, 1f),
                 ndcY.coerceIn(-1f, 1f),
             )
             .setOverlayFrameAnchor(0f, 0f)
-            .setScale(sx, sy)
+            // v0.8.1: UNIFORM scale under the verified Media3 1.4.1 semantics
+            // (drawn px = bitmap px * scale) — keeps the bitmap aspect at any
+            // rotation, matching the preview's box exactly.
+            .setScale(s, s)
             .setRotationDegrees(OverlayLayout.toExportRotation(transform.rotationDeg))
             .setAlphaScale(transform.opacity.coerceIn(0f, 1f))
             .build()

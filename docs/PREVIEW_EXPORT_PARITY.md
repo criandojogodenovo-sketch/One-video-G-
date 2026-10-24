@@ -11,6 +11,7 @@ call the same functions — neither has a second implementation:
 | Duration / playhead      | `ProjectMath`                            | playhead clamp, transport labels  | composition length, storage preflight      |
 | Overlay transform @ t    | `KeyframeEvaluator.evaluate`             | overlay canvas                    | `KeyframedOverlay.getOverlaySettings`      |
 | Position/scale/rotation  | `OverlayLayout` (NDC bridge)             | canvas placement                  | `OverlaySettings` anchors/scale/rotation   |
+| Overlay scale px (v0.8.1) | `OverlayLayout.overlayExportScale` (THE ONE scale math: `s = widthFrac × frameW / bitmapW`, UNIFORM — verified against Media3 1.4.1 `OverlayShaderProgramPixelTest` goldens: drawn px = bitmap px × scale, clean rotation) | canvas placement via `previewSize` (same box) | `KeyframedOverlay`/`AnimatedTextOverlay` capture the real background px in `configure(videoSize)` and set `setScale(s, s)` |
 | Overlay bitmaps          | `OverlayBitmapRenderer` (LruCache)       | same bitmap instance              | same bitmap instance                       |
 | Colour adjustments       | `ColorMatrixMath`                        | hardware-layer `ColorMatrix`      | `ColorAdjustmentEffect` (RgbMatrix)        |
 | Audio placement          | `AudioTimeline.segmentsFor`              | `AudioPreviewController`          | audio `EditedMediaItemSequence` builder    |
@@ -252,6 +253,33 @@ tick (stutter/silence for any trimmed clip). The export plan is unchanged.
    `SpeedRampPlanner.sanitizePoints` (self-healing), but the ramp is not
    re-scaled to the new extents. Trim behaves the same way (out-of-domain
    points are ignored, never crash).
+17. **Overlay scale semantics (v0.8.1 — device-reported BUG A fix).** Media3
+   1.4.1's `OverlayShaderProgram` draws an overlay at
+   `bitmap_px × (scale.x, scale.y)`, rotated cleanly by `rotationDegrees`
+   (`OverlayMatrixProvider` conjugates the rotation with the overlay aspect)
+   and centred on `backgroundFrameAnchor` — proven against Media3's own
+   `OverlayShaderProgramPixelTest` goldens (bitmap 304×84 on 1080×720 draws
+   304×84 at scale (1,1); 84×304 at rotation 90; 1080×84 at scale
+   (1080/304, 1)). The pre-v0.8.1 formula assumed the overlay quad spans the
+   whole frame and collapsed rotated text into a ~2 px diagonal line (drawn
+   757×10.8 px instead of 679×108 px for the reported block). The export now
+   sets ONE uniform scale (`OverlayLayout.overlayExportScale`); the previous
+   `overlayScaleSettings` function is REMOVED. The three golden-anchor tests
+   in `OverlayExportParityTest` fail if a Media3 upgrade ever changes these
+   semantics; the corner-parity tests (−55°/45°/90°/0°, portrait + landscape)
+   hold preview and export within 1 px.
+18. **Overlay background = pre-Presentation frame (documented, unchanged).**
+   Export overlays composite on the DECODED frame of each item — the
+   composition-level `Presentation` (resolution/aspect) is applied after the
+   per-item effects, so `TextureOverlay.configure(videoSize)` receives the
+   pre-Presentation px. For SOURCE projects (and any project whose source
+   matches the output aspect) that frame IS the content; for fixed-aspect
+   projects with mismatched sources the overlay maps onto the pre-P frame
+   (the same convention the NDC anchors already used before v0.8.1). The
+   uniform scale keeps the BITMAP aspect exact in every case; if a future
+   release wants output-frame-relative geometry for mismatched
+   fixed-aspect projects, a per-item Presentation must move BEFORE the
+   overlay effect (contract change — out of scope for a fix release).
 
 ## What "parity" means here (verification status)
 

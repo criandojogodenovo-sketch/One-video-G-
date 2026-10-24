@@ -84,21 +84,44 @@ object OverlayLayout {
         ((ndcX + 1f) / 2f) to ((1f - ndcY) / 2f)
 
     /**
-     * `OverlaySettings.setScale` values that render a bitmap with aspect
-     * [bitmapAspect] (w/h) at [widthFrac] of the frame width.
+     * v0.8.1 (BUG A fix — device report, realme RMX3624): THE OverlaySettings
+     * scale the export must use so a bitmap renders EXACTLY like the preview.
      *
-     * In Media3 the overlay quad spans the whole frame before scaling, so
-     * scale.x = widthFrac and scale.y keeps the bitmap's aspect:
-     * (widthFrac * frameW / bitmapAspect) / frameH.
+     * Verified against the Media3 1.4.1 sources AND its own pixel tests
+     * (OverlayShaderProgramPixelTest, goldens measured: bitmap 304x84 on a
+     * 1080x720 frame draws 304x84 at scale (1,1), 84x304 at rotation 90,
+     * 1080x84 at scale (1080/304, 1)): the overlay is drawn at
+     * `bitmap_px * (scale.x, scale.y)` — rotated cleanly by rotationDegrees
+     * (OverlayMatrixProvider wraps the rotation in an overlay-aspect
+     * conjugation) and centred on backgroundFrameAnchor. The overlay quad
+     * does NOT span the whole frame — the model the previous
+     * `overlayScaleSettings` formula assumed. That formula (sx = widthFrac,
+     * sy = widthFrac*frameAspect/bitmapAspect) collapsed the drawn height to
+     * bitmapH*widthFrac*frameAspect/bitmapAspect — for the reported text
+     * block (1203x192 px, frame 1080x1920, scale 0.629) just 10.8 px instead
+     * of 108.4 px: the device's "thin diagonal line" once rotated.
+     *
+     * Under the verified semantics the fix is ONE uniform scale:
+     *   s = widthFrac * backgroundWidthPx / bitmapWidthPx
+     * so drawn width = bitmapW*s = widthFrac*backgroundW and drawn height =
+     * bitmapH*s = drawnW/bitmapAspect — the same box the preview computes
+     * with [previewSize]. Rotation/position parity is unchanged
+     * ([toExportRotation] / [toBackgroundNdc]). The background px is the
+     * frame the OverlayEffect composites onto, delivered to each overlay by
+     * `TextureOverlay.configure(videoSize)` (called by
+     * OverlayShaderProgram.configure — verified in the 1.4.1 sources).
+     *
+     * Pure — unit-tested; the parity suite round-trips it through the
+     * faithful Media3 matrix port, so preview and export cannot drift.
      */
-    fun overlayScaleSettings(
-        frameAspect: Float,
-        bitmapAspect: Float,
+    fun overlayExportScale(
+        bitmapWidthPx: Int,
+        backgroundWidthPx: Int,
         widthFrac: Float,
-    ): Pair<Float, Float> {
-        val safeAspect = if (abs(bitmapAspect) < 1e-6f) 1f else bitmapAspect
-        val sy = widthFrac * frameAspect / safeAspect
-        return widthFrac to sy
+    ): Float {
+        val bitmapW = bitmapWidthPx.coerceAtLeast(1)
+        val bgW = if (backgroundWidthPx > 0) backgroundWidthPx else bitmapW
+        return widthFrac * bgW / bitmapW
     }
 
     /** Model rotation (clockwise-positive) -> export rotation (CCW). */

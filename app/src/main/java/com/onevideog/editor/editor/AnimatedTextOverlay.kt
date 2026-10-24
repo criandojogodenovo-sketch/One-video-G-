@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
+import androidx.media3.common.util.Size
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.BitmapOverlay
 import androidx.media3.effect.OverlaySettings
@@ -121,6 +122,20 @@ class AnimatedTextOverlay(
     private val canvas: Canvas by lazy { Canvas(scratch) }
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
 
+    /**
+     * v0.8.1 (BUG A fix): the px width of the composite background frame,
+     * delivered by OverlayShaderProgram.configure (verified in the 1.4.1
+     * sources) — the REAL basis of the [OverlayLayout.overlayExportScale]
+     * uniform scale. Fallback when configure never fired: the block's own
+     * width (natural px, never collapsed).
+     */
+    private var backgroundWidthPx: Int = 0
+
+    override fun configure(videoSize: Size) {
+        super.configure(videoSize)
+        backgroundWidthPx = videoSize.width
+    }
+
     override fun getBitmap(presentationTimeUs: Long): Bitmap {
         val localMs = presentationTimeUs / 1000
         if (localMs < windowStartLocalMs || localMs >= windowEndLocalMs) {
@@ -204,11 +219,16 @@ class AnimatedTextOverlay(
             } else {
                 "n/a"
             }
-            val (sx, sy) = OverlayLayout.overlayScaleSettings(
-                frameAspect, blockAspectW, parentScale,
-            )
+            // v0.8.1 (BUG A fix): boxPx under the VERIFIED Media3 1.4.1
+            // semantics (drawn px = bitmap px * uniform scale): the drawn
+            // width is transform.scale * backgroundW — as a fraction of the
+            // output frame that is transform.scale of outputW (the uniform
+            // scale maps content fractions 1:1), and the height keeps the
+            // block aspect: width / blockAspectW. The previous sy formula
+            // logged (and drew) a collapsed height.
+            val boxW = parentEval.scale * outputWidthPx.coerceAtLeast(0)
             val boxPx = if (outputWidthPx > 0 && outputHeightPx > 0) {
-                "${Math.round(sx * outputWidthPx)}x${Math.round(sy * outputHeightPx)}"
+                "${Math.round(boxW)}x${Math.round(boxW / blockAspectW)}"
             } else {
                 "n/a"
             }
@@ -224,6 +244,8 @@ class AnimatedTextOverlay(
                     "scale" to "%.4f".format(Locale.US, parentEval.scale),
                     "boxPx" to boxPx,
                     "framePx" to frameBasis,
+                    "frameAspect" to "%.4f".format(Locale.US, frameAspect),
+                    "bgWidthPx" to backgroundWidthPx.toString(),
                     "parentScale" to "%.4f".format(Locale.US, parentScale),
                     "blockFracW" to "%.4f".format(Locale.US, parentScale),
                     "blockFracH" to "%.4f".format(Locale.US, blockHeightFrac),
@@ -246,14 +268,21 @@ class AnimatedTextOverlay(
         val projectMs = clipStartMs + Math.round(localMs.toFloat())
         val transform = KeyframeEvaluator.evaluate(parent, projectMs)
         val (ndcX, ndcY) = OverlayLayout.toBackgroundNdc(transform.x, transform.y)
-        val (sx, sy) = OverlayLayout.overlayScaleSettings(frameAspect, blockAspectW, transform.scale)
+        // v0.8.1 (BUG A fix): UNIFORM scale under the verified Media3 1.4.1
+        // semantics (drawn px = bitmap px * scale) — the composite block
+        // keeps its aspect at any parent rotation, matching the preview.
+        val s = OverlayLayout.overlayExportScale(
+            blockWidthPx,
+            backgroundWidthPx,
+            transform.scale,
+        )
         return OverlaySettings.Builder()
             .setBackgroundFrameAnchor(
                 ndcX.coerceIn(-1f, 1f),
                 ndcY.coerceIn(-1f, 1f),
             )
             .setOverlayFrameAnchor(0f, 0f)
-            .setScale(sx, sy)
+            .setScale(s, s)
             .setRotationDegrees(OverlayLayout.toExportRotation(transform.rotationDeg))
             .setAlphaScale(transform.opacity.coerceIn(0f, 1f))
             .build()
