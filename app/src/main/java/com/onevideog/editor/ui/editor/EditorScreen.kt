@@ -1,6 +1,7 @@
 package com.onevideog.editor.ui.editor
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -464,35 +465,55 @@ private fun TransportBar(viewModel: EditorViewModel) {
     }
 }
 
+/**
+ * v0.8.1 (BUG B fix — device report: the FORMAT/aspect tool was unreachable):
+ * the ONE toolbar list — tool order and icon, rendered by [ToolBarRow].
+ *
+ * Root cause of the device report: the tool set grew across releases
+ * (v0.7.0 added CURVES + SPEED_RAMP) while the Row stayed non-scrollable —
+ * 13 tools + 2 import buttons at 44 dp = 660 dp of content on a ~360-393 dp
+ * screen, so every button past the edge was silently clipped. The ASPECT
+ * tool sat exactly at slot 9 — the first one off-screen. The row is now
+ * horizontally scrollable and the list is TOP-LEVEL so the coverage test
+ * (ToolBarCoverageTest) can prove every Tool enum entry has an icon slot —
+ * the toolbar can never silently drop a tool again. (Sheet coverage is
+ * compile-enforced: ToolSheet's `when` has no else branch, so a new Tool
+ * without a panel fails the build.)
+ */
+internal val TOOLBAR_TOOLS: List<Pair<Tool, androidx.compose.ui.graphics.vector.ImageVector>> = listOf(
+    Tool.LAYERS to Icons.Filled.Layers,
+    Tool.TRIM to Icons.Filled.ContentCut,
+    Tool.SPLIT to Icons.Filled.Add,
+    Tool.VOLUME to Icons.Filled.VolumeUp,
+    Tool.SPEED to Icons.Filled.Speed,
+    Tool.SPEED_RAMP to Icons.Filled.Timeline,
+    Tool.ASPECT to Icons.Filled.AspectRatio,
+    Tool.COLOR to Icons.Filled.Palette,
+    Tool.CURVES to Icons.Filled.Tune,
+    Tool.EFFECTS to Icons.Filled.BlurOn,
+    Tool.TEXT to Icons.Filled.TextFields,
+    Tool.IMAGE to Icons.Filled.Photo,
+    Tool.AUDIO to Icons.Filled.AudioFile,
+)
+
 @Composable
 private fun ToolBarRow(
     onImport: () -> Unit,
     onTool: (Tool) -> Unit,
     hasContent: Boolean,
 ) {
-    val tools = remember {
-        listOf(
-            Tool.LAYERS to Icons.Filled.Layers,
-            Tool.TRIM to Icons.Filled.ContentCut,
-            Tool.SPLIT to Icons.Filled.Add,
-            Tool.VOLUME to Icons.Filled.VolumeUp,
-            Tool.SPEED to Icons.Filled.Speed,
-            Tool.SPEED_RAMP to Icons.Filled.Timeline,
-            Tool.ASPECT to Icons.Filled.AspectRatio,
-            Tool.COLOR to Icons.Filled.Palette,
-            Tool.CURVES to Icons.Filled.Tune,
-            Tool.EFFECTS to Icons.Filled.BlurOn,
-            Tool.TEXT to Icons.Filled.TextFields,
-            Tool.IMAGE to Icons.Filled.Photo,
-            Tool.AUDIO to Icons.Filled.AudioFile,
-        )
-    }
+    val tools = TOOLBAR_TOOLS
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            // v0.8.1 (BUG B): the row overflows on every phone width (15
+            // x 44 dp buttons) — scroll it so NO tool is ever unreachable
+            // (the device report's missing FORMAT tool was clipped, not
+            // removed).
+            .horizontalScroll(rememberScrollState())
             .background(MaterialTheme.colorScheme.surface)
             .padding(vertical = 6.dp, horizontal = 4.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         IconButton(onClick = onImport, modifier = Modifier.size(44.dp)) {
             Icon(

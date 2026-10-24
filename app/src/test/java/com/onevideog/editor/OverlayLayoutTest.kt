@@ -74,20 +74,27 @@ class OverlayLayoutTest {
     }
 
     @Test
-    fun `export scale settings and preview size agree`() {
-        // A bitmap of aspect 2:1 placed at 0.3 width fraction on a 16:9 frame.
-        val frameAspect = 16f / 9f
-        val (sx, sy) = OverlayLayout.overlayScaleSettings(frameAspect, 2f, 0.3f)
-        // Preview: drawn size in content px for a content rect of 1920x1080.
-        val (pw, ph) = OverlayLayout.previewSize(1920f, 1080f, 2f, 0.3f)
-        // Export: overlay occupies sx*frameW x sy*frameH of the source frame,
-        // which becomes the content rect after Presentation scaling.
-        val exportW = sx * 1920f
-        val exportH = sy * 1080f
-        assertEquals(pw, exportW, 0.01f)
-        assertEquals(ph, exportH, 0.01f)
-        // The bitmap is not distorted.
-        assertEquals(2f, pw / ph, 1e-3f)
+    fun `export uniform scale and preview size agree`() {
+        // v0.8.1 (BUG A fix): the export draws bitmap_px * scale (verified
+        // against Media3 1.4.1's OverlayShaderProgramPixelTest goldens), so
+        // ONE uniform scale must reproduce the preview's box: drawn width =
+        // widthFrac * backgroundW, height = width / bitmapAspect.
+        // A text-like block of 1203x192 px on a 1080x1920 background.
+        val s = OverlayLayout.overlayExportScale(1203, 1080, 0.629f)
+        val drawnW = 1203f * s
+        val drawnH = 192f * s
+        val (pw, ph) = OverlayLayout.previewSize(1080f, 1920f, 1203f / 192f, 0.629f)
+        assertEquals(pw, drawnW, 0.01f)
+        assertEquals(ph, drawnH, 0.01f)
+        // The bitmap is not distorted — the reported collapse (10.8 px tall)
+        // is gone: the height is 1/10th of the frame width scaled, not 1/100th.
+        assertEquals(679.35f, drawnW, 0.5f)
+        assertEquals(108.4f, drawnH, 0.5f)
+        // Degenerate inputs stay sane: zero background falls back to the
+        // bitmap's own width (natural px, never collapsed); a zero-width
+        // bitmap never gets amplified by a bogus ratio.
+        assertEquals(0.5f, OverlayLayout.overlayExportScale(2400, 0, 0.5f), 1e-4f)
+        assertEquals(0.5f, OverlayLayout.overlayExportScale(0, 1080, 0.5f), 1e-4f)
     }
 
     @Test
