@@ -51,9 +51,12 @@ class ClipEffectsFactoryTest {
     // ---------------------------------------------------------- pipeline order
 
     @Test
-    fun `the canonical pipeline order is speed color curves effects2d transitions overlays`() {
+    fun `the canonical pipeline order is speed camera color curves effects2d transitions overlays`() {
+        // v0.9.0 (Fase L2): the 2.5D camera sits right after speed — it
+        // reframes the footage; colour/curves/2D effects/transitions then
+        // apply to the camera-framed frame, identically in both pipelines.
         assertEquals(
-            listOf("speed", "color", "curves", "effects2d", "transitions", "overlays"),
+            listOf("speed", "camera", "color", "curves", "effects2d", "transitions", "overlays"),
             ClipEffectsFactory.PIPELINE_ORDER,
         )
     }
@@ -179,6 +182,81 @@ class ClipEffectsFactoryTest {
         assertEquals(
             TransitionPlanner.InvalidReason.DURATION_EXCEEDS_HALF,
             TransitionPlanner.validate(listOf(c, other), t),
+        )
+    }
+
+    // -------------------------------------------------- v0.9.0 camera (L2)
+
+    @Test
+    fun `setting the camera changes the signature - it is a GL input`() {
+        val base = project(clip())
+        val withCamera = base.copy(
+            camera = com.onevideog.editor.data.CameraState(panX = 0.1f, zoom = 1.5f),
+        )
+        assertNotEquals(
+            ClipEffectPlan.effectiveSignature(base, base.clips[0], 0),
+            ClipEffectPlan.effectiveSignature(withCamera, withCamera.clips[0], 0),
+        )
+        // Clearing returns to the base.
+        assertEquals(
+            ClipEffectPlan.effectiveSignature(base, base.clips[0], 0),
+            ClipEffectPlan.effectiveSignature(
+                withCamera.copy(camera = com.onevideog.editor.data.CameraState()),
+                withCamera.clips[0],
+                0,
+            ),
+        )
+    }
+
+    @Test
+    fun `overlay styles and depth stay OUTSIDE the signature - v0_3_1 intact`() {
+        val base = project(clip())
+        val styled = base.copy(
+            overlays = listOf(
+                com.onevideog.editor.data.OverlayItem(
+                    id = "o1",
+                    kind = com.onevideog.editor.data.OverlayKind.TEXT,
+                    startMs = 0,
+                    endMs = 5_000,
+                    text = "x",
+                    zDepth = -0.5f,
+                    style = com.onevideog.editor.data.OverlayStylePresets.SOFT,
+                ),
+            ),
+        )
+        assertEquals(
+            ClipEffectPlan.effectiveSignature(base, base.clips[0], 0),
+            ClipEffectPlan.effectiveSignature(styled, styled.clips[0], 0),
+        )
+    }
+
+    @Test
+    fun `depth defines the draw order - zOrder breaks ties (D2)`() {
+        val front = com.onevideog.editor.data.OverlayItem(
+            id = "front", kind = com.onevideog.editor.data.OverlayKind.TEXT,
+            startMs = 0, endMs = 5_000, text = "front", zOrder = 0, zDepth = 1f,
+        )
+        val back = com.onevideog.editor.data.OverlayItem(
+            id = "back", kind = com.onevideog.editor.data.OverlayKind.TEXT,
+            startMs = 0, endMs = 5_000, text = "back", zOrder = 9, zDepth = -1f,
+        )
+        val tieA = com.onevideog.editor.data.OverlayItem(
+            id = "tieA", kind = com.onevideog.editor.data.OverlayKind.TEXT,
+            startMs = 0, endMs = 5_000, text = "a", zOrder = 2,
+        )
+        val tieB = com.onevideog.editor.data.OverlayItem(
+            id = "tieB", kind = com.onevideog.editor.data.OverlayKind.TEXT,
+            startMs = 0, endMs = 5_000, text = "b", zOrder = 5,
+        )
+        val windows = ClipEffectPlan.overlayWindowsForClip(
+            overlays = listOf(front, back, tieB, tieA),
+            clipEndMs = 5_000,
+            frameAspect = 16f / 9f,
+        )
+        // Deeper first (regardless of zOrder), then zOrder within a depth.
+        assertEquals(
+            listOf("back", "tieA", "tieB", "front"),
+            windows.map { it.overlay.id },
         )
     }
 }

@@ -274,6 +274,10 @@ object CompositionFactory {
             ExpandedOverlays.projectContentAspect(project),
             outW,
             outH,
+            // v0.9.0 (L2): the overlays on the black base ride the project
+            // camera exactly like the per-clip path (coherent parallax in
+            // video-less projects).
+            project.camera,
         )
         val videoEffects = if (overlayTextures.isEmpty()) {
             emptyList<androidx.media3.common.Effect>()

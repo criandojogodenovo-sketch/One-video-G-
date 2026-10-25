@@ -2,7 +2,7 @@
 
 ## Principle
 
-There is exactly **one** authoritative project model (`OvgProject`, schema v5)
+There is exactly **one** authoritative project model (`OvgProject`, schema v6 — v0.9.0; additive over v5)
 and **one** set of pure math objects. The preview and the export pipeline both
 call the same functions — neither has a second implementation:
 
@@ -12,6 +12,8 @@ call the same functions — neither has a second implementation:
 | Overlay transform @ t    | `KeyframeEvaluator.evaluate`             | overlay canvas                    | `KeyframedOverlay.getOverlaySettings`      |
 | Position/scale/rotation  | `OverlayLayout` (NDC bridge)             | canvas placement                  | `OverlaySettings` anchors/scale/rotation   |
 | Overlay scale px (v0.8.1) | `OverlayLayout.overlayExportScale` (THE ONE scale math: `s = widthFrac × frameW / bitmapW`, UNIFORM — verified against Media3 1.4.1 `OverlayShaderProgramPixelTest` goldens: drawn px = bitmap px × scale, clean rotation) | canvas placement via `previewSize` (same box) | `KeyframedOverlay`/`AnimatedTextOverlay` capture the real background px in `configure(videoSize)` and set `setScale(s, s)` |
+| 2.5D camera (v0.9.0) | `CameraMath` (THE ONE camera math: `evaluate` pose @ t, `affineForDepth(pose, zDepth)`, `applyToTransform`, `videoPlaneMatrixValues` — pure, JVM-tested) + `CameraTransformEffect` (Media3 1.4.1 `MatrixTransformation`, stock shader) | `computePlacements` maps every overlay through the SAME `CameraMath.applyToTransform`; the video plane runs the SAME effect via `setVideoEffects` | `CameraTransformEffect` in the per-clip list (PIPELINE_ORDER "camera"); overlays map through `CameraMath` then the UNCHANGED v0.8.1 paths (`toBackgroundNdc` + `setScale(s,s)` + `toExportRotation`) |
+| Overlay styles (v0.9.0) | `OverlayStyleBake` (pure IntArray bake: separable Gaussian shadow + glow, deterministic goldens) + `OverlayBitmapRenderer.styledBitmap` (ONE cache, `styledKey` = content+style, 12 MB dedicated cap, OVERLAY_BAKE evidence) | `resolveRender` returns `BakedImage` from the SAME styled cache entry (async bake, raw render until it lands) | `texturesForOverlays` fetches the SAME `styledBitmap` instance and passes its `boxScale` into `KeyframedOverlay` |
 | Overlay bitmaps          | `OverlayBitmapRenderer` (LruCache)       | same bitmap instance              | same bitmap instance                       |
 | Colour adjustments       | `ColorMatrixMath`                        | hardware-layer `ColorMatrix`      | `ColorAdjustmentEffect` (RgbMatrix)        |
 | Audio placement          | `AudioTimeline.segmentsFor`              | `AudioPreviewController`          | audio `EditedMediaItemSequence` builder    |
@@ -480,3 +482,57 @@ tick (stutter/silence for any trimmed clip). The export plan is unchanged.
     (`AUDIO_KEYFRAME_INVALID`) and defensively re-sanitized in
     `GainAutomationAudioProcessor.profileOf` (documents edited externally
     cannot poison the pipeline).
+28. **The 2.5D camera is affine, keyframed and parity-locked (v0.9.0).**
+    The video plane carries the project camera through a Media3 1.4.1
+    `MatrixTransformation` (`CameraTransformEffect`) — verified against the
+    REAL 1.4.1 sources during the L2b spike: the stock transformation vertex
+    shader maps the frame NDC affinely (`gl_Position = uTransformationMatrix`
+    `* aFramePosition`), the output frame KEEPS its size and pixels pushed
+    outside NDC are CLIPPED (a camera crop). The spike first named
+    `ScaleAndRotateTransformation`, but its real `configure` RESIZES the
+    output frame to preserve every pixel (bbox compensation) — a uniform
+    zoom is a visual no-op downstream of the SCALE_TO_FIT Presentation and
+    it offers no pan — so the MatrixTransformation vehicle is the one the
+    gate passed on (`VideoPlaneCameraParityTest`: probe-quad corners
+    preview↔export ≤ 1 px, 9:16 AND 16:9, incl. keyframed poses). Every
+    overlay receives the camera through the SAME pure `CameraMath` with
+    depth-proportional strength (zDepth 0 rides the video plane EXACTLY;
+    −1 moves half, +1 moves 1.5×), then flows through the UNCHANGED v0.8.1
+    paths (`OverlayExportParityTest` extended: camera × depths × times ×
+    2 aspects ≤ 1 px). Camera edits change the preview GL list →
+    `effectiveSignature` includes `project.camera` (one decoder re-prepare
+    per camera commit, the same class as colour edits). Identity cameras
+    add ZERO effect instances (pre-v0.9.0 behaviour byte-exact).
+29. **Overlay styles are ONE baked bitmap, not GPU work (v0.9.0).**
+    Shadow/glow are baked by the pure `OverlayStyleBake` (separable
+    Gaussian over the alpha, deterministic, JVM goldens) into ONE bitmap
+    that BOTH pipelines consume from the SAME cache entry
+    (`styledBitmap`/`styledKey` = content+style) — style parity by
+    construction, zero new shaders (Opção A rule). The bake is symmetric
+    around the content, and both paths multiply the placement scale by the
+    SAME `boxScale` (bakedWidth/sourceWidth), so the CONTENT box stays
+    exactly the unstyled one and the style only adds pixels around it
+    (locked by `OverlayExportParityTest.styled overlays keep the content
+    box identical on both frames`). Rules and limits: (a) animated text
+    IGNORES the style in v1 (the per-segment model is planned from the
+    unstyled block metrics — `effectiveStyle` is the ONE rule, UI hints
+    it); (b) styled bitmaps live in a DEDICATED 12 MB LruCache with
+    eviction evidence (`OVERLAY_BAKE`: ms, px, hit/miss, evictions);
+    (c) a failed bake falls back to the RAW render on both paths — never
+    a crash, never a blank overlay; (d) the bake is CPU one-off per
+    content/style state — no per-frame cost, no GPU cost.
+30. **Depth planes: draw order, anchors and honest edges (v0.9.0).**
+    `zDepth` (−1 deepest .. +1 closest, 0 = the video plane) defines the
+    draw order when it differs (deeper drawn FIRST — Media3 draws the last
+    texture on top); the existing `zOrder` is the tie-break and remains
+    what bring-to-front/send-to-back manipulate. The mapped overlay centre
+    clamps to the content edge (0..1) in the SHARED `CameraMath` — the
+    same border the export anchors already coerce to
+    (`coerceIn(-1,1)`), so an overlay pushed past the edge sticks at the
+    border IDENTICALLY on both paths (its box still clips visually); the
+    local suite caught the asymmetry before the release and the clamp is
+    the parity-first fix. The depth/parallax mapping for fixed-aspect
+    projects with mismatched sources follows the SAME pre-Presentation
+    convention the anchors already use (limitation 18) — coherent for
+    SOURCE projects and matching aspects, drift documented for mismatched
+    letterboxed sources.

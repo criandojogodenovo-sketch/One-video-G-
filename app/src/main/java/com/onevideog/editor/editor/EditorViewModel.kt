@@ -1219,6 +1219,156 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         updateOverlay(overlayId) { it.copy(interpolation = interpolation) }
     }
 
+    // region depth / style / camera (v0.9.0, Fase L) ---------------------------
+
+    /**
+     * v0.9.0 (L1): sets the baked shadow/glow style of an overlay. Overlay
+     * state only — the style renders through the ONE baked bitmap both
+     * pipelines consume (never the GL effect list, so the preview decoder is
+     * untouched — v0.3.1 contract). null = no style (the pre-v0.9.0 path).
+     */
+    fun setOverlayStyle(overlayId: String, style: com.onevideog.editor.data.OverlayStyle?) {
+        val safe = style?.takeIf { !it.isDefault }?.sanitized()
+        updateOverlay(overlayId) { it.copy(style = safe) }
+        DiagnosticsLogger.i(
+            "timeline", "OVERLAY_STYLE_SET", null,
+            if (safe == null) "overlay style cleared" else "overlay style set",
+            meta = listOf(
+                "ovId" to DiagSanitizer.fingerprint(overlayId),
+                "shadow" to (safe?.shadow != null).toString(),
+                "glow" to (safe?.glow != null).toString(),
+            ),
+        )
+    }
+
+    /**
+     * v0.9.0 (L2): sets an overlay's depth plane (-1 deepest .. +1 closest,
+     * 0 = the video plane). Draw-order rule D2: depth defines the draw order
+     * when it differs; zOrder is the tie-break. Overlay state — never the
+     * preview decoder.
+     */
+    fun setOverlayZDepth(overlayId: String, depth: Float) {
+        val safe = if (depth.isFinite()) depth.coerceIn(CameraMath.DEPTH_MIN, CameraMath.DEPTH_MAX)
+        else 0f
+        updateOverlay(overlayId) { it.copy(zDepth = safe) }
+        DiagnosticsLogger.i(
+            "timeline", "OVERLAY_DEPTH_SET", null,
+            "overlay depth set",
+            meta = listOf(
+                "ovId" to DiagSanitizer.fingerprint(overlayId),
+                "zDepth" to safe.toString(),
+            ),
+        )
+    }
+
+    /**
+     * v0.9.0 (L2): sets the project camera's static pose (pan/zoom). Camera
+     * edits DO change the preview GL effect list (the MatrixTransformation
+     * carries the camera) — the signature re-prepares the decoder, the same
+     * class as colour/effect edits, documented in PREVIEW_EXPORT_PARITY.
+     */
+    fun setCamera(panX: Float, panY: Float, zoom: Float) {
+        commitProjectOrNull { project ->
+            val next = CameraMath.sanitize(
+                project.camera.copy(panX = panX, panY = panY, zoom = zoom),
+            )
+            if (next == project.camera) return@commitProjectOrNull null
+            project.copy(camera = next)
+        }
+        DiagnosticsLogger.i(
+            "timeline", "CAMERA_SET", null,
+            "project camera pose set",
+            meta = listOf(
+                "panX" to panX.toString(),
+                "panY" to panY.toString(),
+                "zoom" to zoom.toString(),
+            ),
+        )
+    }
+
+    /**
+     * v0.9.0 (L2): replaces the camera keyframes (sanitized + capped at
+     * [CameraMath.MAX_KEYFRAMES] — overflow drops the LATEST points and
+     * surfaces CAMERA_KEYFRAME_LIMIT, the AudioGainMath pattern).
+     */
+    fun setCameraKeyframes(keyframes: List<com.onevideog.editor.data.CameraKeyframe>) {
+        val sanitized = CameraMath.sanitizeKeyframes(keyframes)
+        if (sanitized.size < keyframes.size) {
+            DiagnosticsLogger.w(
+                "timeline", "CAMERA_KEYFRAME_LIMIT", null,
+                "camera keyframes exceeded the limit — truncated",
+                meta = listOf(
+                    "requested" to keyframes.size.toString(),
+                    "kept" to sanitized.size.toString(),
+                    "limit" to CameraMath.MAX_KEYFRAMES.toString(),
+                ),
+            )
+        }
+        commitProjectOrNull { project ->
+            val next = project.camera.copy(keyframes = sanitized)
+            if (next == project.camera) return@commitProjectOrNull null
+            project.copy(camera = next)
+        }
+        DiagnosticsLogger.i(
+            "timeline", "CAMERA_KEYFRAMES_SET", null,
+            "camera keyframes set",
+            meta = listOf("count" to sanitized.size.toString()),
+        )
+    }
+
+    /** v0.9.0 (L2): snapshots the camera pose AT the playhead as a keyframe. */
+    fun addCameraKeyframeAtPlayhead() {
+        val playhead = _ui.value.playheadMs
+        commitProjectOrNull { project ->
+            val pose = CameraMath.evaluate(project.camera, playhead)
+            val kf = com.onevideog.editor.data.CameraKeyframe(
+                timeMs = KeyframeEvaluator.snapTime(playhead),
+                panX = pose.panX,
+                panY = pose.panY,
+                zoom = pose.zoom,
+            )
+            val merged = CameraMath.sanitizeKeyframes(
+                project.camera.keyframes.filterNot { it.timeMs == kf.timeMs } + kf,
+            )
+            val next = project.camera.copy(keyframes = merged)
+            if (next == project.camera) return@commitProjectOrNull null
+            project.copy(camera = next)
+        }
+        DiagnosticsLogger.i(
+            "timeline", "CAMERA_KEYFRAME_ADD", null,
+            "camera keyframe added at the playhead",
+            meta = listOf("timeMs" to playhead.toString()),
+        )
+    }
+
+    /** v0.9.0 (L2): removes the camera keyframe nearest [timeMs] (±tolerance). */
+    fun removeCameraKeyframe(timeMs: Long) {
+        commitProjectOrNull { project ->
+            val target = project.camera.keyframes
+                .filter { kotlin.math.abs(it.timeMs - timeMs) <= KeyframeEditing.TOLERANCE_MS }
+                .minByOrNull { kotlin.math.abs(it.timeMs - timeMs) }
+                ?: return@commitProjectOrNull null
+            val next = project.camera.copy(
+                keyframes = project.camera.keyframes.filterNot { it.timeMs == target.timeMs },
+            )
+            if (next == project.camera) return@commitProjectOrNull null
+            project.copy(camera = next)
+        }
+        DiagnosticsLogger.i(
+            "timeline", "CAMERA_KEYFRAME_REMOVE", null,
+            "camera keyframe removed",
+            meta = listOf("timeMs" to timeMs.toString()),
+        )
+    }
+
+    /** v0.9.0 (L2): the camera's interpolation curve for its keyframes. */
+    fun setCameraInterpolation(interpolation: Interpolation) {
+        commitProjectOrNull { project ->
+            if (project.camera.interpolation == interpolation) return@commitProjectOrNull null
+            project.copy(camera = project.camera.copy(interpolation = interpolation))
+        }
+    }
+
     // region audio clips ------------------------------------------------------
 
     /**

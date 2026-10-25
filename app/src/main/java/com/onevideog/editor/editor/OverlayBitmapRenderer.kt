@@ -60,6 +60,33 @@ object OverlayBitmapRenderer {
     private const val IMAGE_MAX_DIM = 1024
 
     /**
+     * v0.9.0 (L4): DEDICATED byte cap for styled (baked) bitmaps — styles
+     * multiply bitmaps per overlay (the study's memory risk #1), so they get
+     * their OWN bounded cache instead of competing with the base content
+     * cache. 12 MB ≈ two dozen large baked blocks — bounded, evictable.
+     */
+    const val STYLE_CACHE_MAX_BYTES = 12 * 1024 * 1024
+
+    /** Evictions counted for the OVERLAY_BAKE diagnostics evidence (L4). */
+    var styledEvictions: Int = 0
+        private set
+
+    /** One styled cache entry: the baked bitmap + its box-growth factor. */
+    data class StyledBitmap(
+        val bitmap: Bitmap,
+        /** bakedWidth / sourceWidth (>= 1) — the placement box factor. */
+        val boxScale: Float,
+    )
+
+    private val styledCache = object : LruCache<String, StyledBitmap>(STYLE_CACHE_MAX_BYTES) {
+        override fun sizeOf(key: String, value: StyledBitmap): Int = value.bitmap.byteCount
+
+        override fun entryRemoved(evicted: Boolean, key: String, oldValue: StyledBitmap, newValue: StyledBitmap?) {
+            if (evicted) styledEvictions++
+        }
+    }
+
+    /**
      * Bounded in-memory cache (approx 20 MB) for overlay bitmaps. Keyed by a
      * stable content hash so edits re-render automatically.
      */
@@ -84,6 +111,112 @@ object OverlayBitmapRenderer {
             append(overlay.bgRadiusFrac)
         }
         com.onevideog.editor.data.OverlayKind.IMAGE -> "i|${overlay.uri}|${overlay.id}"
+    }
+
+    /**
+     * v0.9.0 (L1): cache key of a STYLED entry — the content key PLUS the
+     * style, so a style edit invalidates automatically (a new key renders a
+     * new bake; the old entry ages out of the bounded cache).
+     */
+    fun styledKey(overlay: OverlayItem): String = buildString {
+        append(contentKey(overlay))
+        append("#s|")
+        append(overlay.style?.shadow?.let { "sh(${it.offsetX},${it.offsetY},${it.blur},${it.colorArgb},${it.opacity})" } ?: "-")
+        append('|')
+        append(overlay.style?.glow?.let { "gl(${it.radius},${it.colorArgb},${it.strength})" } ?: "-")
+    }
+
+    /**
+     * v0.9.0 (L1, decisão D1): THE style resolution rule — ONE function for
+     * BOTH pipelines. Animated text keeps the per-segment model (segments
+     * are planned from the UNSTYLED block metrics), so a style on an animated
+     * text overlay is IGNORED in v1 (documented honest scoping — the style
+     * applies to the static rendering; the animation wins). Everything else
+     * renders from the baked bitmap when a style is set.
+     */
+    fun effectiveStyle(overlay: OverlayItem): com.onevideog.editor.data.OverlayStyle? {
+        val style = overlay.style?.takeIf { !it.isDefault } ?: return null
+        if (overlay.kind == com.onevideog.editor.data.OverlayKind.TEXT &&
+            overlay.textAnimation.isEnabled
+        ) {
+            return null
+        }
+        return style.sanitized()
+    }
+
+    /**
+     * v0.9.0 (L1): THE baked bitmap for a styled overlay — the ONE instance
+     * the preview (Compose Image) and the export (BitmapOverlay) consume:
+     * parity of styles BY CONSTRUCTION (contract "same bitmap instance",
+     * PREVIEW_EXPORT_PARITY). Misses bake synchronously (CPU, one-off per
+     * content/style state) and log the OVERLAY_BAKE evidence (ms, px,
+     * hit/miss, evictions — L4). Returns null when there is no style or the
+     * bake failed (callers fall back to the raw bitmap — never a crash).
+     */
+    fun styledBitmap(context: Context?, overlay: OverlayItem): StyledBitmap? {
+        val style = effectiveStyle(overlay) ?: return null
+        val key = styledKey(overlay)
+        styledCache.get(key)?.let { return it }
+        val startedAt = SystemClock.elapsedRealtime()
+        val source = when (overlay.kind) {
+            com.onevideog.editor.data.OverlayKind.TEXT -> textBitmap(overlay)
+            com.onevideog.editor.data.OverlayKind.IMAGE -> {
+                val ctx = context ?: return null
+                imageBitmap(ctx, overlay)
+            }
+        }
+        if (source == null || source.width <= 0 || source.height <= 0) {
+            DiagnosticsLogger.w(
+                "preview", "OVERLAY_BAKE", DiagContext.currentOpId(),
+                "style bake skipped: source bitmap unavailable",
+                meta = listOf(
+                    "ovId" to DiagSanitizer.fingerprint(overlay.id),
+                    "result" to "no-source",
+                ),
+            )
+            return null
+        }
+        val baked = runCatching {
+            val srcW = source.width
+            val srcH = source.height
+            val pixels = IntArray(srcW * srcH)
+            source.getPixels(pixels, 0, srcW, 0, 0, srcW, srcH)
+            val result = OverlayStyleBake.bake(pixels, srcW, srcH, style)
+            val out = Bitmap.createBitmap(result.width, result.height, Bitmap.Config.ARGB_8888)
+            out.setPixels(result.pixels, 0, result.width, 0, 0, result.width, result.height)
+            StyledBitmap(out, result.boxScale)
+        }
+        val entry = baked.getOrNull()
+        val elapsedMs = SystemClock.elapsedRealtime() - startedAt
+        val evictedBefore = styledEvictions
+        if (entry != null) {
+            styledCache.put(key, entry)
+        }
+        DiagnosticsLogger.i(
+            "preview", "OVERLAY_BAKE", DiagContext.currentOpId(),
+            if (entry != null) "overlay style baked" else "overlay style bake FAILED",
+            listOf(
+                "ovId" to DiagSanitizer.fingerprint(overlay.id),
+                "kind" to overlay.kind.name,
+                "srcPx" to "${source.width}x${source.height}",
+                "outPx" to (entry?.bitmap?.let { "${it.width}x${it.height}" } ?: "n/a"),
+                "boxScale" to (entry?.boxScale?.toString() ?: "n/a"),
+                "ms" to elapsedMs.toString(),
+                "cache" to "miss",
+                "evictions" to (styledEvictions - evictedBefore).toString(),
+            ),
+        )
+        // A failed bake is an error-level event (the throwable included) —
+        // the caller falls back to the raw render.
+        if (entry == null && baked.isFailure) {
+            DiagnosticsLogger.e(
+                "preview", "OVERLAY_BAKE", DiagContext.currentOpId(),
+                "overlay style bake threw",
+                baked.exceptionOrNull(),
+                listOf("ovId" to DiagSanitizer.fingerprint(overlay.id)),
+            )
+        }
+        return entry
     }
 
     /**
@@ -213,6 +346,8 @@ object OverlayBitmapRenderer {
     /** Evicts a single overlay's bitmap (after content edits that change size). */
     fun evict(overlay: OverlayItem) {
         cache.remove(contentKey(overlay))
+        // v0.9.0 (L1): the styled entry derives from the content — drop it too.
+        styledCache.remove(styledKey(overlay))
     }
 
     /**

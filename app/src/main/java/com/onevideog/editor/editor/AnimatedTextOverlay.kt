@@ -81,6 +81,13 @@ class AnimatedTextOverlay(
      */
     private val outputWidthPx: Int = 0,
     private val outputHeightPx: Int = 0,
+    /**
+     * v0.9.0 (L2): the project camera — the BLOCK rides it with the parent's
+     * depth strength (one rigid transform for the whole block, same rule as
+     * the preview's computePlacements; pure [CameraMath] shared).
+     */
+    private val camera: com.onevideog.editor.data.CameraState =
+        com.onevideog.editor.data.CameraState(),
 ) : BitmapOverlay() {
 
     /** One segment: its pixels, block-frame placement and RELATIVE entrance. */
@@ -143,6 +150,13 @@ class AnimatedTextOverlay(
         }
         val projectMs = clipStartMs + Math.round(localMs.toFloat())
         val parentEval = KeyframeEvaluator.evaluate(parent, projectMs)
+        // v0.9.0 (L2): the LOGGED x/y/scale/boxPx follow the depth-camera map
+        // (the exact values the OverlaySettings carry) so the export evidence
+        // compares 1:1 with the preview's OVERLAY_DRAW (which logs the mapped
+        // placement). The COMPOSITE itself stays in block space (unmapped) —
+        // the block rides the camera as one rigid unit via the settings.
+        val camPose = CameraMath.evaluate(camera, projectMs)
+        val parentLogged = CameraMath.applyToTransform(camPose, parent.zDepth, parentEval)
         val parentScale = parentEval.scale.coerceAtLeast(AnimatedTextLayout.MIN_PARENT_SCALE)
         val blockHeightFrac =
             AnimatedTextLayout.blockHeightFrac(parentScale, contentAspect, blockAspectW)
@@ -225,8 +239,9 @@ class AnimatedTextOverlay(
             // output frame that is transform.scale of outputW (the uniform
             // scale maps content fractions 1:1), and the height keeps the
             // block aspect: width / blockAspectW. The previous sy formula
-            // logged (and drew) a collapsed height.
-            val boxW = parentEval.scale * outputWidthPx.coerceAtLeast(0)
+            // logged (and drew) a collapsed height. v0.9.0: transform = the
+            // camera-mapped parent (parentLogged).
+            val boxW = parentLogged.scale * outputWidthPx.coerceAtLeast(0)
             val boxPx = if (outputWidthPx > 0 && outputHeightPx > 0) {
                 "${Math.round(boxW)}x${Math.round(boxW / blockAspectW)}"
             } else {
@@ -239,9 +254,9 @@ class AnimatedTextOverlay(
                     "ovId" to DiagSanitizer.fingerprint(parent.id),
                     "tUs" to presentationTimeUs.toString(),
                     "projectMs" to projectMs.toString(),
-                    "x" to "%.4f".format(Locale.US, parentEval.x),
-                    "y" to "%.4f".format(Locale.US, parentEval.y),
-                    "scale" to "%.4f".format(Locale.US, parentEval.scale),
+                    "x" to "%.4f".format(Locale.US, parentLogged.x),
+                    "y" to "%.4f".format(Locale.US, parentLogged.y),
+                    "scale" to "%.4f".format(Locale.US, parentLogged.scale),
                     "boxPx" to boxPx,
                     "framePx" to frameBasis,
                     "frameAspect" to "%.4f".format(Locale.US, frameAspect),
@@ -266,15 +281,20 @@ class AnimatedTextOverlay(
         // The PARENT's transform — one rigid placement for the whole block,
         // same math and clamps as KeyframedOverlay's per-overlay settings.
         val projectMs = clipStartMs + Math.round(localMs.toFloat())
-        val transform = KeyframeEvaluator.evaluate(parent, projectMs)
-        val (ndcX, ndcY) = OverlayLayout.toBackgroundNdc(transform.x, transform.y)
+        val parentEval = KeyframeEvaluator.evaluate(parent, projectMs)
+        // v0.9.0 (L2): the depth camera on the PARENT (the block rides it as
+        // one rigid unit — same rule the preview applies via
+        // computePlacements); then the EXACT v0.8.1-hardened paths.
+        val camPose = CameraMath.evaluate(camera, projectMs)
+        val mapped = CameraMath.applyToTransform(camPose, parent.zDepth, parentEval)
+        val (ndcX, ndcY) = OverlayLayout.toBackgroundNdc(mapped.x, mapped.y)
         // v0.8.1 (BUG A fix): UNIFORM scale under the verified Media3 1.4.1
         // semantics (drawn px = bitmap px * scale) — the composite block
         // keeps its aspect at any parent rotation, matching the preview.
         val s = OverlayLayout.overlayExportScale(
             blockWidthPx,
             backgroundWidthPx,
-            transform.scale,
+            mapped.scale,
         )
         return OverlaySettings.Builder()
             .setBackgroundFrameAnchor(
@@ -283,8 +303,8 @@ class AnimatedTextOverlay(
             )
             .setOverlayFrameAnchor(0f, 0f)
             .setScale(s, s)
-            .setRotationDegrees(OverlayLayout.toExportRotation(transform.rotationDeg))
-            .setAlphaScale(transform.opacity.coerceIn(0f, 1f))
+            .setRotationDegrees(OverlayLayout.toExportRotation(mapped.rotationDeg))
+            .setAlphaScale(mapped.opacity.coerceIn(0f, 1f))
             .build()
     }
 

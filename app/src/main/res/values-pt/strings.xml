@@ -368,4 +368,29 @@
     <string name="ramp_segments">Segmentos: %1$d / %2$d</string>
     <string name="ramp_duration">Comprimento do clipe: %1$s → %2$s</string>
     <string name="ramp_note">Até %1$d segmentos de velocidade constante por clipe. Rampas complexas podem perder fotogramas em dispositivos modestos; o áudio acompanha a velocidade sem correção de tom.</string>
+
+    <!-- v0.9.0 (Fase L): profundidade, câmara e estilos de overlay (Opção A 2.5D) -->
+    <string name="tools_depth">Profund.</string>
+    <string name="tools_style">Estilo</string>
+    <string name="depth_title">Profundidade &amp; câmara</string>
+    <string name="depth_select_layer">Selecione uma camada de texto ou imagem para definir a profundidade.</string>
+    <string name="depth_for">Profundidade de “%1$s”</string>
+    <string name="depth_value">Profundidade: %1$s</string>
+    <string name="depth_hint">Camadas mais fundas ficam atrás e movem-se menos com a câmara. 0 mantém o overlay no plano do vídeo.</string>
+    <string name="camera_section">Câmara (projeto inteiro)</string>
+    <string name="camera_pan_x">Pan X</string>
+    <string name="camera_pan_y">Pan Y</string>
+    <string name="camera_zoom">Zoom</string>
+    <string name="camera_keyframe_add">Keyframe no cursor</string>
+    <string name="camera_keyframes_none">Sem keyframes de câmara — a pose acima é constante.</string>
+    <string name="camera_keyframe_remove">Remover</string>
+    <string name="camera_note">A câmara move o vídeo e os overlays em conjunto (as camadas mais fundas movem-se menos). Mudar isto re-prepara a pré-visualização por um momento.</string>
+    <string name="style_title">Estilo do overlay</string>
+    <string name="style_select_layer">Selecione uma camada de texto ou imagem para lhe aplicar um estilo.</string>
+    <string name="style_preset_none">Nenhum</string>
+    <string name="style_preset_soft">Drop suave</string>
+    <string name="style_preset_hard">Dura</string>
+    <string name="style_preset_neon">Glow neon</string>
+    <string name="style_note">Os estilos são cozidos no bitmap do overlay — a pré-visualização e a exportação renderizam exatamente os mesmos píxeis.</string>
+    <string name="style_anim_note">Este texto tem animação de entrada — o estilo é ignorado enquanto a animação estiver ativa.</string>
 </resources>
