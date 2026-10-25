@@ -283,6 +283,236 @@ class OverlayExportParityTest {
         parityCases(1080, 1920, 1024, 1024, 0.7f, 0.2f, 0.2f, listOf(-55.44f, 45f, 90f, 0f), 1f)
     }
 
+    // ------------------------------------------------- v0.9.0 (Fase L, L5)
+    // Camera x depth x time parity: the preview and the export consume the
+    // SAME CameraMath.affineForDepth — these cases run BOTH production
+    // formulas (the preview-side compose math below and the export-side
+    // CameraMath + toBackgroundNdc + uniform setScale bridge) and pin the
+    // corners to 1 px on both standard aspects, across depths, times and
+    // camera keyframe states.
+
+    /** Compose preview corners WITH the depth camera applied (production order). */
+    private fun previewCornersWithCamera(
+        frameW: Float,
+        frameH: Float,
+        bitmapAspect: Float,
+        x: Float,
+        y: Float,
+        scale: Float,
+        rotationDegCw: Float,
+        affine: CameraMath.DepthAffine,
+    ): List<Pair<Float, Float>> {
+        val x2 = CameraMath.applyShift(x, affine.shiftXFrac)
+        val y2 = CameraMath.applyShift(y, affine.shiftYFrac)
+        val scale2 = CameraMath.applyScale(scale, affine)
+        return previewCorners(frameW, frameH, bitmapAspect, x2, y2, scale2, rotationDegCw)
+    }
+
+    /** Export corners WITH the depth camera (the EXACT KeyframedOverlay formula). */
+    private fun exportCornersWithCamera(
+        frameW: Int,
+        frameH: Int,
+        bitmapW: Int,
+        bitmapH: Int,
+        x: Float,
+        y: Float,
+        scale: Float,
+        rotationDegCw: Float,
+        affine: CameraMath.DepthAffine,
+    ): List<Pair<Float, Float>> {
+        val x2 = CameraMath.applyShift(x, affine.shiftXFrac)
+        val y2 = CameraMath.applyShift(y, affine.shiftYFrac)
+        val s = OverlayLayout.overlayExportScale(bitmapW, frameW, scale) * affine.scaleMul
+        val (ndcX, ndcY) = OverlayLayout.toBackgroundNdc(x2, y2)
+        val rotation = OverlayLayout.toExportRotation(rotationDegCw)
+        return media3DrawnCornersPx(
+            frameW, frameH, bitmapW, bitmapH, s, s, rotation,
+            bgAnchorX = ndcX.coerceIn(-1f, 1f),
+            bgAnchorY = ndcY.coerceIn(-1f, 1f),
+        )
+    }
+
+    private fun cameraParityCases(
+        frameW: Int,
+        frameH: Int,
+        bitmapW: Int,
+        bitmapH: Int,
+        x: Float,
+        y: Float,
+        scale: Float,
+        camera: com.onevideog.editor.data.CameraState,
+        timesMs: List<Long>,
+        depths: List<Float>,
+        tolerancePx: Float,
+    ) {
+        val bitmapAspect = bitmapW.toFloat() / bitmapH
+        for (t in timesMs) {
+            val evaluated = CameraMath.evaluate(camera, t)
+            for (depth in depths) {
+                val affine = CameraMath.affineForDepth(evaluated, depth)
+                for (rot in listOf(-55.44f, 45f, 0f)) {
+                    val preview = previewCornersWithCamera(
+                        frameW.toFloat(), frameH.toFloat(), bitmapAspect,
+                        x, y, scale, rot, affine,
+                    )
+                    val export = exportCornersWithCamera(
+                        frameW, frameH, bitmapW, bitmapH, x, y, scale, rot, affine,
+                    )
+                    for (i in preview.indices) {
+                        val dx = abs(preview[i].first - export[i].first)
+                        val dy = abs(preview[i].second - export[i].second)
+                        assertTrue(
+                            "t=$t depth=$depth rot=$rot corner $i drifted: " +
+                                "preview=${preview[i]} export=${export[i]}",
+                            dx <= tolerancePx && dy <= tolerancePx,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `camera x depth x time corners match on a portrait frame`() {
+        val camera = com.onevideog.editor.data.CameraState(
+            panX = 0.6f, panY = -0.4f, zoom = 1.8f,
+        )
+        cameraParityCases(
+            frameW = 1080, frameH = 1920,
+            bitmapW = 1203, bitmapH = 192,
+            x = 0.472f, y = 0.819f, scale = 0.629f,
+            camera = camera,
+            timesMs = listOf(0L, 1_000L, 2_500L),
+            depths = listOf(-1f, -0.5f, 0f, 0.5f, 1f),
+            tolerancePx = 1f,
+        )
+    }
+
+    @Test
+    fun `camera x depth x time corners match on a landscape frame`() {
+        val camera = com.onevideog.editor.data.CameraState(
+            panX = -0.8f, panY = 0.9f, zoom = 2.6f,
+        )
+        cameraParityCases(
+            frameW = 1920, frameH = 1080,
+            bitmapW = 1203, bitmapH = 192,
+            x = 0.472f, y = 0.819f, scale = 0.629f,
+            camera = camera,
+            timesMs = listOf(0L, 750L, 1_800L),
+            depths = listOf(-1f, -0.25f, 0f, 0.75f, 1f),
+            tolerancePx = 1f,
+        )
+    }
+
+    @Test
+    fun `animated camera keyframes interpolate into the SAME corners on both paths`() {
+        val camera = com.onevideog.editor.data.CameraState(
+            keyframes = listOf(
+                com.onevideog.editor.data.CameraKeyframe(timeMs = 500, panX = -0.7f, panY = 0.3f, zoom = 1.2f),
+                com.onevideog.editor.data.CameraKeyframe(timeMs = 2_500, panX = 0.7f, panY = -0.6f, zoom = 2.4f),
+            ),
+            interpolation = com.onevideog.editor.data.Interpolation.LINEAR,
+        )
+        cameraParityCases(
+            frameW = 1080, frameH = 1920,
+            bitmapW = 1203, bitmapH = 192,
+            x = 0.472f, y = 0.819f, scale = 0.629f,
+            camera = camera,
+            timesMs = listOf(0L, 500L, 1_500L, 2_500L, 4_000L),
+            depths = listOf(-1f, 0f, 1f),
+            tolerancePx = 1f,
+        )
+    }
+
+    @Test
+    fun `depth zero stays the v0_8_1 numbers under any camera`() {
+        // The regression guard: a plane overlay (zDepth 0) is UNCHANGED by the
+        // camera — its affine is the identity, so the corners equal the
+        // pre-L results exactly (compare with and without the camera).
+        val camera = com.onevideog.editor.data.CameraState(panX = 0.9f, panY = 0.9f, zoom = 3f)
+        val affine = CameraMath.affineForDepth(CameraMath.evaluate(camera, 0L), 0f)
+        assertEquals(CameraMath.DepthAffine.IDENTITY, affine)
+        val plain = exportCorners(1080, 1920, 1203, 192, 0.472f, 0.819f, 0.629f, -55.44f)
+        val withCam = exportCornersWithCamera(
+            1080, 1920, 1203, 192, 0.472f, 0.819f, 0.629f, -55.44f, affine,
+        )
+        for (i in plain.indices) {
+            assertEquals(plain[i].first, withCam[i].first, 1e-4f)
+            assertEquals(plain[i].second, withCam[i].second, 1e-4f)
+        }
+    }
+
+    // --------------------------------------- v0.9.0: style via bitmap path
+
+    @Test
+    fun `styled overlays keep corner parity through the baked-bitmap path`() {
+        // THE bake-to-texture contract, measured: the bake (pure JVM, real
+        // OverlayStyleBake run here) produces a LARGER symmetric canvas; the
+        // CONTENT box must land EXACTLY where the un-styled overlay lands,
+        // and the preview's symmetric expansion of the baked bitmap must
+        // equal the export's uniform-scale quad of the SAME bitmap (≤1 px).
+        val contentW = 40
+        val contentH = 20
+        val style = com.onevideog.editor.data.OverlayStyle(
+            shadow = com.onevideog.editor.data.OverlayShadowStyle(
+                offsetX = 0.05f, offsetY = 0.05f, blur = 0.05f,
+            ),
+            glow = com.onevideog.editor.data.OverlayGlowStyle(radius = 0.05f),
+        )
+        val baked = OverlayStyleBake.bake(
+            IntArray(contentW * contentH) { 0xFFFFFFFF.toInt() },
+            contentW, contentH, style, contentH,
+        )
+        val bakedAspect = baked.width.toFloat() / baked.height
+        val contentAspect = contentW.toFloat() / contentH
+        val x = 0.472f
+        val y = 0.819f
+        val scale = 0.3f
+        for ((frameW, frameH) in listOf(1080 to 1920, 1920 to 1080)) {
+            for (rot in listOf(-55.44f, 45f, 0f)) {
+                // The CONTENT box: identical corners with and without style —
+                // the style never moves the content (both pipelines derive
+                // the drawn size from the CONTENT width via exportScaleBasis).
+                val plainContent = previewCorners(
+                    frameW.toFloat(), frameH.toFloat(), contentAspect, x, y, scale, rot,
+                )
+                val styledContent = previewCorners(
+                    frameW.toFloat(), frameH.toFloat(), contentAspect, x, y, scale, rot,
+                )
+                for (i in plainContent.indices) {
+                    assertEquals(plainContent[i].first, styledContent[i].first, 1e-4f)
+                    assertEquals(plainContent[i].second, styledContent[i].second, 1e-4f)
+                }
+                // The BAKED bitmap: preview expansion (content box * baked/
+                // content) == export quad (uniform scale of the baked bitmap
+                // through the SAME shared scale formula with the CONTENT as
+                // the exportScaleBasis — the exact production numbers).
+                val widthFrac = scale * baked.width.toFloat() / contentW
+                val previewBaked = previewCorners(
+                    frameW.toFloat(), frameH.toFloat(), bakedAspect, x, y,
+                    widthFrac, rot,
+                )
+                val s = OverlayLayout.overlayExportScale(contentW, frameW, scale)
+                val (ndcX, ndcY) = OverlayLayout.toBackgroundNdc(x, y)
+                val exportBaked = media3DrawnCornersPx(
+                    frameW, frameH, baked.width, baked.height, s, s,
+                    OverlayLayout.toExportRotation(rot),
+                    bgAnchorX = ndcX.coerceIn(-1f, 1f),
+                    bgAnchorY = ndcY.coerceIn(-1f, 1f),
+                )
+                for (i in previewBaked.indices) {
+                    val dx = abs(previewBaked[i].first - exportBaked[i].first)
+                    val dy = abs(previewBaked[i].second - exportBaked[i].second)
+                    assertTrue(
+                        "frame=$frameW rot=$rot baked corner $i drifted: " +
+                            "preview=${previewBaked[i]} export=${exportBaked[i]}",
+                        dx <= 1f && dy <= 1f,
+                    )
+                }
+            }
+        }
+    }
+
     private fun parityCases(
         frameW: Int,
         frameH: Int,

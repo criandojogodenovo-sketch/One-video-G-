@@ -165,4 +165,99 @@ class ProjectJsonTest {
         )
         assertEquals(600L, legacy.overlays[0].textAnimation.durationMs)
     }
+
+    // ----------------------------------------------------------------------
+    // v0.9.0 (Fase L, L5): schema v6 — OverlayStyle / zDepth / CameraState.
+    // ----------------------------------------------------------------------
+
+    @Test
+    fun `v0_9_0 style zDepth and camera round-trip (v6)`() {
+        val v6 = project.copy(
+            schemaVersion = 6,
+            overlays = listOf(
+                com.onevideog.editor.data.OverlayItem(
+                    id = "s1", kind = com.onevideog.editor.data.OverlayKind.TEXT,
+                    startMs = 0, endMs = 5_000, text = "neon",
+                    style = com.onevideog.editor.data.OverlayStyle(
+                        shadow = com.onevideog.editor.data.OverlayShadowStyle(
+                            offsetX = 0.01f, offsetY = 0.02f, blur = 0.015f,
+                            colorArgb = 0xFF112233.toInt(), opacity = 0.7f,
+                        ),
+                        glow = com.onevideog.editor.data.OverlayGlowStyle(
+                            radius = 0.02f, colorArgb = 0xFF00E5FF.toInt(), strength = 0.85f,
+                        ),
+                    ),
+                    zDepth = -0.5f,
+                ),
+                com.onevideog.editor.data.OverlayItem(
+                    id = "s2", kind = com.onevideog.editor.data.OverlayKind.IMAGE,
+                    startMs = 0, endMs = 5_000, uri = "content://img",
+                    zDepth = 0.75f,
+                ),
+            ),
+            camera = com.onevideog.editor.data.CameraState(
+                panX = 0.25f, panY = -0.5f, zoom = 1.75f,
+                keyframes = listOf(
+                    com.onevideog.editor.data.CameraKeyframe(
+                        timeMs = 250, panX = -0.3f, panY = 0.4f, zoom = 1.2f,
+                    ),
+                    com.onevideog.editor.data.CameraKeyframe(timeMs = 1_750, zoom = 2.5f),
+                ),
+                interpolation = com.onevideog.editor.data.Interpolation.EASE_IN_OUT,
+            ),
+        )
+        val restored = projectJson.decodeFromString<OvgProject>(projectJson.encodeToString(v6))
+        assertEquals(v6, restored)
+        assertEquals(6, restored.schemaVersion)
+        val styled = restored.overlays[0]
+        assertTrue(styled.hasStyle)
+        assertEquals(0.01f, styled.style!!.shadow!!.offsetX, 1e-6f)
+        assertEquals(0xFF112233.toInt(), styled.style!!.shadow!!.colorArgb)
+        assertEquals(0.85f, styled.style!!.glow!!.strength, 1e-6f)
+        assertEquals(-0.5f, styled.zDepth, 1e-6f)
+        val cam = restored.camera
+        assertEquals(0.25f, cam.panX, 1e-6f)
+        assertEquals(2, cam.keyframes.size)
+        assertEquals(-0.3f, cam.keyframes[0].panX!!, 1e-6f)
+        assertEquals(null, cam.keyframes[1].panX)
+    }
+
+    @Test
+    fun `v5 documents (schema v5, no style zDepth camera) decode byte-compatible`() {
+        // The exact JSON a v0.8.1 app writes: schemaVersion 5, no style /
+        // zDepth / camera keys anywhere. Every v6 field decodes to its "off"
+        // default and the overlay renders EXACTLY the v0.8.1 behaviour
+        // (identity camera, video-plane depth, no bake).
+        val v5Json = """
+            {"schemaVersion":5,"id":"x","name":"n","createdAtEpochMs":1,"updatedAtEpochMs":2,
+             "overlays":[{"id":"o","kind":"TEXT","startMs":0,"endMs":1000,"text":"v5"}]}
+        """.trimIndent()
+        val legacy = projectJson.decodeFromString<OvgProject>(v5Json)
+        assertEquals(5, legacy.schemaVersion)
+        val overlay = legacy.overlays[0]
+        assertEquals(null, overlay.style)
+        assertEquals(false, overlay.hasStyle)
+        assertEquals(0f, overlay.zDepth, 1e-6f)
+        assertEquals(com.onevideog.editor.data.CameraState(), legacy.camera)
+        assertTrue(legacy.camera.isDefault)
+        // Re-saving keeps the document stable (no migration pass needed).
+        val resaved = projectJson.decodeFromString<OvgProject>(projectJson.encodeToString(legacy))
+        assertEquals(legacy, resaved)
+    }
+
+    @Test
+    fun `default style and camera keep the hardened paths at identity`() {
+        // A default-styled overlay at depth 0 under a default camera is the
+        // EXACT v0.8.1 model — the identity CameraMath affine (locked here
+        // so a schema accident can never re-introduce drift).
+        val overlay = com.onevideog.editor.data.OverlayItem(
+            id = "p", kind = com.onevideog.editor.data.OverlayKind.TEXT,
+        )
+        assertTrue(com.onevideog.editor.editor.CameraMath.affineForDepth(
+            com.onevideog.editor.editor.CameraMath.evaluate(
+                com.onevideog.editor.data.CameraState(), 0L,
+            ),
+            overlay.zDepth,
+        ) == com.onevideog.editor.editor.CameraMath.DepthAffine.IDENTITY)
+    }
 }

@@ -1219,6 +1219,98 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         updateOverlay(overlayId) { it.copy(interpolation = interpolation) }
     }
 
+    // region depth & style (v0.9.0, Fase L) -----------------------------------
+
+    /**
+     * v0.9.0 (L2/D2): sets one overlay's depth [-1, 1]. 0 = the video plane
+     * (camera can never move it); deeper (> 0) draws first. zOrder is
+     * untouched — it stays the tie-breaker and what bringOverlayToFront /
+     * sendOverlayToBack manipulate.
+     */
+    fun setOverlayZDepth(overlayId: String, zDepth: Float) {
+        updateOverlay(overlayId) {
+            it.copy(zDepth = zDepth.coerceIn(CameraMath.Z_DEPTH_MIN, CameraMath.Z_DEPTH_MAX))
+        }
+    }
+
+    /**
+     * v0.9.0 (L1): replaces one overlay's baked style (null = no style — the
+     * overlay returns to its established render path). The styled contentKey
+     * changes, so the next preview frame bakes a fresh bitmap (cache
+     * invalidation by construction) and the export consumes the same one.
+     */
+    fun setOverlayStyle(overlayId: String, style: com.onevideog.editor.data.OverlayStyle?) {
+        updateOverlay(overlayId) { it.copy(style = style) }
+    }
+
+    /** v0.9.0 (L2): static camera base values (keyframed props override these). */
+    fun setCameraPanZoom(panX: Float, panY: Float, zoom: Float) {
+        commitProject { project ->
+            project.copy(
+                camera = project.camera.copy(
+                    panX = panX.coerceIn(CameraMath.PAN_MIN, CameraMath.PAN_MAX),
+                    panY = panY.coerceIn(CameraMath.PAN_MIN, CameraMath.PAN_MAX),
+                    zoom = zoom.coerceIn(CameraMath.ZOOM_MIN, CameraMath.ZOOM_MAX),
+                ),
+            )
+        }
+    }
+
+    /** v0.9.0 (L2): captures the evaluated camera at the playhead. */
+    fun addCameraKeyframeAtPlayhead() {
+        val playhead = _ui.value.playheadMs
+        commitProject { project ->
+            val evaluated = CameraMath.evaluate(project.camera, playhead)
+            val keyframe = com.onevideog.editor.data.CameraKeyframe(
+                timeMs = KeyframeEvaluator.snapTime(playhead),
+                panX = evaluated.panX,
+                panY = evaluated.panY,
+                zoom = evaluated.zoom,
+            )
+            project.copy(
+                camera = project.camera.copy(
+                    keyframes = (project.camera.keyframes
+                        .filterNot { it.timeMs == keyframe.timeMs } + keyframe)
+                        .sortedBy { it.timeMs },
+                ),
+            )
+        }
+    }
+
+    fun removeCameraKeyframe(timeMs: Long) {
+        commitProject { project ->
+            project.copy(
+                camera = project.camera.copy(
+                    keyframes = project.camera.keyframes.filterNot { it.timeMs == timeMs },
+                ),
+            )
+        }
+    }
+
+    /** v0.9.0 (L2): moves a camera keyframe (nearest free 50 ms slot, F2 rule). */
+    fun moveCameraKeyframe(oldTimeMs: Long, newTimeMs: Long) {
+        commitProject { project ->
+            val resolved = KeyframeEditing.resolveMoveTargetInTimes(
+                project.camera.keyframes.map { it.timeMs }, oldTimeMs, newTimeMs,
+            ) ?: return@commitProject project
+            val others = project.camera.keyframes.filterNot {
+                it.timeMs == oldTimeMs || it.timeMs == resolved
+            }
+            val moved = project.camera.keyframes
+                .firstOrNull { it.timeMs == oldTimeMs }
+                ?.copy(timeMs = resolved) ?: return@commitProject project
+            project.copy(
+                camera = project.camera.copy(
+                    keyframes = (others + moved).sortedBy { it.timeMs },
+                ),
+            )
+        }
+    }
+
+    fun setCameraInterpolation(interpolation: Interpolation) {
+        commitProject { it.copy(camera = it.camera.copy(interpolation = interpolation)) }
+    }
+
     // region audio clips ------------------------------------------------------
 
     /**

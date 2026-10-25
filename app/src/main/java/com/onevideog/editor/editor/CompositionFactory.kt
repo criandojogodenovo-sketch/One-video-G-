@@ -274,6 +274,8 @@ object CompositionFactory {
             ExpandedOverlays.projectContentAspect(project),
             outW,
             outH,
+            // v0.9.0 (L2): the project depth camera (identity for v5 docs).
+            project.camera,
         )
         val videoEffects = if (overlayTextures.isEmpty()) {
             emptyList<androidx.media3.common.Effect>()

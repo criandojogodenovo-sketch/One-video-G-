@@ -289,6 +289,100 @@ enum class TextAnimPreset { NONE, FADE, SLIDE_UP, POP, TYPEWRITER }
 /** Segmentation unit for text animation: whole words or single letters. */
 enum class TextAnimUnit { WORD, LETTER }
 
+// ---------------------------------------------------------------------------
+// Schema v6 (v0.9.0, Fase L): 2.5D depth — per-overlay baked styles + camera.
+// ALL fields are ADDITIVE with "off" defaults, so every v5 document decodes
+// byte-compatibly and keeps rendering exactly as before. The style pixels are
+// BAKED into the content bitmap by the pure JVM OverlayStyleBake (CPU
+// reference, ClipEffectMath pattern) — preview and export consume the SAME
+// baked bitmap from the SAME LruCache (bake-to-texture parity by
+// construction). Depth/camera math lives in ONE pure object
+// (com.onevideog.editor.editor.CameraMath) consumed by BOTH pipelines
+// (computePlacements and KeyframedOverlay/AnimatedTextOverlay).
+// ---------------------------------------------------------------------------
+
+/**
+ * One drop shadow of an overlay (schema v6). Offsets/blur are fractions of
+ * the CONTENT bitmap height (canonical 1080 frame for text), so the baked
+ * result is resolution-independent and identical in both pipelines.
+ */
+@Serializable
+data class OverlayShadowStyle(
+    val offsetX: Float = 0f,
+    val offsetY: Float = 0f,
+    // 0..0.1 (fraction of the content height); 0 = hard (no blur).
+    val blur: Float = 0.01f,
+    val colorArgb: Int = 0xFF000000.toInt(),
+    // 0..1 multiplier on the shadow's own alpha.
+    val opacity: Float = 0.8f,
+)
+
+/**
+ * One glow halo behind an overlay (schema v6): the content alpha, blurred
+ * and tinted. [radius] is a fraction of the content height.
+ */
+@Serializable
+data class OverlayGlowStyle(
+    // 0..0.1 (fraction of the content height).
+    val radius: Float = 0.02f,
+    val colorArgb: Int = 0xFF00E5FF.toInt(),
+    // 0..1 multiplier on the halo's alpha.
+    val strength: Float = 0.9f,
+)
+
+/**
+ * v0.9.0 (Fase L, L1): baked pixel style of an overlay — shadow + glow.
+ * `null` (or [isDefault]) = NO style: the overlay renders through its
+ * established path (Compose Text / plain bitmap), byte-compatibly with v5.
+ * A non-default style routes the overlay through the baked-bitmap path in
+ * BOTH pipelines (renderer split D1 — one bitmap, one cache, exact parity).
+ */
+@Serializable
+data class OverlayStyle(
+    val shadow: OverlayShadowStyle? = null,
+    val glow: OverlayGlowStyle? = null,
+) {
+    val isDefault: Boolean get() = shadow == null && glow == null
+}
+
+/**
+ * One camera keyframe (schema v6, L2): camera pan/zoom at an absolute
+ * project time. Null properties inherit the evaluated base/previous value
+ * (the overlay [Keyframe] convention).
+ */
+@Serializable
+data class CameraKeyframe(
+    val timeMs: Long,
+    val panX: Float? = null,
+    val panY: Float? = null,
+    val zoom: Float? = null,
+)
+
+/**
+ * v0.9.0 (Fase L, L2): the project's depth camera — pan (fractions of the
+ * content size, -1..1) and zoom (1..3), optionally animated with keyframes
+ * reusing the overlay [Interpolation] curves. The default is the identity
+ * static camera: EVERY v5 project (and any project with the default) renders
+ * exactly as before — CameraMath.affineForDepth(identity, anyDepth) is the
+ * exact identity, so the hardened v0.8.1 paths are untouched.
+ *
+ * v0.9.0 scope (D4/L2b): the camera applies to OVERLAYS through their
+ * [OverlayItem.zDepth] parallax factor only — the video plane is NOT
+ * transformed (see PREVIEW_EXPORT_PARITY limitation for the deferred L2b
+ * integration), so the UI labels it the depth camera (layers).
+ */
+@Serializable
+data class CameraState(
+    val panX: Float = 0f,
+    val panY: Float = 0f,
+    val zoom: Float = 1f,
+    val keyframes: List<CameraKeyframe> = emptyList(),
+    val interpolation: Interpolation = Interpolation.LINEAR,
+) {
+    val isDefault: Boolean
+        get() = panX == 0f && panY == 0f && zoom == 1f && keyframes.isEmpty()
+}
+
 /**
  * A timed overlay (text or image) on the project timeline.
  *
@@ -331,8 +425,21 @@ data class OverlayItem(
     val bgRadiusFrac: Float = 0.008f,
     // ---- image ----
     val uri: String = "",
+    // v0.9.0 (schema v6, L1): baked pixel style (shadow/glow). The default
+    // (null) keeps every pre-v0.9.0 document byte-compatible: no style, the
+    // established render path exactly.
+    val style: OverlayStyle? = null,
+    // v0.9.0 (schema v6, L2/D2): depth in [-1, 1]. 0 = the video plane
+    // (IDENTITY — the camera can never move it), > 0 = deeper (drawn FIRST,
+    // behind), < 0 = closer to the camera. The existing [zOrder] is the
+    // tie-breaker and stays what bringOverlayToFront/sendOverlayToBack
+    // manipulate (D2). The default keeps v5 behaviour byte-compatible.
+    val zDepth: Float = 0f,
 ) {
     val isText: Boolean get() = kind == OverlayKind.TEXT
+
+    /** True when a non-default style routes this overlay through the baked bitmap. */
+    val hasStyle: Boolean get() = style?.isDefault == false
 }
 
 // ---------------------------------------------------------------------------
@@ -464,6 +571,9 @@ data class OvgProject(
     val textOverlays: List<TextOverlayItem> = emptyList(),
     val imageOverlays: List<ImageOverlayItem> = emptyList(),
     val music: MusicTrack? = null,
+    // v0.9.0 (schema v6, L2): depth camera. The default keeps every
+    // pre-v0.9.0 document byte-compatible: identity camera — zero effect.
+    val camera: CameraState = CameraState(),
 ) {
     val aspectEnum: ProjectAspect
         get() = runCatching { ProjectAspect.valueOf(aspect) }.getOrDefault(ProjectAspect.SOURCE)
@@ -543,12 +653,13 @@ data class OvgProject(
     }
 
     companion object {
-        // v0.8.0 (schema v5): audio gain automation (fades, keyframes, noise
-        // gate). v4/v3/v2 documents decode with fadeInMs = fadeOutMs = 0,
-        // gainKeyframes = emptyList and noiseGate = false and keep behaving
-        // exactly as before (their defaults are the "off" states —
-        // byte-compatible migration, no field rewriting needed).
-        const val SCHEMA_VERSION = 5
+        // v0.9.0 (schema v6, Fase L): per-overlay baked styles (shadow/glow),
+        // per-overlay depth (zDepth) and the project depth camera. v5 (and
+        // older) documents decode with style = null, zDepth = 0 and the
+        // identity camera — their defaults are the "off" states, so old
+        // projects render EXACTLY as before (byte-compatible, no migration
+        // pass needed — verified by ProjectJsonTest v5->v6 round-trip).
+        const val SCHEMA_VERSION = 6
 
         private fun legacyY(position: String): Float = when (
             runCatching { OverlayPosition.valueOf(position) }.getOrDefault(OverlayPosition.BOTTOM)

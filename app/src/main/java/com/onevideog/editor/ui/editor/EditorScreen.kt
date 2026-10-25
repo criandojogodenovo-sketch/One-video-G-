@@ -24,6 +24,7 @@ import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.AudioFile
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BlurOn
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Forward10
@@ -39,6 +40,7 @@ import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.ViewInAr
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -491,6 +493,9 @@ internal val TOOLBAR_TOOLS: List<Pair<Tool, androidx.compose.ui.graphics.vector.
     Tool.COLOR to Icons.Filled.Palette,
     Tool.CURVES to Icons.Filled.Tune,
     Tool.EFFECTS to Icons.Filled.BlurOn,
+    // v0.9.0 (Fase L): depth & camera + baked style tools.
+    Tool.DEPTH to Icons.Filled.ViewInAr,
+    Tool.STYLE to Icons.Filled.AutoAwesome,
     Tool.TEXT to Icons.Filled.TextFields,
     Tool.IMAGE to Icons.Filled.Photo,
     Tool.AUDIO to Icons.Filled.AudioFile,

@@ -9,6 +9,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.BitmapOverlay
 import androidx.media3.effect.OverlaySettings
 import com.onevideog.editor.diag.DiagSanitizer
+import com.onevideog.editor.data.CameraState
 import com.onevideog.editor.data.OverlayItem
 import com.onevideog.editor.data.OverlayKind
 import com.onevideog.editor.diag.DiagnosticsLogger
@@ -81,6 +82,13 @@ class AnimatedTextOverlay(
      */
     private val outputWidthPx: Int = 0,
     private val outputHeightPx: Int = 0,
+    /**
+     * v0.9.0 (L2): the project depth camera (default = identity static —
+     * byte-identical with v0.8.x). Applied to the PARENT transform (one rigid
+     * placement for the whole block) through the SAME [CameraMath.affineForDepth]
+     * the preview and [KeyframedOverlay] consume.
+     */
+    private val camera: CameraState = CameraState(),
 ) : BitmapOverlay() {
 
     /** One segment: its pixels, block-frame placement and RELATIVE entrance. */
@@ -265,9 +273,14 @@ class AnimatedTextOverlay(
         }
         // The PARENT's transform — one rigid placement for the whole block,
         // same math and clamps as KeyframedOverlay's per-overlay settings.
+        // v0.9.0 (L2): the depth-camera affine rides the SAME hardened inputs
+        // (NDC anchor + uniform scale) — one implementation (CameraMath).
         val projectMs = clipStartMs + Math.round(localMs.toFloat())
         val transform = KeyframeEvaluator.evaluate(parent, projectMs)
-        val (ndcX, ndcY) = OverlayLayout.toBackgroundNdc(transform.x, transform.y)
+        val affine = CameraMath.affineForDepth(camera, projectMs, parent.zDepth)
+        val x = CameraMath.applyShift(transform.x, affine.shiftXFrac)
+        val y = CameraMath.applyShift(transform.y, affine.shiftYFrac)
+        val (ndcX, ndcY) = OverlayLayout.toBackgroundNdc(x, y)
         // v0.8.1 (BUG A fix): UNIFORM scale under the verified Media3 1.4.1
         // semantics (drawn px = bitmap px * scale) — the composite block
         // keeps its aspect at any parent rotation, matching the preview.
@@ -275,7 +288,7 @@ class AnimatedTextOverlay(
             blockWidthPx,
             backgroundWidthPx,
             transform.scale,
-        )
+        ) * affine.scaleMul
         return OverlaySettings.Builder()
             .setBackgroundFrameAnchor(
                 ndcX.coerceIn(-1f, 1f),

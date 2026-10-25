@@ -778,6 +778,9 @@ fun PreviewStage(viewModel: EditorViewModel) {
                 // v0.5.9 (PONTO C): overlays are not drawn while the video is
                 // video=none/BUFFERING (see the gate above).
                 drawOverlays = { overlaysDrawn },
+                // v0.9.0 (L2): the project depth camera — the SAME CameraMath
+                // the export textures consume (identity for v5 documents).
+                camera = { project.camera },
                 opId = previewOpId,
                 onTap = { overlay ->
                     // Clear any stale gesture override (a tap ends the

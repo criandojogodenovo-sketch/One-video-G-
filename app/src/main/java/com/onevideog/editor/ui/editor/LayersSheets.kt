@@ -224,7 +224,10 @@ internal fun LayersPanel(viewModel: EditorViewModel, onOpenTool: (Tool) -> Unit)
     if (project.overlays.isEmpty()) {
         InfoLine(stringResource(R.string.overlays_none))
     }
-    project.overlays.sortedBy { it.zOrder }.forEach { overlay ->
+    // v0.9.0 (D2): the layer list shows the DRAW order — deeper (larger
+    // zDepth) first, then zOrder (the SAME comparator both render pipelines
+    // use), so what the user sees here is what preview/export draw.
+    project.overlays.sortedWith(com.onevideog.editor.editor.CameraMath.drawOrderComparator).forEach { overlay ->
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
                 if (overlay.isText) Icons.Filled.TextFields else Icons.Filled.Image,

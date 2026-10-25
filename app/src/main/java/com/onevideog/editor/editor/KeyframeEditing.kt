@@ -113,9 +113,20 @@ object KeyframeEditing {
         keyframes: List<Keyframe>,
         fromMs: Long,
         requestedMs: Long,
+    ): Long? = resolveMoveTargetInTimes(keyframes.map { it.timeMs }, fromMs, requestedMs)
+
+    /**
+     * v0.9.0 (Fase L, L2): the SAME F2 collision rule for the CAMERA
+     * keyframes (they are a different model type but the same time-sorted
+     * list semantics) — one implementation over the occupied times.
+     */
+    fun resolveMoveTargetInTimes(
+        times: List<Long>,
+        fromMs: Long,
+        requestedMs: Long,
     ): Long? {
         val snapped = KeyframeEvaluator.snapTime(requestedMs, SNAP_MS)
-        val occupied = keyframes.map { it.timeMs }.toSet() - setOf(fromMs)
+        val occupied = times.toSet() - setOf(fromMs)
         fun free(t: Long): Boolean = t >= 0 && t !in occupied
         if (free(snapped)) return snapped
         var step = SNAP_MS

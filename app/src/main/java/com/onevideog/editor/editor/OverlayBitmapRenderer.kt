@@ -17,6 +17,8 @@ import com.onevideog.editor.diag.DiagContext
 import com.onevideog.editor.diag.DiagSanitizer
 import com.onevideog.editor.diag.DiagnosticsLogger
 import com.onevideog.editor.diag.ImageImportStages
+import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Renders overlay content bitmaps (text blocks, images) used identically by
@@ -62,10 +64,70 @@ object OverlayBitmapRenderer {
     /**
      * Bounded in-memory cache (approx 20 MB) for overlay bitmaps. Keyed by a
      * stable content hash so edits re-render automatically.
+     *
+     * v0.9.0 (L4): styled (baked) bitmaps share THIS cache — the bake-to-
+     * texture spine requires preview and export to consume the same instance
+     * — but their dedicated budget ([MAX_STYLED_BYTES]) stops three heavy
+     * bakes from evicting every plain content bitmap: entryRemoved tracks
+     * global evictions and keeps the styled registry coherent.
      */
     val cache = object : LruCache<String, Bitmap>(20 * 1024 * 1024) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
+
+        override fun entryRemoved(evicted: Boolean, key: String, oldValue: Bitmap, newValue: Bitmap?) {
+            if (evicted) {
+                globalEvictions++
+                synchronized(styledLock) {
+                    if (styledLru.remove(key) != null) bakedInfo.remove(key)
+                }
+            }
+        }
     }
+
+    /**
+     * v0.9.0 (L4): dedicated ceiling for STYLED (baked) bitmaps inside the
+     * shared cache. Insertions beyond it evict the least-recently-used styled
+     * entries first (OVERLAY_BAKE event carries the evictions count).
+     */
+    const val MAX_STYLED_BYTES = 12 * 1024 * 1024
+
+    private val styledLock = Any()
+    /** styled contentKey -> bitmap bytes, access-order (LRU). */
+    private val styledLru = LinkedHashMap<String, Int>(32, 0.75f, true)
+    /** styled contentKey -> content/pad geometry for the shared draw math. */
+    private val bakedInfo = ConcurrentHashMap<String, BakedBitmapInfo>()
+
+    @Volatile
+    var globalEvictions: Int = 0
+        private set
+
+    /**
+     * Geometry of a baked bitmap: the ORIGINAL content size and the
+     * symmetric pad the bake added. Both pipelines derive every drawn size
+     * from these numbers (the content box stays the placement box; the baked
+     * bitmap expands symmetrically around the SAME centre).
+     */
+    class BakedBitmapInfo(
+        val contentWidth: Int,
+        val contentHeight: Int,
+        val padPx: Int,
+    ) {
+        val bakedWidth: Int get() = contentWidth + 2 * padPx
+        val bakedHeight: Int get() = contentHeight + 2 * padPx
+    }
+
+    /**
+     * D1 — THE renderer split (v0.9.0): ONE pure function decides which path
+     * renders an overlay in BOTH pipelines. Overlays WITH a style render
+     * through the baked bitmap (preview `Image` + export `BitmapOverlay` —
+     * the SAME cache instance, exact parity by construction); text WITHOUT a
+     * style keeps the Compose Text path (documented cosmetic delta), images
+     * without a style keep the plain decode.
+     */
+    fun rendersViaBitmap(overlay: OverlayItem): Boolean = overlay.hasStyle
+
+    /** Geometry for a styled overlay (null when plain or not baked yet). */
+    fun bakedInfoFor(overlay: OverlayItem): BakedBitmapInfo? = bakedInfo[contentKey(overlay)]
 
     /** Stable cache/render key for an overlay's content. */
     fun contentKey(overlay: OverlayItem): String = when (overlay.kind) {
@@ -82,8 +144,12 @@ object OverlayBitmapRenderer {
             append(overlay.bgArgb).append('|')
             append(overlay.bgPaddingFrac).append('|')
             append(overlay.bgRadiusFrac)
+            // v0.9.0 (L1): the style is CONTENT — a style edit must bake a
+            // new bitmap (cache invalidation), not reuse the plain one.
+            append('|').append(overlay.style)
         }
-        com.onevideog.editor.data.OverlayKind.IMAGE -> "i|${overlay.uri}|${overlay.id}"
+        com.onevideog.editor.data.OverlayKind.IMAGE ->
+            "i|${overlay.uri}|${overlay.id}|${overlay.style}"
     }
 
     /**
@@ -173,6 +239,108 @@ object OverlayBitmapRenderer {
         return bitmap
     }
 
+    // ------------------------------------------------------- v0.9.0 (Fase L)
+    // bake-to-texture builders: ONE baked bitmap per (content, style), in the
+    // SAME cache, consumed by BOTH pipelines (D1). The bake runs through the
+    // pure OverlayStyleBake (D3) — no android.graphics participates in the
+    // style math itself, only in the pixel-buffer exchange.
+
+    /**
+     * The styled bitmap for ANY overlay kind (text or image): renders the
+     * plain content WITHOUT native shadows, bakes shadow/glow under it and
+     * caches by the styled contentKey. Cache hits are O(1); a hit/miss is
+     * logged on every call (throttled per key on the hot path) with the
+     * L4 OVERLAY_BAKE evidence. Callers MUST treat this as cold-path work —
+     * the preview pre-warms on Dispatchers.Default, the export builds on its
+     * worker thread.
+     */
+    fun styledBitmap(context: Context?, overlay: OverlayItem): Bitmap? {
+        val key = contentKey(overlay)
+        cache.get(key)?.let {
+            logBake(overlay, it, 0L, hit = true, evictions = 0)
+            return it
+        }
+        val startedAt = SystemClock.elapsedRealtime()
+        val base = when (overlay.kind) {
+            com.onevideog.editor.data.OverlayKind.TEXT -> renderTextBlock(
+                width = (CANONICAL_W * WRAP_FRAC).toInt(),
+                text = overlay.text,
+                colorArgb = overlay.colorArgb,
+                fontPx = (CANONICAL_H * overlay.sizeFrac.coerceIn(0.02f, 0.3f)),
+                familyId = overlay.fontFamily,
+                bold = overlay.bold,
+                italic = overlay.italic,
+                bgArgb = overlay.bgArgb,
+                bgPadPx = (CANONICAL_H * overlay.bgPaddingFrac.coerceIn(0f, 0.1f)),
+                bgRadiusPx = (CANONICAL_H * overlay.bgRadiusFrac.coerceIn(0f, 0.2f)),
+                // The user style REPLACES the native paint shadow (baking
+                // both would double the shadows — the plain path keeps its
+                // established look untouched).
+                nativeShadow = false,
+            )
+            com.onevideog.editor.data.OverlayKind.IMAGE -> {
+                val ctx = context ?: return null
+                decodeImage(ctx, Uri.parse(overlay.uri)) ?: return null
+            }
+        }
+        val style = overlay.style ?: return base
+        val src = IntArray(base.width * base.height)
+        base.getPixels(src, 0, base.width, 0, 0, base.width, base.height)
+        val baked = OverlayStyleBake.bake(src, base.width, base.height, style, base.height.coerceAtLeast(1))
+        val bitmap = Bitmap.createBitmap(baked.width, baked.height, Bitmap.Config.ARGB_8888)
+        bitmap.setPixels(baked.pixels, 0, baked.width, 0, 0, baked.width, baked.height)
+        val elapsedMs = SystemClock.elapsedRealtime() - startedAt
+        val evictions = enforceStyledBudget(bitmap.byteCount)
+        cache.put(key, bitmap)
+        bakedInfo[key] = BakedBitmapInfo(base.width, base.height, baked.padPx)
+        synchronized(styledLock) { styledLru[key] = bitmap.byteCount }
+        logBake(overlay, bitmap, elapsedMs, hit = false, evictions = evictions)
+        return bitmap
+    }
+
+    /**
+     * L4: keeps the styled budget inside the shared cache — when a new bake
+     * would push the styled footprint past [MAX_STYLED_BYTES], the least
+     * recently used STYLED entries are evicted first (the plain content
+     * bitmaps are never touched by this pass). Returns the eviction count.
+     */
+    private fun enforceStyledBudget(incomingBytes: Int): Int {
+        var evictions = 0
+        synchronized(styledLock) {
+            var total = styledLru.values.sum() + incomingBytes
+            if (total <= MAX_STYLED_BYTES) return 0
+            val iterator = styledLru.entries.iterator()
+            while (total > MAX_STYLED_BYTES && iterator.hasNext()) {
+                val entry = iterator.next()
+                total -= entry.value
+                cache.remove(entry.key)
+                bakedInfo.remove(entry.key)
+                iterator.remove()
+                evictions++
+            }
+        }
+        return evictions
+    }
+
+    /** L4 evidence — one OVERLAY_BAKE event per render attempt (hit or miss). */
+    private fun logBake(overlay: OverlayItem, bitmap: Bitmap, elapsedMs: Long, hit: Boolean, evictions: Int) {
+        DiagnosticsLogger.d(
+            "preview", "OVERLAY_BAKE", DiagContext.currentOpId(),
+            if (hit) "styled bitmap cache hit" else "styled bitmap baked",
+            meta = listOf(
+                "ovId" to DiagSanitizer.fingerprint(overlay.id),
+                "kind" to overlay.kind.name,
+                "px" to "${bitmap.width}x${bitmap.height}",
+                "bytes" to bitmap.byteCount.toString(),
+                "elapsedMs" to elapsedMs.toString(),
+                "cacheHit" to hit.toString(),
+                "evictions" to evictions.toString(),
+                "globalEvictions" to globalEvictions.toString(),
+                "thread" to Thread.currentThread().name,
+            ),
+        )
+    }
+
     /** Renders an image overlay bitmap (bounded decode), cached per URI. */
     fun imageBitmap(context: Context, overlay: OverlayItem): Bitmap? {
         val key = contentKey(overlay)
@@ -212,7 +380,10 @@ object OverlayBitmapRenderer {
 
     /** Evicts a single overlay's bitmap (after content edits that change size). */
     fun evict(overlay: OverlayItem) {
-        cache.remove(contentKey(overlay))
+        val key = contentKey(overlay)
+        cache.remove(key)
+        synchronized(styledLock) { styledLru.remove(key) }
+        bakedInfo.remove(key)
     }
 
     /**
@@ -328,6 +499,11 @@ object OverlayBitmapRenderer {
      * v0.5.0: line layout comes from the shared pure helpers
      * ([wrapTextLines], [blockSizePx], [TextMetrics]) so the segment planner
      * reproduces this bitmap's geometry exactly — one implementation.
+     *
+     * v0.9.0 (L1): [nativeShadow] = false renders the SAME block without the
+     * built-in Paint shadow — the base bitmap the style bake consumes (the
+     * user style replaces the native one; baking both would double shadows).
+     * The default true keeps the plain path byte-identical.
      */
     fun renderTextBlock(
         width: Int,
@@ -340,6 +516,7 @@ object OverlayBitmapRenderer {
         bgArgb: Int,
         bgPadPx: Float,
         bgRadiusPx: Float,
+        nativeShadow: Boolean = true,
     ): Bitmap {
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = colorArgb
@@ -367,8 +544,12 @@ object OverlayBitmapRenderer {
             val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = bgArgb }
             canvas.drawPath(path, bgPaint)
         }
-        val shadow = Paint(paint).apply {
-            setShadowLayer(fontPx * 0.08f, 0f, fontPx * 0.04f, 0x88000000.toInt())
+        val shadow = if (nativeShadow) {
+            Paint(paint).apply {
+                setShadowLayer(fontPx * 0.08f, 0f, fontPx * 0.04f, 0x88000000.toInt())
+            }
+        } else {
+            paint
         }
         var y = metrics.padY + fontPx * BASELINE_FACTOR
         for (line in lines) {

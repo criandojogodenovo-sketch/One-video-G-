@@ -243,7 +243,10 @@ class ClipEffectsTest {
         assertEquals(3, audio.gainKeyframes.size)
         assertEquals(2f, audio.gainKeyframes[1].volume, 1e-6f)
         assertTrue(audio.noiseGate)
-        assertEquals(5, decoded.schemaVersion)
+        // v0.9.0: the default is the CURRENT schema version (6) — the
+        // round-trip must not rewrite a tagged document (see the v4 test
+        // above), but a NEW document carries the current default.
+        assertEquals(com.onevideog.editor.data.OvgProject.SCHEMA_VERSION, decoded.schemaVersion)
     }
 
     // ---------------------------------------------------- effectiveSignature

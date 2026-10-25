@@ -368,4 +368,34 @@
     <string name="ramp_segments">Segmentos: %1$d / %2$d</string>
     <string name="ramp_duration">Comprimento do clipe: %1$s → %2$s</string>
     <string name="ramp_note">Até %1$d segmentos de velocidade constante por clipe. Rampas complexas podem perder fotogramas em dispositivos modestos; o áudio acompanha a velocidade sem correção de tom.</string>
+<!-- v0.9.0 (Fase L): profundidade & câmara + estilo cozido -->
+    <string name="tools_depth">Profundidade e câmara</string>
+    <string name="tools_style">Estilo</string>
+    <string name="depth_none_selected">Selecione uma camada (toque no preview ou em Camadas) para definir a profundidade.</string>
+    <string name="depth_z_depth">Profundidade:</string>
+    <string name="depth_z_depth_hint">0 = plano do vídeo (a câmara nunca o move). Camadas mais fundas desenham primeiro (atrás); as mais próximas desenham por último.</string>
+    <string name="depth_camera_title">Câmara de profundidade (camadas)</string>
+    <string name="depth_camera_values">Câmara no cursor:</string>
+    <string name="depth_camera_pan_x">Pan X</string>
+    <string name="depth_camera_pan_y">Pan Y</string>
+    <string name="depth_camera_zoom">Zoom</string>
+    <string name="depth_camera_hint">A câmara de profundidade move e faz zoom das CAMADAS conforme a profundidade — o plano do vídeo fica fixo (âmbito v0.9.0). Adicione keyframes para animar a câmara ao longo do tempo.</string>
+    <string name="depth_camera_kf_add">Keyframe de câmara no cursor</string>
+    <string name="depth_camera_kf_at">Keyframe de câmara em %1$s (edite movendo o cursor e adicionando um novo).</string>
+    <string name="depth_camera_kf_none">Sem keyframes de câmara — a câmara está fixa.</string>
+    <string name="style_none_selected">Selecione uma camada (toque no preview ou em Camadas) para lhe aplicar estilo.</string>
+    <string name="style_preset_none">Nenhum</string>
+    <string name="style_preset_soft">Sombra suave</string>
+    <string name="style_preset_hard">Sombra dura</string>
+    <string name="style_preset_neon">Glow neon</string>
+    <string name="style_hint">O estilo é cozido no MESMO bitmap que o preview e o export partilham — o que vê é o que exporta.</string>
+    <string name="style_anim_warning">Este texto tem animação de entrada: a animação vence e o estilo é ignorado (limitação v0.9.0).</string>
+    <string name="style_shadow_group">Sombra</string>
+    <string name="style_glow_group">Glow</string>
+    <string name="style_offset_x">Deslocamento X</string>
+    <string name="style_offset_y">Deslocamento Y</string>
+    <string name="style_blur">Desfoque</string>
+    <string name="style_opacity">Opacidade</string>
+    <string name="style_radius">Raio</string>
+    <string name="style_strength">Intensidade</string>
 </resources>

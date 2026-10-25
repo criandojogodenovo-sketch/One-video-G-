@@ -2,9 +2,9 @@
 
 ## Principle
 
-There is exactly **one** authoritative project model (`OvgProject`, schema v5)
-and **one** set of pure math objects. The preview and the export pipeline both
-call the same functions — neither has a second implementation:
+There is exactly **one** authoritative project model (`OvgProject`, schema v6
+— v0.9.0) and **one** set of pure math objects. The preview and the export
+pipeline both call the same functions — neither has a second implementation:
 
 | Concern                  | Shared code                              | Preview usage                     | Export usage                              |
 |--------------------------|------------------------------------------|-----------------------------------|-------------------------------------------|
@@ -27,6 +27,9 @@ call the same functions — neither has a second implementation:
 | Unified clip view (v0.5.1) | `TimelineClips` (`ClipKind` + `TimelineClip`) | timeline rows, exclusive selection, creation | (editing-layer model — export unaffected) |
 | Audio preview coords (v0.5.1) | `AudioTimeline.windowPositionAt` | `AudioPreviewController` seek/drift | (export plan unchanged — `AudioTimeline.exportPlan`) |
 | Video-less base (v0.5.1) | `ProjectMath.MIN_EMPTY_DURATION_MS` + `ClipEffectsFactory.texturesForOverlays` | black stage + `computePlacements` overlay layer | `CompositionFactory.buildBlackBaseItem` (black PNG item carrying the same textures) |
+| Overlay style bake (v0.9.0) | `OverlayStyleBake` (PURE CPU bake: shadow = shifted alpha + separable Gaussian; glow = blurred alpha tinted; `over` compositing; deterministic symmetric pad) + `OverlayBitmapRenderer.styledBitmap`/`contentKey` (style is CONTENT — one baked bitmap per (content, style) in the SAME LruCache) | `previewRendersViaBitmap` → pre-warmed `Image` of the baked bitmap (D1 renderer split) | `texturesForOverlays` takes the SAME cached baked bitmap; `exportScaleBasisPx` = the CONTENT width so the authored width fraction keeps its meaning |
+| Depth camera (v0.9.0) | `CameraMath` (`evaluate` @ t + `affineForDepth(pan, zoom, zDepth)` + `applyShift`/`applyScale` + `drawOrderComparator` — ONE implementation) | `computePlacements` applies the affine to the placement (segments: to the PARENT, once) | `KeyframedOverlay`/`AnimatedTextOverlay` apply the SAME affine before the hardened v0.8.1 bridge (`toBackgroundNdc` + uniform `setScale` + `toExportRotation`) — NO new shader |
+| Draw order (v0.9.0, D2) | `CameraMath.drawOrderComparator` (zDepth descending = deeper FIRST; zOrder ascending = tie-break, untouched by bringToFront/sendToBack) | `computePlacements` sort + Layers panel listing | `ClipEffectPlan.overlayWindowsForClip` sort (texture FIFO = draw order) |
 
 Timeline, clip labels, preview and export all read duration from
 `ProjectMath.projectDurationMs`. There is no other duration calculation.
@@ -480,3 +483,36 @@ tick (stutter/silence for any trimmed clip). The export plan is unchanged.
     (`AUDIO_KEYFRAME_INVALID`) and defensively re-sanitized in
     `GainAutomationAudioProcessor.profileOf` (documents edited externally
     cannot poison the pipeline).
+28. **Overlay styles are baked ONCE and shared; style + text animation do
+    not compose (v0.9.0).** A non-default `OverlayStyle` (shadow/glow) routes
+    the overlay through the baked-bitmap path in BOTH pipelines (renderer
+    split D1: `rendersViaBitmap = style != null` on non-animated overlays) —
+    one bitmap instance from the SAME LruCache, exact parity by construction
+    (the content box keeps the placement box; the baked canvas expands
+    symmetrically around the same centre, and the export scales by the
+    CONTENT width via `exportScaleBasisPx`). The bake REPLACES the native
+    text shadow (never doubles it); plain text keeps the established look.
+    An overlay with an ACTIVE text animation keeps the animation and SKIPS
+    the style (`OVERLAY_STYLE_SKIPPED` evidence; the UI warns) — the
+    per-frame composite cannot re-bake per segment within the v0.9.0
+    budget.
+29. **Depth camera applies to LAYERS only — the video plane is not
+    transformed (v0.9.0, deferred L2b under the D4 gate).** The spike
+    (`VideoPlaneCameraSpikeTest`) proves the affine MODEL parity-clean
+    (≤1 px corners, portrait + landscape), but wiring
+    `ScaleAndRotateTransformation` into both pipelines changes the
+    PlayerView/content-rect geometry contract and cannot be measured ≤1 px
+    on device from the JVM harness. Per D4 the camera therefore moves/zooms
+    ONLY overlays with `zDepth != 0` (UI label: "câmara de profundidade
+    (camadas)") — `zDepth 0` is the EXACT v0.8.1 identity (locked by
+    `CameraMathTest` + `OverlayExportParityTest.depth zero stays the
+    v0_8_1 numbers`). Plane integration stays a future phase.
+30. **Layer anchors and the bake pad clamp at the frame/limit edges
+    (v0.9.0).** The camera shift coerces to 0..1 in MODEL space — the exact
+    twin of the export's `toBackgroundNdc(...).coerceIn(-1, 1)` anchor clamp
+    — so a deeply-parallaxed layer "sticks" at the frame edge instead of
+    leaving it (both pipelines identical). The bake pad caps at 25% of the
+    content height (`OverlayStyleBake.MAX_PAD_FRACTION`): an extreme
+    blur/offset clamps its spread instead of inflating the bitmap. Pan is
+    limited to ±1 (±0.25 × depth of the content size per
+    `PAN_GAIN`), zoom to 1..3 (`ZOOM_GAIN` 0.35), depth to [-1, 1].

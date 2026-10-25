@@ -368,4 +368,34 @@
     <string name="ramp_segments">Segments: %1$d / %2$d</string>
     <string name="ramp_duration">Clip length: %1$s → %2$s</string>
     <string name="ramp_note">Up to %1$d constant-speed segments per clip. Complex ramps can drop frames on low-end devices; the audio follows the speed without pitch correction.</string>
+<!-- v0.9.0 (Fase L): depth & camera + baked style -->
+    <string name="tools_depth">Depth &amp; camera</string>
+    <string name="tools_style">Style</string>
+    <string name="depth_none_selected">Select a layer (tap it in the preview or in Layers) to set its depth.</string>
+    <string name="depth_z_depth">Depth:</string>
+    <string name="depth_z_depth_hint">0 = the video plane (the camera never moves it). Deeper layers draw first (behind); closer layers draw last.</string>
+    <string name="depth_camera_title">Depth camera (layers)</string>
+    <string name="depth_camera_values">Camera at playhead:</string>
+    <string name="depth_camera_pan_x">Pan X</string>
+    <string name="depth_camera_pan_y">Pan Y</string>
+    <string name="depth_camera_zoom">Zoom</string>
+    <string name="depth_camera_hint">The depth camera moves and zooms LAYERS by their depth — the video plane stays fixed (v0.9.0 scope). Add keyframes to animate the camera over time.</string>
+    <string name="depth_camera_kf_add">Camera keyframe at playhead</string>
+    <string name="depth_camera_kf_at">Camera keyframe at %1$s (edit by moving the playhead and adding a new one).</string>
+    <string name="depth_camera_kf_none">No camera keyframes — the camera is static.</string>
+    <string name="style_none_selected">Select a layer (tap it in the preview or in Layers) to style it.</string>
+    <string name="style_preset_none">None</string>
+    <string name="style_preset_soft">Soft drop</string>
+    <string name="style_preset_hard">Hard drop</string>
+    <string name="style_preset_neon">Neon glow</string>
+    <string name="style_hint">The style is baked into the same bitmap the preview and the export share — what you see is what exports.</string>
+    <string name="style_anim_warning">This text has an entrance animation: the animation wins and the style is ignored (v0.9.0 limitation).</string>
+    <string name="style_shadow_group">Shadow</string>
+    <string name="style_glow_group">Glow</string>
+    <string name="style_offset_x">Offset X</string>
+    <string name="style_offset_y">Offset Y</string>
+    <string name="style_blur">Blur</string>
+    <string name="style_opacity">Opacity</string>
+    <string name="style_radius">Radius</string>
+    <string name="style_strength">Strength</string>
 </resources>

@@ -7,6 +7,7 @@ import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.Presentation
 import androidx.media3.effect.SpeedChangeEffect
 import com.google.common.collect.ImmutableList
+import com.onevideog.editor.data.CameraState
 import com.onevideog.editor.data.OvgProject
 import com.onevideog.editor.data.OverlayItem
 import com.onevideog.editor.data.ProjectAspect
@@ -203,6 +204,9 @@ object ClipEffectsFactory {
                     ExpandedOverlays.projectContentAspect(project),
                     outputWidthPx,
                     outputHeightPx,
+                    // v0.9.0 (L2): the project depth camera rides into every
+                    // texture (identity for v5 documents — no behaviour change).
+                    project.camera,
                 )
             }
         }
@@ -258,6 +262,16 @@ object ClipEffectsFactory {
      * the project time of the item's local t=0 (the video clip's timeline
      * start — or the segment's —, or 0 for the black base). [contentAspect]
      * drives the animated-text composite (v0.5.7).
+     *
+     * v0.9.0 (Fase L): [camera] is the project depth camera — every texture
+     * consumes the SAME [CameraMath.affineForDepth] the preview uses (L2).
+     * Styled overlays (L1) take their bitmap from
+     * [OverlayBitmapRenderer.styledBitmap] — the SAME cache instance the
+     * preview consumes (bake-to-texture parity by construction) — and pass
+     * the CONTENT width as the export scale basis (the baked canvas is
+     * wider by the symmetric style pad). A styled overlay with an ACTIVE
+     * text animation keeps the animation and SKIPS the style (documented
+     * limitation — the per-frame composite cannot re-bake per segment).
      */
     fun texturesForOverlays(
         context: Context,
@@ -267,6 +281,8 @@ object ClipEffectsFactory {
         /** v0.5.9: output frame px for the composite's boxPx log (0 = n/a). */
         outputWidthPx: Int = 0,
         outputHeightPx: Int = 0,
+        /** v0.9.0 (L2): the project depth camera (default = identity). */
+        camera: CameraState = CameraState(),
     ): ImmutableList<androidx.media3.effect.TextureOverlay> {
         if (windows.isEmpty()) return ImmutableList.of()
         val builder = ImmutableList.builder<androidx.media3.effect.TextureOverlay>()
@@ -278,6 +294,13 @@ object ClipEffectsFactory {
                 null
             }
             if (animSpec != null) {
+                if (overlay.hasStyle) {
+                    DiagnosticsLogger.i(
+                        "export", "OVERLAY_STYLE_SKIPPED", DiagContext.currentOpId(),
+                        "styled overlay keeps its text animation — style not baked into the per-frame composite",
+                        meta = listOf("ovId" to DiagSanitizer.fingerprint(overlay.id)),
+                    )
+                }
                 // v0.5.8: one ANIM_TEXT_BUILD event per composite — the
                 // planning evidence the frame-level ANIM_TEXT_FRAME logs
                 // (AnimatedTextOverlay.getBitmap) correlate against.
@@ -317,27 +340,37 @@ object ClipEffectsFactory {
                         contentAspect = contentAspect,
                         outputWidthPx = outputWidthPx,
                         outputHeightPx = outputHeightPx,
+                        camera = camera,
                     ),
                 )
                 continue
             }
+            // v0.9.0 (L1): styled overlays take the BAKED bitmap from the
+            // SAME cache the preview consumes (one bake, both pipelines).
             val bitmap = when (overlay.kind) {
                 com.onevideog.editor.data.OverlayKind.TEXT ->
-                    OverlayBitmapRenderer.textBitmap(overlay)
-                com.onevideog.editor.data.OverlayKind.IMAGE -> {
-                    val bmp = OverlayBitmapRenderer.imageBitmap(context, overlay)
-                    if (bmp == null) {
-                        // Stage L: recoverable render failure — the overlay
-                        // will be invisible this session; the decode stage
-                        // event already carries the exact exception/reason.
-                        DiagnosticsLogger.w(
-                            "preview", ImageImportStages.RENDER_FAIL, DiagContext.currentOpId(),
-                            "image overlay has no bitmap (overlay hidden)",
-                            meta = listOf("ovId" to DiagSanitizer.fingerprint(overlay.id)),
-                        )
+                    if (overlay.hasStyle) {
+                        OverlayBitmapRenderer.styledBitmap(context, overlay)
+                    } else {
+                        OverlayBitmapRenderer.textBitmap(overlay)
                     }
-                    bmp
-                }
+                com.onevideog.editor.data.OverlayKind.IMAGE ->
+                    if (overlay.hasStyle) {
+                        OverlayBitmapRenderer.styledBitmap(context, overlay)
+                    } else {
+                        val bmp = OverlayBitmapRenderer.imageBitmap(context, overlay)
+                        if (bmp == null) {
+                            // Stage L: recoverable render failure — the overlay
+                            // will be invisible this session; the decode stage
+                            // event already carries the exact exception/reason.
+                            DiagnosticsLogger.w(
+                                "preview", ImageImportStages.RENDER_FAIL, DiagContext.currentOpId(),
+                                "image overlay has no bitmap (overlay hidden)",
+                                meta = listOf("ovId" to DiagSanitizer.fingerprint(overlay.id)),
+                            )
+                        }
+                        bmp
+                    }
             }
             builder.add(
                 KeyframedOverlay(
@@ -347,6 +380,15 @@ object ClipEffectsFactory {
                     windowEndLocalMs = window.windowEndLocalMs,
                     clipStartMs = surfaceStartProjectMs,
                     frameAspect = window.frameAspect,
+                    camera = camera,
+                    // v0.9.0 (L1): baked bitmaps scale by their CONTENT width
+                    // so the authored width fraction keeps meaning the same.
+                    exportScaleBasisPx =
+                        if (overlay.hasStyle) {
+                            OverlayBitmapRenderer.bakedInfoFor(overlay)?.contentWidth ?: 0
+                        } else {
+                            0
+                        },
                 ),
             )
         }
@@ -431,7 +473,12 @@ object ClipEffectPlan {
                 it.visible &&
                     it.endMs > clipStartMs && it.startMs < clipEndMs && it.endMs > it.startMs
             }
-            .sortedBy { it.zOrder }
+            // v0.9.0 (D2): zDepth defines the draw order WHEN IT DIFFERS —
+            // deeper (larger zDepth) draws FIRST; the existing zOrder is the
+            // tie-breaker and keeps meaning what bringOverlayToFront /
+            // sendOverlayToBack manipulate. The SAME comparator the preview's
+            // computePlacements uses (one rule, no drift).
+            .sortedWith(CameraMath.drawOrderComparator)
             .map { overlay ->
                 OverlayWindow(
                     overlay = overlay,
