@@ -536,3 +536,51 @@ tick (stutter/silence for any trimmed clip). The export plan is unchanged.
     convention the anchors already use (limitation 18) — coherent for
     SOURCE projects and matching aspects, drift documented for mismatched
     letterboxed sources.
+
+31. **Blur is ONE shader program with the two separable passes inside (v0.9.1).**
+    Until v0.9.0 a BLUR produced TWO chained `GlShaderProgram`s (H then V).
+    That was safe while the chain had no matrices (v0.6.0–v0.8.1), but the
+    v0.9.0 video-plane camera is grouped by Media3's
+    `DefaultVideoFrameProcessor.createGlShaderPrograms` into a
+    matrices-bearing `DefaultShaderProgram` BEFORE the passes, producing
+    `[DS(camera) → BlurH → BlurV → Final]` — the only new chain shape of
+    v0.9.0 and the only one that died on the affected device (realme
+    RMX3624 / Mali-G57, Android 13) with a deterministic
+    `NullPointerException` from the GL thread, wrapped by
+    `VideoFrameProcessingTaskExecutor` as
+    `ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED` (the NPE site is in neither
+    Media3 1.4.1 nor this app — verified by exhaustive source grep — so it
+    is a platform/vendor fault triggered by that chain shape, while
+    `[DS(camera) → ONE custom program → Final]`, the curves chain,
+    demonstrably worked on the same device). v0.9.1 folds the two passes
+    into ONE `GaussianBlurEffect` / ONE `BlurShaderProgram` implementing
+    `GlShaderProgram` directly (the structure of Media3's own
+    `SeparableConvolutionShaderProgram`, verified against the 1.4.1
+    sources): pass H renders into a program-owned intermediate texture,
+    pass V renders into the output. SAME fragment shader source, SAME
+    kernel weights, SAME H-then-V order, SAME CPU reference
+    (`ClipEffectMath.applyBlur`) — the preview and the export consume the
+    same list, so parity holds by construction and the pixels are
+    bit-identical to the old chained pair on healthy devices.
+
+32. **Preview GL degradation is honest, bounded and export-safe (v0.9.1).**
+    If a device still fails to PROCESS the preview effect chain
+    (`ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED`, family 7000/7001) after
+    the bounded automatic recovery AND a manual reload, the preview
+    suspends the heavy GL effects (camera, colour, curves, blur/vignette/
+    sharpen, transitions) and keeps ONLY `SpeedChangeEffect` (the pace the
+    playhead math maps against) + the composition `Presentation` (the
+    export aspect/letterbox), with a persistent banner: "this device
+    cannot preview some video effects; the export remains correct". The
+    EXPORT list never uses the degraded builder (`degradedPreviewEffects`
+    is preview-only) — the export keeps the full effects or fails loudly
+    with its own error surface. This is the documented, intentional
+    device-parity break: a platform/vendor GL fault cannot be fixed in
+    app code, so the preview chooses "honest, usable, clearly labelled"
+    over "dead editor". Same release: the processing-error dialog has its
+    own message plus a "Reload preview" action that re-prepares the
+    player at the current playhead and re-arms the recovery budget
+    (`PreviewRecoveryBudget.onManualReload`), and the overlay draw gate
+    also suppresses on `playerState == IDLE` (BUG C — no ghost overlays
+    over a dead player; ENDED keeps drawing because the last real frame
+    is still on screen).

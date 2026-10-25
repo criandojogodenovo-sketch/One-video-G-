@@ -30,7 +30,7 @@ class BlurEffectTest {
 
     @Test
     fun `glsl shader string is a valid media3 fragment shader`() {
-        val code = GaussianBlurEffect(1f, horizontal = true).glslShaderString()
+        val code = GaussianBlurEffect(1f).glslShaderString()
         assertTrue(code.startsWith("#version 100"))
         assertTrue(code.contains("precision mediump float"))
         assertTrue(code.contains("uniform sampler2D uTexSampler"))
@@ -40,6 +40,21 @@ class BlurEffectTest {
         // The separable uniforms the glue fills.
         assertTrue(code.contains("u_TexelStep"))
         assertTrue(code.contains("u_Weights[7]"))
+    }
+
+    @Test
+    fun `blur is ONE GlEffect carrying both separable passes`() {
+        // v0.9.1 (BUG A): the two separable passes live inside ONE shader
+        // program (Media3 SeparableConvolutionShaderProgram pattern) — the
+        // GL chain must never contain a chained blur pair again: after the
+        // v0.9.0 camera the shape [DS(camera) -> BlurH -> BlurV] died on
+        // realme RMX3624 / Mali-G57 with a deterministic NPE, while
+        // [DS(camera) -> ONE custom program] (curves) provably worked.
+        val effects = ClipGlEffects.effectsFor(
+            listOf(com.onevideog.editor.data.ClipEffect(com.onevideog.editor.data.EffectKind.BLUR, 0.5f)),
+        )
+        assertEquals(1, effects.size)
+        assertTrue(effects[0] is GaussianBlurEffect)
     }
 
     @Test
@@ -69,7 +84,7 @@ class BlurEffectTest {
 
     @Test
     fun `applyToFrame changes the frame and spreads the spike`() {
-        val effect = GaussianBlurEffect(sigma = 2f, horizontal = true)
+        val effect = GaussianBlurEffect(sigma = 2f)
         val frame = spikeFrame()
         val out = effect.applyToFrame(frame.copyOf(), w, h)
         // Output differs from the input...

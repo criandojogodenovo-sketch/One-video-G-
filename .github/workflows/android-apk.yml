@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 env:
-  APP_VERSION: "0.9.0"
+  APP_VERSION: "0.9.1"
 
 jobs:
   release:

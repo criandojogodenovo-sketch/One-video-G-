@@ -276,6 +276,10 @@
     <string name="keyframe_no_kf_at_playhead">No keyframe at the playhead. Move the playhead (timeline ruler) or add a keyframe to edit values here.</string>
     <string name="error_audio_preview">This audio file could not be played in the preview. The file may be missing, in an unsupported format, or the device lacks the decoder. The import was kept — try removing and re-importing it.</string>
     <string name="error_playback">The video could not be played here. The file may be missing or in a format this device cannot decode.</string>
+    <string name="error_effect_processing_title">Preview failed</string>
+    <string name="error_effect_processing">The preview failed to process the video effects. You can reload the preview at the current position — the export keeps the full effects.</string>
+    <string name="reload_preview">Reload preview</string>
+    <string name="preview_gl_suspended">This device cannot preview some video effects. The preview is shown without them; the export remains correct.</string>
     <string name="error_image_unreadable">The image could not be loaded. It may be missing, corrupted, or in a format this device cannot read. It was not added to the project.</string>
 
     <!-- Temporary diagnostics (v0.2.3) -->
