@@ -30,8 +30,9 @@ import org.junit.Test
  *  - effectiveSignature: effects and transitions ARE signature inputs
  *    (they change the GL list — the decoder MUST re-prepare), overlays are
  *    NOT (the v0.3.1 contract is untouched);
- *  - the glue builds the expected effect instances (blur = two separable
- *    passes; identity intensities build nothing).
+ *  - the glue builds the expected effect instances (blur = ONE effect
+ *    carrying both separable passes since v0.9.1; identity intensities
+ *    build nothing).
  */
 class ClipEffectsTest {
 
@@ -315,11 +316,14 @@ class ClipEffectsTest {
     // ----------------------------------------------------- glue list building
 
     @Test
-    fun `blur builds two separable passes and identity intensities build nothing`() {
-        val twoPasses = ClipGlEffects.effectsFor(
+    fun `blur builds ONE effect with both separable passes and identity intensities build nothing`() {
+        // v0.9.1 (BUG A): ONE GlEffect — the H/V passes live inside its
+        // shader program (the chained pair is the chain shape that died on
+        // the affected device after the v0.9.0 camera).
+        val singleEffect = ClipGlEffects.effectsFor(
             listOf(ClipEffect(EffectKind.BLUR, 0.5f)),
         )
-        assertEquals(2, twoPasses.size)
+        assertEquals(1, singleEffect.size)
 
         val zeroIntensity = ClipGlEffects.effectsFor(
             listOf(
@@ -339,8 +343,8 @@ class ClipEffectsTest {
     @Test
     fun `the glue trims to the max per clip`() {
         // 4 MODEL effects (the limit is 3): the 4th entry is trimmed before
-        // building. BLUR = 2 passes, so a full 3-effect list builds exactly
-        // 2 + 1 + 1 = 4 GL instances; a 4th BLUR would add 2 more.
+        // building. BLUR = ONE effect (v0.9.1), so a full 3-effect list
+        // builds exactly 1 + 1 + 1 = 3 GL instances; a 4th BLUR would add 1.
         val overLimit = ClipGlEffects.effectsFor(
             listOf(
                 ClipEffect(EffectKind.BLUR, 0.4f),
@@ -349,7 +353,7 @@ class ClipEffectsTest {
                 ClipEffect(EffectKind.BLUR, 0.6f),
             ),
         )
-        assertEquals(4, overLimit.size)
+        assertEquals(3, overLimit.size)
         // The model-level limit constant stays in ONE place.
         assertEquals(3, ClipEffectsFactory.MAX_EFFECTS_PER_CLIP)
     }

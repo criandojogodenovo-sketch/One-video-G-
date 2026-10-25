@@ -64,6 +64,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import com.onevideog.editor.R
 import com.onevideog.editor.editor.EditorViewModel
+import com.onevideog.editor.editor.PlaybackErrorPolicy
 import com.onevideog.editor.ui.home.formatDuration
 
 /**
@@ -123,6 +124,9 @@ fun EditorScreen(
     // Import error snackbar mapping
     val importError by viewModel.importError.collectAsState()
     var errorText by remember { mutableStateOf<String?>(null) }
+    // v0.9.1 (BUG B): the effect-processing failure dialog (own message +
+    // "Recarregar pré-visualização" action — see PlaybackErrorPolicy).
+    var showEffectProcessingError by remember { mutableStateOf(false) }
     LaunchedEffect(importError) {
         importError?.let {
             errorText = when (it) {
@@ -149,8 +153,17 @@ fun EditorScreen(
     }
     val playbackError by viewModel.playbackError.collectAsState()
     LaunchedEffect(playbackError) {
-        if (playbackError != null) {
-            errorText = context.getString(R.string.error_playback)
+        playbackError?.let {
+            // v0.9.1 (BUG B): map BY ERROR CODE. The GL/video-frame-processing
+            // family gets its own dialog with the "Recarregar pré-visualização"
+            // action; every other code keeps the generic playback message.
+            if (PlaybackErrorPolicy.classify(it) ==
+                PlaybackErrorPolicy.Kind.EFFECT_PROCESSING
+            ) {
+                showEffectProcessingError = true
+            } else {
+                errorText = context.getString(R.string.error_playback)
+            }
             viewModel.consumePlaybackError()
         }
     }
@@ -349,6 +362,33 @@ fun EditorScreen(
             text = { Text(message) },
             confirmButton = {
                 androidx.compose.material3.TextButton(onClick = { errorText = null }) {
+                    Text(stringResource(R.string.ok))
+                }
+            },
+        )
+    }
+
+    // v0.9.1 (BUG B): the effect-processing dialog — own message (the old
+    // generic one claimed a missing/undecodable FILE) plus the reload
+    // action that re-prepares the player at the current playhead and
+    // re-arms the recovery budget (PreviewStage collects the request).
+    if (showEffectProcessingError) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showEffectProcessingError = false },
+            title = { Text(stringResource(R.string.error_effect_processing_title)) },
+            text = { Text(stringResource(R.string.error_effect_processing)) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    showEffectProcessingError = false
+                    viewModel.requestPreviewReload()
+                }) {
+                    Text(stringResource(R.string.reload_preview))
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    showEffectProcessingError = false
+                }) {
                     Text(stringResource(R.string.ok))
                 }
             },

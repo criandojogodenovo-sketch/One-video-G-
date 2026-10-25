@@ -31,7 +31,9 @@ import com.onevideog.editor.diag.OpRegistry
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -1451,11 +1453,27 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         audioPreviewError.value = null
     }
 
-    /** Video preview decoder failure (sanitized Media3 error code name). */
-    val playbackError = MutableStateFlow<String?>(null)
+    /** Video preview decoder failure (sanitized Media3 error code + name). */
+    val playbackError = MutableStateFlow<PlaybackErrorInfo?>(null)
 
     fun consumePlaybackError() {
         playbackError.value = null
+    }
+
+    /**
+     * v0.9.1 (BUG B): manual "Recarregar pré-visualização" requests fired by
+     * the effect-processing error dialog. The preview stage (which owns the
+     * player) collects these and re-prepares the player at the CURRENT
+     * playhead — the same sequence the automatic recovery runs, plus the
+     * recovery-budget re-arm (see [PreviewRecoveryBudget.onManualReload]).
+     */
+    val previewReloadRequests = MutableSharedFlow<Unit>(
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+
+    fun requestPreviewReload() {
+        previewReloadRequests.tryEmit(Unit)
     }
 
     fun moveAudioClip(clipId: String, newStartMs: Long) {

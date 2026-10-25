@@ -254,6 +254,42 @@ object ClipEffectsFactory {
     }
 
     /**
+     * v0.9.1 (BUG A — graceful degradation, device-specific): the
+     * PREVIEW-ONLY effect list for the case where this device's GL pipeline
+     * deterministically fails to PROCESS the effects chain
+     * (ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED persisting after the
+     * bounded recovery and the manual reload). Timing and frame geometry
+     * are preserved — SpeedChangeEffect keeps the pace the playhead math
+     * maps against, Presentation keeps the export aspect/letterbox — while
+     * every heavy/optional GL effect is dropped (camera, colour, curves,
+     * blur/vignette/sharpen, transitions). The EXPORT list is untouched:
+     * nothing calls this on the export path, so the export stays correct
+     * (the honest preview banner states exactly that — see PARITY.md).
+     */
+    fun degradedPreviewEffects(
+        project: OvgProject,
+        clip: com.onevideog.editor.data.Clip,
+    ): List<Effect> {
+        val startedAt = SystemClock.elapsedRealtime()
+        val effects = mutableListOf<Effect>()
+        if (clip.speed != 1f) {
+            effects.add(SpeedChangeEffect(clip.speed))
+        }
+        previewPresentation(project)?.let { effects.add(it) }
+        DiagnosticsLogger.w(
+            "preview", "EFFECT_ATTACH", DiagContext.currentOpId(),
+            "degraded preview effect list built (GL effects suspended on this device)",
+            meta = listOf(
+                "effects" to effects.size.toString(),
+                "degraded" to "true",
+                "elapsedMs" to (SystemClock.elapsedRealtime() - startedAt).toString(),
+                "thread" to Thread.currentThread().name,
+            ),
+        )
+        return effects
+    }
+
+    /**
      * Presentation effect matching the export composition geometry for
      * preview use. SOURCE aspect keeps the source frame (the export's
      * `Presentation.createForHeight` preserves aspect); fixed aspects get
