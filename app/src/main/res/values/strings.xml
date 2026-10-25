@@ -368,4 +368,29 @@
     <string name="ramp_segments">Segments: %1$d / %2$d</string>
     <string name="ramp_duration">Clip length: %1$s → %2$s</string>
     <string name="ramp_note">Up to %1$d constant-speed segments per clip. Complex ramps can drop frames on low-end devices; the audio follows the speed without pitch correction.</string>
+
+    <!-- v0.9.0 (Fase L): depth, camera and overlay styles (Opção A 2.5D) -->
+    <string name="tools_depth">Depth</string>
+    <string name="tools_style">Style</string>
+    <string name="depth_title">Depth &amp; camera</string>
+    <string name="depth_select_layer">Select a text or image layer to set its depth.</string>
+    <string name="depth_for">Depth of “%1$s”</string>
+    <string name="depth_value">Depth: %1$s</string>
+    <string name="depth_hint">Deeper layers render behind and move less with the camera. 0 keeps the overlay on the video plane.</string>
+    <string name="camera_section">Camera (whole project)</string>
+    <string name="camera_pan_x">Pan X</string>
+    <string name="camera_pan_y">Pan Y</string>
+    <string name="camera_zoom">Zoom</string>
+    <string name="camera_keyframe_add">Keyframe at playhead</string>
+    <string name="camera_keyframes_none">No camera keyframes — the pose above is constant.</string>
+    <string name="camera_keyframe_remove">Remove</string>
+    <string name="camera_note">The camera moves the video and the overlays together (deeper layers move less). Changing it re-prepares the preview for a moment.</string>
+    <string name="style_title">Overlay style</string>
+    <string name="style_select_layer">Select a text or image layer to style it.</string>
+    <string name="style_preset_none">None</string>
+    <string name="style_preset_soft">Soft drop</string>
+    <string name="style_preset_hard">Hard</string>
+    <string name="style_preset_neon">Neon glow</string>
+    <string name="style_note">Styles are baked into the overlay bitmap — the preview and the export render the exact same pixels.</string>
+    <string name="style_anim_note">This text has an entrance animation — the style is ignored while the animation is on.</string>
 </resources>

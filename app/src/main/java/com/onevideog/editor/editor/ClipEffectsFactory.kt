@@ -66,11 +66,17 @@ object ClipEffectsFactory {
     /**
      * v0.7.0 (J4): THE canonical per-clip pipeline order — a documented
      * contract (PREVIEW_EXPORT_PARITY) locked by ClipEffectsFactoryTest.
-     * [effectsFor] builds exactly this order: constant speed, then basic
-     * colour, then the v0.7.0 tonal CURVES, then the v0.6.0 2D effects,
-     * then the transition windows, then (export only) the overlay textures.
+     * [effectsFor] builds exactly this order: constant speed, then the v0.9.0
+     * 2.5D camera, then basic colour, then the v0.7.0 tonal CURVES, then the
+     * v0.6.0 2D effects, then the transition windows, then (export only) the
+     * overlay textures. The camera sits right after speed: it reframes the
+     * footage, and every later effect (colour/curves/blur/vignette/transitions)
+     * then applies to the camera-framed frame — IDENTICALLY in both pipelines
+     * (the preview list is the same list).
      */
-    val PIPELINE_ORDER = listOf("speed", "color", "curves", "effects2d", "transitions", "overlays")
+    val PIPELINE_ORDER = listOf(
+        "speed", "camera", "color", "curves", "effects2d", "transitions", "overlays",
+    )
 
     /** Preview GL output target height (keeps GPU memory bounded on 4 GB devices). */
     private const val PREVIEW_TARGET_H = 720
@@ -140,24 +146,39 @@ object ClipEffectsFactory {
         if (speed != 1f) {
             effects.add(SpeedChangeEffect(speed))
         }
-        // 2) basic colour (PIPELINE_ORDER[1]).
+        // 2) v0.9.0 (Fase L2, PIPELINE_ORDER[1]): the project 2.5D camera on
+        // the VIDEO plane — a Media3 1.4.1 MatrixTransformation (stock shader,
+        // frame size kept, out-of-NDC pixels clipped = camera crop; spike
+        // L2b gate passed, see VideoPlaneCameraParityTest). The SAME instance
+        // family runs in the preview (setVideoEffects) and the export
+        // (EditedMediaItem effects) — parity by construction. Identity
+        // cameras add NOTHING (zero cost, pre-v0.9.0 behaviour exactly).
+        if (!CameraMath.isIdentity(project.camera)) {
+            effects.add(
+                CameraTransformEffect(
+                    camera = project.camera,
+                    surfaceStartProjectMs = clipStartMs + segmentOutputStartMs,
+                ),
+            )
+        }
+        // 3) basic colour (PIPELINE_ORDER[2]).
         if (!clip.color.isDefault) {
             effects.add(
                 ColorAdjustmentEffect(clip.color.brightness, clip.color.contrast, clip.color.saturation),
             )
         }
-        // 3) v0.7.0 (Fase J, J4): advanced tonal curves AFTER basic colour and
+        // 4) v0.7.0 (Fase J, J4): advanced tonal curves AFTER basic colour and
         // BEFORE the 2D effects — the user's ordering contract. Same call for
         // preview and export: the shader and the four LUT textures are
         // identical in both paths (preview/export parity by construction).
         // curves == null / all-identity builds NOTHING (no GPU cost).
         effects.addAll(ColorCurvesEffects.effectsFor(clip.curves))
-        // 4) v0.6.0 (Fase I, I5): per-clip 2D effects AFTER speed/colour/curves
+        // 5) v0.6.0 (Fase I, I5): per-clip 2D effects AFTER speed/colour/curves
         // and BEFORE overlays — the user's ordering contract for the pipeline.
         // Same call for preview and export: the shaders are identical in
         // both paths (preview/export parity by construction).
         effects.addAll(ClipGlEffects.effectsFor(clip.effects))
-        // 5) v0.6.0 (Fase H): transition windows on THIS clip — the out window
+        // 6) v0.6.0 (Fase H): transition windows on THIS clip — the out window
         // on the tail (previous clip) and the in window on the head (next
         // clip). Same list, same shaders, both pipelines (Media3 1.4.1 has
         // no Transition API — see TransitionEffects docs). v0.7.0: windows
@@ -167,7 +188,7 @@ object ClipEffectsFactory {
                 project, clip, segmentOutputStartMs, segmentOutputEndMs,
             ),
         )
-        // 6) v0.3.1: preview overlays are rendered by the Compose layer, so the
+        // 7) v0.3.1: preview overlays are rendered by the Compose layer, so the
         // preview GL list must NOT contain the OverlayEffect (a second draw
         // would double-expose the overlays where the GL pipeline does work).
         val textures = if (forPreview) {
@@ -203,6 +224,7 @@ object ClipEffectsFactory {
                     ExpandedOverlays.projectContentAspect(project),
                     outputWidthPx,
                     outputHeightPx,
+                    project.camera,
                 )
             }
         }
@@ -267,6 +289,8 @@ object ClipEffectsFactory {
         /** v0.5.9: output frame px for the composite's boxPx log (0 = n/a). */
         outputWidthPx: Int = 0,
         outputHeightPx: Int = 0,
+        /** v0.9.0 (L2): the project camera — the overlays ride it per depth. */
+        camera: com.onevideog.editor.data.CameraState = com.onevideog.editor.data.CameraState(),
     ): ImmutableList<androidx.media3.effect.TextureOverlay> {
         if (windows.isEmpty()) return ImmutableList.of()
         val builder = ImmutableList.builder<androidx.media3.effect.TextureOverlay>()
@@ -317,6 +341,7 @@ object ClipEffectsFactory {
                         contentAspect = contentAspect,
                         outputWidthPx = outputWidthPx,
                         outputHeightPx = outputHeightPx,
+                        camera = camera,
                     ),
                 )
                 continue
@@ -339,6 +364,26 @@ object ClipEffectsFactory {
                     bmp
                 }
             }
+            // v0.9.0 (L1, decisão D1): styled overlays render from the ONE
+            // baked bitmap BOTH pipelines consume (same cache instance as the
+            // preview). boxScale travels with the bitmap so the placement
+            // math keeps the CONTENT box identical to the unstyled case.
+            val styled = OverlayBitmapRenderer.styledBitmap(context, overlay)
+            if (styled != null) {
+                builder.add(
+                    KeyframedOverlay(
+                        overlay = overlay,
+                        contentBitmap = styled.bitmap,
+                        windowStartLocalMs = window.windowStartLocalMs,
+                        windowEndLocalMs = window.windowEndLocalMs,
+                        clipStartMs = surfaceStartProjectMs,
+                        frameAspect = window.frameAspect,
+                        camera = camera,
+                        styleBoxScale = styled.boxScale,
+                    ),
+                )
+                continue
+            }
             builder.add(
                 KeyframedOverlay(
                     overlay = overlay,
@@ -347,6 +392,7 @@ object ClipEffectsFactory {
                     windowEndLocalMs = window.windowEndLocalMs,
                     clipStartMs = surfaceStartProjectMs,
                     frameAspect = window.frameAspect,
+                    camera = camera,
                 ),
             )
         }
@@ -431,7 +477,13 @@ object ClipEffectPlan {
                 it.visible &&
                     it.endMs > clipStartMs && it.startMs < clipEndMs && it.endMs > it.startMs
             }
-            .sortedBy { it.zOrder }
+            // v0.9.0 (D2): depth defines the draw order when it differs —
+            // deeper planes are drawn FIRST (Media3 draws the LAST texture on
+            // top); the existing zOrder is the tie-break and stays the only
+            // thing bring-to-front/send-to-back manipulate. Segments inherit
+            // the parent's zDepth, so the stable sort keeps the segment
+            // reading order inside a depth/z-order pair.
+            .sortedWith(compareBy({ it.zDepth }, { it.zOrder }))
             .map { overlay ->
                 OverlayWindow(
                     overlay = overlay,
@@ -490,6 +542,11 @@ object ClipEffectPlan {
         h = 31 * h + clip.effects.hashCode()
         h = 31 * h + project.transitions.hashCode()
         h = 31 * h + project.aspect.hashCode()
+        // v0.9.0 (Fase L2): the camera IS a GL input (the MatrixTransformation
+        // lives in the per-clip list) — same rebuild class as effects/curves.
+        // Overlays (zDepth/styles) stay OUTSIDE (v0.3.1 contract untouched):
+        // they render via the Compose layer in the preview.
+        h = 31 * h + project.camera.hashCode()
         return h
     }
 }

@@ -243,7 +243,9 @@ class ClipEffectsTest {
         assertEquals(3, audio.gainKeyframes.size)
         assertEquals(2f, audio.gainKeyframes[1].volume, 1e-6f)
         assertTrue(audio.noiseGate)
-        assertEquals(5, decoded.schemaVersion)
+        // v0.9.0: schema v6 (additive — styles/zDepth/camera); the v5 audio
+        // fields round-trip unchanged.
+        assertEquals(6, decoded.schemaVersion)
     }
 
     // ---------------------------------------------------- effectiveSignature

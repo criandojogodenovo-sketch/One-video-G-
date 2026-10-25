@@ -775,6 +775,9 @@ fun PreviewStage(viewModel: EditorViewModel) {
                 // segments are placed per frame through
                 // AnimatedTextLayout.segmentPlacement (project-frame reference).
                 segmentPlans = { expanded.segmentPlans },
+                // v0.9.0 (L2): the project camera — the SAME pure CameraMath
+                // the export consumes (overlays ride the video plane per depth).
+                camera = { project.camera },
                 // v0.5.9 (PONTO C): overlays are not drawn while the video is
                 // video=none/BUFFERING (see the gate above).
                 drawOverlays = { overlaysDrawn },

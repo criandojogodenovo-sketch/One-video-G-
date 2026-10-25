@@ -52,6 +52,7 @@ import com.onevideog.editor.diag.DiagSanitizer
 import com.onevideog.editor.diag.DiagnosticsLogger
 import com.onevideog.editor.diag.ImageImportStages
 import com.onevideog.editor.editor.AnimatedTextLayout
+import com.onevideog.editor.editor.CameraMath
 import com.onevideog.editor.editor.ExpandedOverlays
 import com.onevideog.editor.editor.GizmoMath
 import com.onevideog.editor.editor.KeyframeEvaluator
@@ -89,6 +90,15 @@ internal sealed interface OverlayRender {
 
     /** Decoded image content. */
     data class ImageContent(val bitmap: ImageBitmap) : OverlayRender
+
+    /**
+     * v0.9.0 (L1, decisão D1): a STYLED overlay renders from the ONE baked
+     * bitmap both pipelines consume ([OverlayBitmapRenderer.styledBitmap] —
+     * the same cache instance the export's BitmapOverlay gets). [boxScale]
+     * is the bake's box-growth factor: the placement box grows by it so the
+     * CONTENT box stays exactly the unstyled one (parity by construction).
+     */
+    data class BakedImage(val bitmap: ImageBitmap, val boxScale: Float) : OverlayRender
 }
 
 /** One overlay evaluated at the current playhead, resolved to layer pixels. */
@@ -107,6 +117,12 @@ internal data class PlacedOverlay(
      * and gestures always target the PARENT — segments render only.
      */
     val parentId: String? = null,
+    /**
+     * v0.9.0 (L1): the baked style's box-growth factor (1 when unstyled) —
+     * widthPx/heightPx already include it; the CONTENT box stays the
+     * unstyled size by construction.
+     */
+    val styleBoxScale: Float = 1f,
 )
 
 /**
@@ -138,35 +154,55 @@ internal fun computePlacements(
     selectedId: String?,
     parents: List<OverlayItem> = emptyList(),
     segmentPlans: Map<String, ExpandedOverlays.SegmentPlan> = emptyMap(),
+    /**
+     * v0.9.0 (L2): the project camera — the SAME pure [CameraMath] the export
+     * overlays consume; depth 0 rides the video plane exactly.
+     */
+    camera: com.onevideog.editor.data.CameraState =
+        com.onevideog.editor.data.CameraState(),
 ): List<PlacedOverlay> {
     if (contentWidth <= 0f || contentHeight <= 0f) return emptyList()
+    val camPose = CameraMath.evaluate(camera, playheadMs)
     return overlays
         // v0.3.0: hidden layers render nothing (same rule as the export
         // pipeline — see ClipEffectPlan.overlayWindowsForClip).
         .filter { it.startMs <= playheadMs && playheadMs < it.endMs && it.visible }
-        .sortedBy { it.zOrder }
+        // v0.9.0 (D2): depth defines the draw order when it differs (deeper
+        // drawn first); zOrder is the tie-break — the same comparator the
+        // export texture list uses.
+        .sortedWith(compareBy({ it.zDepth }, { it.zOrder }))
         .mapNotNull { overlay ->
             val render = resolveRender(overlay) ?: return@mapNotNull null
             // The placement aspect is the CONTENT aspect the export scales
             // onto the frame: the canonical block for text, the decoded
-            // bitmap for images.
-            val aspect = when (render) {
-                is OverlayRender.TextBlock -> render.layout.aspect
+            // bitmap for images, the BAKED bitmap for styled overlays.
+            val aspect = when (val r = render) {
+                is OverlayRender.TextBlock -> r.layout.aspect
                 is OverlayRender.ImageContent ->
-                    if (render.bitmap.height <= 0) 1f
-                    else render.bitmap.width.toFloat() / render.bitmap.height
+                    if (r.bitmap.height <= 0) 1f
+                    else r.bitmap.width.toFloat() / r.bitmap.height
+                is OverlayRender.BakedImage ->
+                    if (r.bitmap.height <= 0) 1f
+                    else r.bitmap.width.toFloat() / r.bitmap.height
             }
+            // v0.9.0 (L1): the styled box factor travels with the baked
+            // bitmap; the CONTENT box stays the unstyled size.
+            val boxScale = (render as? OverlayRender.BakedImage)?.boxScale ?: 1f
             // ---- v0.5.9: shared layout function for animated-text segments ----
             val plan = segmentPlans[overlay.id]
             if (plan != null) {
                 val parent = parents.firstOrNull { it.id == plan.parentId }
                 if (parent != null) {
                     val parentEval = KeyframeEvaluator.evaluate(parent, playheadMs)
+                    // v0.9.0 (L2): the camera maps the PARENT (the block rides
+                    // it as one rigid unit — the export applies the same map
+                    // in AnimatedTextOverlay.getOverlaySettings).
+                    val parentMapped = CameraMath.applyToTransform(camPose, parent.zDepth, parentEval)
                     val rel = KeyframeEvaluator.evaluate(plan.relative, playheadMs)
                     val placement = AnimatedTextLayout.segmentPlacement(
-                        parentX = parentEval.x,
-                        parentY = parentEval.y,
-                        parentScale = parentEval.scale,
+                        parentX = parentMapped.x,
+                        parentY = parentMapped.y,
+                        parentScale = parentMapped.scale,
                         centerXFrac = plan.centerXFrac,
                         centerYFrac = plan.centerYFrac,
                         widthFrac = plan.widthFrac,
@@ -187,11 +223,11 @@ internal fun computePlacements(
                                 x = placement.centerXFrac,
                                 y = placement.centerYFrac,
                                 scale = placement.widthFrac,
-                                rotationDeg = parentEval.rotationDeg,
+                                rotationDeg = parentMapped.rotationDeg,
                                 // Parent opacity x relative entrance factor —
                                 // the SAME product the export applies (bitmap
                                 // rel alpha x OverlaySettings alphaScale).
-                                opacity = parentEval.opacity * rel.opacity,
+                                opacity = parentMapped.opacity * rel.opacity,
                             ),
                             render = render,
                             centerX = placement.centerXFrac * contentWidth,
@@ -205,8 +241,13 @@ internal fun computePlacements(
                 }
             }
             val transform = KeyframeEvaluator.evaluate(overlay, playheadMs)
+            // v0.9.0 (L2): the depth camera FIRST (pure shared math — the
+            // mapped centre clamps to the content edge exactly like the
+            // export anchors coerce, so both paths agree), then the existing
+            // placement math on the mapped values.
+            val mapped = CameraMath.applyToTransform(camPose, overlay.zDepth, transform)
             val (w, h) = OverlayLayout.previewSize(
-                contentWidth, contentHeight, aspect, transform.scale,
+                contentWidth, contentHeight, aspect, mapped.scale * boxScale,
             )
             // v0.5.0: segment ids ("parent#sN") map back to their parent for
             // selection/gestures; regular overlays map to themselves.
@@ -214,14 +255,15 @@ internal fun computePlacements(
             val parentId = if (isSegment) ExpandedOverlays.parentIdOf(overlay.id) else null
             PlacedOverlay(
                 overlay = overlay,
-                transform = transform,
+                transform = mapped,
                 render = render,
-                centerX = transform.x * contentWidth,
-                centerY = transform.y * contentHeight,
+                centerX = mapped.x * contentWidth,
+                centerY = mapped.y * contentHeight,
                 widthPx = w,
                 heightPx = h,
                 selected = (parentId ?: overlay.id) == selectedId,
                 parentId = parentId,
+                styleBoxScale = boxScale,
             )
         }
 }
@@ -391,6 +433,13 @@ internal fun OverlayLayer(
      */
     segmentPlans: () -> Map<String, ExpandedOverlays.SegmentPlan> = { emptyMap() },
     /**
+     * v0.9.0 (L2): the project camera — the SAME pure [CameraMath] the export
+     * consumes; depth 0 rides the video plane exactly.
+     */
+    camera: () -> com.onevideog.editor.data.CameraState = {
+        com.onevideog.editor.data.CameraState()
+    },
+    /**
      * v0.5.9 (PONTO C): false while the video is video=none/BUFFERING —
      * nothing is placed or drawn (and the draw evidence is suppressed) until
      * the video actually renders again. Clip-less projects always pass true.
@@ -413,6 +462,8 @@ internal fun OverlayLayer(
     val contentH = contentHeightPx()
     val contentAsp = contentAspect()
     val playhead = playheadMs()
+    // v0.9.0 (L2): the project camera for this frame.
+    val cameraState = camera()
     // v0.5.9 (PONTO C): overlays render only while the video actually does.
     val overlaysVisible = drawOverlays()
 
@@ -439,30 +490,62 @@ internal fun OverlayLayer(
             }
     }
 
+    // ---- v0.9.0 (L1): styled overlays — async bake state (cache-backed) ----
+    // The bake is CPU (pure OverlayStyleBake, one-off per content/style
+    // state); it runs OFF the UI thread and the layer recomposes with the
+    // baked bitmap when it lands. Until then the overlay renders UNSTYLED
+    // (the raw content) — never blank, never a UI-thread bake.
+    val styledBitmaps = remember { mutableStateMapOf<String, OverlayBitmapRenderer.StyledBitmap>() }
+    LaunchedEffect(overlays) {
+        overlays
+            .filter { OverlayBitmapRenderer.effectiveStyle(it) != null }
+            .forEach { overlay ->
+                val key = OverlayBitmapRenderer.styledKey(overlay)
+                if (styledBitmaps.containsKey(key)) return@forEach
+                val baked = withContext(Dispatchers.Default) {
+                    OverlayBitmapRenderer.styledBitmap(context, overlay)
+                }
+                if (baked != null) {
+                    styledBitmaps[key] = baked
+                }
+            }
+    }
+
     // ---- text content: canonical layout cache (per content key) ----
     val textLayouts = remember { mutableMapOf<String, OverlayTextRender.Layout>() }
     val textTypefaces = remember { mutableMapOf<String, Typeface>() }
 
-    fun resolveRender(overlay: OverlayItem): OverlayRender? = when (overlay.kind) {
-        OverlayKind.TEXT -> {
-            val key = OverlayBitmapRenderer.contentKey(overlay)
-            val layout = textLayouts.getOrPut(key) {
-                // v0.5.9: THE ONE shared measurer (OverlayBitmapRenderer
-                // .textMeasurer) — the exact paint the export block renderer
-                // measures/draws with; preview and export cannot drift.
-                val measurer = OverlayBitmapRenderer.textMeasurer(overlay)
-                OverlayTextRender.layout(overlay) { measurer.measureText(it) }
+    fun resolveRender(overlay: OverlayItem): OverlayRender? {
+        // v0.9.0 (L1, decisão D1): styled overlays render from the ONE baked
+        // bitmap (BakedImage) — preview and export share the instance. While
+        // the async bake has not landed, fall through to the raw render
+        // (never blank); when it lands the layer recomposes with the bake.
+        if (OverlayBitmapRenderer.effectiveStyle(overlay) != null) {
+            styledBitmaps[OverlayBitmapRenderer.styledKey(overlay)]?.let {
+                return OverlayRender.BakedImage(it.bitmap.asImageBitmap(), it.boxScale)
             }
-            val typeface = textTypefaces.getOrPut(key) {
-                OverlayBitmapRenderer.typefaceFor(
-                    overlay.fontFamily, overlay.bold, overlay.italic,
-                )
-            }
-            OverlayRender.TextBlock(layout, typeface)
         }
-        OverlayKind.IMAGE ->
-            imageBitmaps[OverlayBitmapRenderer.contentKey(overlay)]
-                ?.let { OverlayRender.ImageContent(it) }
+        return when (overlay.kind) {
+            OverlayKind.TEXT -> {
+                val key = OverlayBitmapRenderer.contentKey(overlay)
+                val layout = textLayouts.getOrPut(key) {
+                    // v0.5.9: THE ONE shared measurer (OverlayBitmapRenderer
+                    // .textMeasurer) — the exact paint the export block renderer
+                    // measures/draws with; preview and export cannot drift.
+                    val measurer = OverlayBitmapRenderer.textMeasurer(overlay)
+                    OverlayTextRender.layout(overlay) { measurer.measureText(it) }
+                }
+                val typeface = textTypefaces.getOrPut(key) {
+                    OverlayBitmapRenderer.typefaceFor(
+                        overlay.fontFamily, overlay.bold, overlay.italic,
+                    )
+                }
+                OverlayRender.TextBlock(layout, typeface)
+            }
+            OverlayKind.IMAGE ->
+                imageBitmaps[OverlayBitmapRenderer.contentKey(overlay)]
+                    ?.let { OverlayRender.ImageContent(it) }
+        }
     }
 
     val rawPlacements = if (overlaysVisible) {
@@ -476,6 +559,7 @@ internal fun OverlayLayer(
             selectedId = selectedId,
             parents = parentsList,
             segmentPlans = segmentPlans(),
+            camera = cameraState,
         )
     } else {
         emptyList()
@@ -509,6 +593,11 @@ internal fun OverlayLayer(
                         " chars=${r.layout.charCount}"
                 is OverlayRender.ImageContent ->
                     "image bitmap=${r.bitmap.width}x${r.bitmap.height}"
+                is OverlayRender.BakedImage ->
+                    // v0.9.0 (L1): styled overlay evidence — the baked bitmap
+                    // px and the box factor the placement used.
+                    "styled bitmap=${r.bitmap.width}x${r.bitmap.height}" +
+                        " boxScale=${r.boxScale}"
             }
             DiagnosticsLogger.d(
                 "preview", ImageImportStages.OVERLAY_DRAW, opId,
@@ -857,6 +946,15 @@ private fun OverlayPlacementContent(placed: PlacedOverlay, density: Density) {
                 contentDescription = null,
                 // The box aspect == the bitmap aspect (computePlacements),
                 // so FillBounds maps it 1:1 like the export quad.
+                contentScale = ContentScale.FillBounds,
+                modifier = Modifier.fillMaxSize(),
+            )
+            is OverlayRender.BakedImage -> Image(
+                // v0.9.0 (L1): the ONE baked bitmap both pipelines consume —
+                // the export draws THIS bitmap with the SAME box (scale x
+                // boxScale), so the style pixels land identically.
+                bitmap = render.bitmap,
+                contentDescription = null,
                 contentScale = ContentScale.FillBounds,
                 modifier = Modifier.fillMaxSize(),
             )

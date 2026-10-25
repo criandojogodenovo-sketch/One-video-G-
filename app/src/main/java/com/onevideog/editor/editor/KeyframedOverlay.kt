@@ -34,6 +34,19 @@ class KeyframedOverlay(
     private val clipStartMs: Long,
     /** Aspect (w/h) of the frame the overlay is composited onto. */
     private val frameAspect: Float,
+    /**
+     * v0.9.0 (L2): the project camera — the overlay rides it with
+     * depth-proportional strength (pure [CameraMath], the SAME object the
+     * preview's computePlacements uses; parity by construction).
+     */
+    private val camera: com.onevideog.editor.data.CameraState =
+        com.onevideog.editor.data.CameraState(),
+    /**
+     * v0.9.0 (L1): box-growth factor of the baked style bitmap (>= 1; 1 when
+     * unstyled) — multiply the transform scale BEFORE the v0.8.1 uniform
+     * scale so the CONTENT box matches the preview exactly.
+     */
+    private val styleBoxScale: Float = 1f,
 ) : BitmapOverlay() {
 
     override fun getBitmap(presentationTimeUs: Long): Bitmap {
@@ -72,12 +85,21 @@ class KeyframedOverlay(
         }
         val projectMs = clipStartMs + Math.round(localMs.toFloat())
         val transform = KeyframeEvaluator.evaluate(overlay, projectMs)
-        val (ndcX, ndcY) = OverlayLayout.toBackgroundNdc(transform.x, transform.y)
+        // v0.9.0 (L2): the depth camera FIRST — pure shared math (the mapped
+        // centre clamps to the content edge exactly like the anchor coercion
+        // below, so the preview and the export agree by construction). The
+        // mapped values then flow through the EXACT v0.8.1-hardened paths.
+        val camPose = CameraMath.evaluate(camera, projectMs)
+        val mapped = CameraMath.applyToTransform(camPose, overlay.zDepth, transform)
+        val (ndcX, ndcY) = OverlayLayout.toBackgroundNdc(mapped.x, mapped.y)
         val bitmap = contentBitmap
         val s = OverlayLayout.overlayExportScale(
             bitmap?.width ?: 1,
             backgroundWidthPx,
-            transform.scale,
+            // v0.9.0 (L1): style box factor — the baked bitmap's margins must
+            // NOT shrink the content: the box grows by styleBoxScale, the
+            // content stays the unstyled fraction of the frame.
+            mapped.scale * styleBoxScale,
         )
         if (backgroundWidthPx <= 0 && !warnedNoBackground) {
             warnedNoBackground = true

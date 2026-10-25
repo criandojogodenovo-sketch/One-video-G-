@@ -43,6 +43,9 @@ enum class Tool(val labelRes: Int) {
     COLOR(R.string.tools_color),
     CURVES(R.string.tools_curves),
     EFFECTS(R.string.tools_effects),
+    // v0.9.0 (Fase L): depth/camera + overlay styles (Opção A 2.5D).
+    DEPTH(R.string.tools_depth),
+    STYLE(R.string.tools_style),
     TEXT(R.string.tools_text),
     IMAGE(R.string.tools_image),
     AUDIO(R.string.tools_audio),
@@ -86,6 +89,8 @@ fun ToolSheet(
                 Tool.COLOR -> if (clip != null) ColorPanel(viewModel, clip) else InfoLine(stringResource(R.string.split_no_clip))
                 Tool.CURVES -> if (clip != null) ColorCurvesPanel(viewModel, clip) else InfoLine(stringResource(R.string.split_no_clip))
                 Tool.EFFECTS -> if (clip != null) ClipEffectsPanel(viewModel, clip) else InfoLine(stringResource(R.string.split_no_clip))
+                Tool.DEPTH -> DepthCameraPanel(viewModel)
+                Tool.STYLE -> StylePanel(viewModel)
                 Tool.TEXT -> OverlayEditorPanel(viewModel, com.onevideog.editor.data.OverlayKind.TEXT)
                 Tool.IMAGE -> OverlayEditorPanel(viewModel, com.onevideog.editor.data.OverlayKind.IMAGE)
                 Tool.AUDIO -> AudioPanel(viewModel)

@@ -283,6 +283,194 @@ class OverlayExportParityTest {
         parityCases(1080, 1920, 1024, 1024, 0.7f, 0.2f, 0.2f, listOf(-55.44f, 45f, 90f, 0f), 1f)
     }
 
+    // ------------------------------------------- v0.9.0 (L2): camera × depth
+
+    /**
+     * Preview corners under the depth camera: the SAME pure [CameraMath]
+     * both paths call, then the Compose math (scale the box, rotate CW).
+     */
+    private fun previewCornersCam(
+        frameW: Float,
+        frameH: Float,
+        bitmapAspect: Float,
+        pose: CameraMath.Pose,
+        zDepth: Float,
+        x: Float,
+        y: Float,
+        scale: Float,
+        rotationDegCw: Float,
+    ): List<Pair<Float, Float>> {
+        val mapped = CameraMath.applyToTransform(
+            pose, zDepth,
+            com.onevideog.editor.data.OverlayTransform(x = x, y = y, scale = scale, rotationDeg = rotationDegCw),
+        )
+        return previewCorners(frameW, frameH, bitmapAspect, mapped.x, mapped.y, mapped.scale, mapped.rotationDeg)
+    }
+
+    /**
+     * Export corners under the depth camera: the SAME [CameraMath] map, then
+     * the PRODUCTION v0.8.1-hardened functions + the Media3 matrix port.
+     */
+    private fun exportCornersCam(
+        frameW: Int,
+        frameH: Int,
+        bitmapW: Int,
+        bitmapH: Int,
+        pose: CameraMath.Pose,
+        zDepth: Float,
+        x: Float,
+        y: Float,
+        scale: Float,
+        rotationDegCw: Float,
+    ): List<Pair<Float, Float>> {
+        val mapped = CameraMath.applyToTransform(
+            pose, zDepth,
+            com.onevideog.editor.data.OverlayTransform(x = x, y = y, scale = scale, rotationDeg = rotationDegCw),
+        )
+        return exportCorners(frameW, frameH, bitmapW, bitmapH, mapped.x, mapped.y, mapped.scale, mapped.rotationDeg)
+    }
+
+    /**
+     * THE L2 extension of the parity contract: with the camera at various
+     * poses (static + keyframed evaluation) and overlays at various depths,
+     * the four corners still coincide within 1 px on both aspects. This is
+     * what lets the camera ship: overlays move through the SAME CameraMath
+     * and then the UNCHANGED v0.8.1-hardened paths.
+     */
+    private fun cameraParityCases(
+        frameW: Int,
+        frameH: Int,
+        bitmapW: Int,
+        bitmapH: Int,
+        x: Float,
+        y: Float,
+        scale: Float,
+        rotationDegCw: Float,
+        tolerancePx: Float,
+    ) {
+        val bitmapAspect = bitmapW.toFloat() / bitmapH
+        val poses = listOf(
+            CameraMath.IDENTITY_POSE,
+            CameraMath.Pose(panX = 0.08f, panY = -0.06f, zoom = 1.7f),
+            CameraMath.Pose(panX = -0.15f, panY = 0.12f, zoom = 2.5f),
+            keyframedPoseAt(400L),
+            keyframedPoseAt(1_600L),
+        )
+        val depths = listOf(-1f, -0.5f, 0f, 0.5f, 1f)
+        for (pose in poses) {
+            for (depth in depths) {
+                val preview = previewCornersCam(
+                    frameW.toFloat(), frameH.toFloat(), bitmapAspect,
+                    pose, depth, x, y, scale, rotationDegCw,
+                )
+                val export = exportCornersCam(
+                    frameW, frameH, bitmapW, bitmapH,
+                    pose, depth, x, y, scale, rotationDegCw,
+                )
+                for (i in preview.indices) {
+                    val dx = abs(preview[i].first - export[i].first)
+                    val dy = abs(preview[i].second - export[i].second)
+                    assertTrue(
+                        "camera=$pose depth=$depth corner $i drifted: " +
+                            "preview=${preview[i]} export=${export[i]}",
+                        dx <= tolerancePx && dy <= tolerancePx,
+                    )
+                }
+                // The drawn box keeps the bitmap aspect under the camera too
+                // (the depth zoom scales both axes uniformly — no collapse,
+                // the BUG A class stays dead).
+                val (w, h) = dims(export)
+                val mappedScale = CameraMath.applyToTransform(
+                    pose, depth,
+                    com.onevideog.editor.data.OverlayTransform(x = x, y = y, scale = scale),
+                ).scale
+                val expectedW = mappedScale * frameW
+                assertEquals("camera=$pose depth=$depth width", expectedW, w, tolerancePx)
+                assertEquals("camera=$pose depth=$depth height", expectedW / bitmapAspect, h, tolerancePx)
+            }
+        }
+    }
+
+    private fun keyframedPoseAt(t: Long): CameraMath.Pose {
+        val camera = com.onevideog.editor.data.CameraState(
+            keyframes = listOf(
+                com.onevideog.editor.data.CameraKeyframe(0, panX = -0.18f, panY = 0.1f, zoom = 1.2f),
+                com.onevideog.editor.data.CameraKeyframe(2_000, panX = 0.22f, panY = -0.12f, zoom = 2.6f),
+            ),
+            interpolation = com.onevideog.editor.data.Interpolation.LINEAR,
+        )
+        return CameraMath.evaluate(camera, t)
+    }
+
+    @Test
+    fun `camera at every depth matches preview on a portrait frame`() {
+        cameraParityCases(1080, 1920, 1203, 192, 0.472f, 0.6f, 0.629f, 45f, 1f)
+    }
+
+    @Test
+    fun `camera at every depth matches preview on a landscape frame`() {
+        cameraParityCases(1920, 1080, 1203, 192, 0.472f, 0.6f, 0.629f, -55.44f, 1f)
+    }
+
+    @Test
+    fun `camera keeps image overlays at every depth unrotated and rotated`() {
+        cameraParityCases(1080, 1920, 768, 1024, 0.35f, 0.45f, 0.4f, 0f, 1f)
+        cameraParityCases(1080, 1920, 768, 1024, 0.35f, 0.45f, 0.4f, 90f, 1f)
+    }
+
+    // -------------------------------------------- v0.9.0 (L1): style via bake
+
+    /**
+     * THE L1 contract: with a style active, BOTH pipelines draw the SAME
+     * baked bitmap (preview Image == export BitmapOverlay — same cache
+     * instance) and the placement scale is multiplied by the SAME boxScale.
+     * So the drawn box is the unstyled box GROWN by boxScale, and the CONTENT
+     * inside it (drawn/boxScale) is EXACTLY the unstyled drawn size — the
+     * style only adds pixels around the content.
+     */
+    @Test
+    fun `styled overlays keep the content box identical on both frames`() {
+        val srcW = 1203
+        val srcH = 192
+        val style = com.onevideog.editor.data.OverlayStylePresets.SOFT
+        // The REAL bake geometry (padX/padY are the bake's own functions).
+        val bakedW = srcW + 2 * OverlayStyleBake.padX(style, srcH)
+        val bakedH = srcH + 2 * OverlayStyleBake.padY(style, srcH)
+        val boxScale = OverlayStyleBake.boxScale(style, srcW, srcH)
+        assertEquals(bakedW.toFloat() / srcW, boxScale, 1e-6f)
+        assertTrue("styled bitmap grows", boxScale > 1f)
+        for (frame in listOf(1080 to 1920, 1920 to 1080)) {
+            val (frameW, frameH) = frame
+            val scale = 0.629f
+            // Preview box: previewSize with the SAME adjusted scale.
+            val (pw, ph) = OverlayLayout.previewSize(
+                frameW.toFloat(), frameH.toFloat(),
+                bakedW.toFloat() / bakedH,
+                scale * boxScale,
+            )
+            // Export box: the production scale + the Media3 port.
+            val s = OverlayLayout.overlayExportScale(bakedW, frameW, scale * boxScale)
+            val corners = media3DrawnCornersPx(
+                frameW, frameH, bakedW, bakedH, s, s, 0f,
+                bgAnchorX = OverlayLayout.toBackgroundNdc(0.5f, 0.5f).first,
+                bgAnchorY = OverlayLayout.toBackgroundNdc(0.5f, 0.5f).second,
+            )
+            val (ew, eh) = dims(corners)
+            assertEquals("styled box width preview==export", pw, ew, 1f)
+            assertEquals("styled box height preview==export", ph, eh, 1f)
+            // The CONTENT inside is the unstyled box: drawn box scaled by
+            // srcW/bakedW (= 1/boxScale) and srcH/bakedH respectively.
+            val contentScaleX = srcW.toFloat() / bakedW
+            val contentScaleY = srcH.toFloat() / bakedH
+            assertEquals(scale * frameW, ew * contentScaleX, 1f)
+            assertEquals(
+                scale * frameW / (srcW.toFloat() / srcH),
+                eh * contentScaleY,
+                1.5f,
+            )
+        }
+    }
+
     private fun parityCases(
         frameW: Int,
         frameH: Int,
