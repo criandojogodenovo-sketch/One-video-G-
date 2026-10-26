@@ -4,6 +4,11 @@ import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -92,7 +97,20 @@ private fun OvgNavHost(
     val navController = rememberNavController()
     val editorViewModel: EditorViewModel = viewModel()
 
-    NavHost(navController = navController, startDestination = "home") {
+    // v0.9.2: smooth screen transitions — fade + short slide, 200-350 ms,
+    // GPU-friendly (no shared-element motion, no blur).
+    NavHost(
+        navController = navController,
+        startDestination = "home",
+        enterTransition = {
+            fadeIn(tween(280)) + slideInVertically(tween(280)) { it / 22 }
+        },
+        exitTransition = { fadeOut(tween(180)) },
+        popEnterTransition = {
+            fadeIn(tween(280)) + slideInVertically(tween(280)) { -it / 22 }
+        },
+        popExitTransition = { fadeOut(tween(180)) + slideOutVertically(tween(220)) { it / 22 } },
+    ) {
         composable("home") {
             ProjectsScreen(
                 onOpenProject = { id -> navController.navigate("editor/$id") },

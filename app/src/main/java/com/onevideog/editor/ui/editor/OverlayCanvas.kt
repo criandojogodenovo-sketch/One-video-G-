@@ -1096,7 +1096,7 @@ private fun PlacedOverlay.distanceTo(point: Offset): Float =
  * so dead handles would only invite taps that do nothing.
  */
 private fun DrawScope.drawSelectionChrome(placed: PlacedOverlay, interactive: Boolean) {
-    val accent = Color(0xFFF98A0B)
+    val accent = Color(0xFFFF7A00)
     val zone = 24.dp.toPx()
     val handleR = zone * 0.5f
     val left = placed.centerX - placed.widthPx / 2f

@@ -17,6 +17,29 @@
     <string name="clips_and_duration">%1$d clipes · %2$s</string>
     <string name="changes_saved">Todas as alterações guardadas</string>
 
+    <!-- v0.9.2 redesign da interface: shell inicial, tabs, banner, perfil -->
+    <string name="tab_home">Início</string>
+    <string name="tab_projects">Projetos</string>
+    <string name="tab_presets">Presets</string>
+    <string name="tab_profile">Perfil</string>
+    <string name="a11y_tab_home">Início</string>
+    <string name="a11y_tab_projects">Projetos</string>
+    <string name="a11y_tab_new">Nova composição</string>
+    <string name="a11y_tab_presets">Presets</string>
+    <string name="a11y_tab_profile">Perfil</string>
+    <string name="a11y_avatar">Perfil</string>
+    <string name="banner_phrase">Corta. Cria. Evolui.</string>
+    <string name="banner_subtitle">Edição de vídeo offline com aspeto profissional.</string>
+    <string name="a11y_banner">Banner de destaque</string>
+    <string name="new_composition">Nova composição</string>
+    <string name="projects_card_title">Projetos</string>
+    <string name="projects_card_body">Abrir, renomear ou continuar a editar os seus projetos guardados.</string>
+    <string name="your_projects">Seus projetos</string>
+    <string name="see_all_projects">Ver todos</string>
+    <string name="in_development">Em desenvolvimento</string>
+    <string name="in_development_body">Esta secção está a ser preparada e chegará numa atualização futura.</string>
+    <string name="profile_greeting">One Video G</string>
+
     <!-- Ações comuns -->
     <string name="cancel">Cancelar</string>
     <string name="save">Guardar</string>

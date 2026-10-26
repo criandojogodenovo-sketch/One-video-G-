@@ -372,7 +372,7 @@ private fun ScrubRuler(
             if (spanMs > durationMs) {
                 val deadStart = scale.timeToPx(durationMs)
                 drawRect(
-                    color = androidx.compose.ui.graphics.Color(0x33F98A0B),
+                    color = androidx.compose.ui.graphics.Color(0x33FF7A00),
                     topLeft = Offset(deadStart, 0f),
                     size = androidx.compose.ui.geometry.Size(
                         size.width - deadStart,
@@ -385,7 +385,7 @@ private fun ScrubRuler(
                 var guard = 0
                 while (hx < size.width && guard < 600) {
                     drawLine(
-                        color = androidx.compose.ui.graphics.Color(0x55F98A0B),
+                        color = androidx.compose.ui.graphics.Color(0x55FF7A00),
                         start = Offset(hx, size.height),
                         end = Offset(hx + size.height, 0f),
                         strokeWidth = 1f,
