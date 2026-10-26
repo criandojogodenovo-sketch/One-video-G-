@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- v0.5.8: foreground/monochrome are bitmaps derived from the AI-generated
-     ATTTY.png (repo root); background stays the project colour resource
-     (#101116). No vector substitute artwork — the generated image is the source. -->
+<!-- v0.9.2 UI redesign: adaptive icon foreground AND background are generated
+     bitmaps (deep-black radial gradient) in every density. The color resource
+     below is kept in sync as a fallback reference. -->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@color/ic_launcher_background" />
+    <background android:drawable="@mipmap/ic_launcher_background" />
     <foreground android:drawable="@mipmap/ic_launcher_foreground" />
     <monochrome android:drawable="@mipmap/ic_launcher_monochrome" />
 </adaptive-icon>

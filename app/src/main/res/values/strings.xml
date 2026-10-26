@@ -17,6 +17,29 @@
     <string name="clips_and_duration">%1$d clips · %2$s</string>
     <string name="changes_saved">All changes saved</string>
 
+    <!-- v0.9.2 UI redesign: home shell, tabs, banner, profile placeholder -->
+    <string name="tab_home">Home</string>
+    <string name="tab_projects">Projects</string>
+    <string name="tab_presets">Presets</string>
+    <string name="tab_profile">Profile</string>
+    <string name="a11y_tab_home">Home</string>
+    <string name="a11y_tab_projects">Projects</string>
+    <string name="a11y_tab_new">New composition</string>
+    <string name="a11y_tab_presets">Presets</string>
+    <string name="a11y_tab_profile">Profile</string>
+    <string name="a11y_avatar">Profile</string>
+    <string name="banner_phrase">Cut. Create. Evolve.</string>
+    <string name="banner_subtitle">Offline video editing with a professional look.</string>
+    <string name="a11y_banner">Highlight banner</string>
+    <string name="new_composition">New composition</string>
+    <string name="projects_card_title">Projects</string>
+    <string name="projects_card_body">Open, rename or continue editing your saved projects.</string>
+    <string name="your_projects">Your projects</string>
+    <string name="see_all_projects">See all</string>
+    <string name="in_development">In development</string>
+    <string name="in_development_body">This section is being prepared and will arrive in a future update.</string>
+    <string name="profile_greeting">One Video G</string>
+
     <!-- Common actions -->
     <string name="cancel">Cancel</string>
     <string name="save">Save</string>
