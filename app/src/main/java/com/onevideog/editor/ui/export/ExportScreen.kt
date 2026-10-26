@@ -16,12 +16,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -45,8 +43,12 @@ import com.onevideog.editor.editor.ExportManager
 import com.onevideog.editor.editor.ExportService
 import com.onevideog.editor.editor.EditorViewModel
 import com.onevideog.editor.editor.ProjectMath
+import com.onevideog.editor.ui.common.GraphiteButton
+import com.onevideog.editor.ui.common.OvgFilterChip
+import com.onevideog.editor.ui.common.OvgSectionCard
 import com.onevideog.editor.ui.common.OvgTopBar
 import com.onevideog.editor.ui.home.formatDuration
+import com.onevideog.editor.ui.theme.GlazedOrangeButton
 
 /** Localized, actionable failure descriptions for the export state machine. */
 @Composable
@@ -174,42 +176,57 @@ fun ExportScreen(
                 }
             }
 
-            Text(
-                stringResource(R.string.export_resolution),
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ExportResolutionEnum.entries.forEach { res ->
-                    FilterChip(
-                        selected = resolution == res,
-                        onClick = { resolution = res },
-                        label = { Text(stringResource(res.labelRes)) },
+            OvgSectionCard {
+                Column(modifier = Modifier.padding(vertical = 10.dp)) {
+                    Text(
+                        stringResource(R.string.export_resolution),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Row(
+                        modifier = Modifier.padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        ExportResolutionEnum.entries.forEach { res ->
+                            OvgFilterChip(
+                                selected = resolution == res,
+                                onClick = { resolution = res },
+                                label = stringResource(res.labelRes),
+                            )
+                        }
+                    }
+                    Text(
+                        stringResource(R.string.fps_note),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp),
                     )
                 }
             }
-            Text(
-                stringResource(R.string.fps_note),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
 
-            Text(
-                stringResource(R.string.export_quality),
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(
-                    ExportConfig.Quality.LOW to R.string.quality_low,
-                    ExportConfig.Quality.MEDIUM to R.string.quality_medium,
-                    ExportConfig.Quality.HIGH to R.string.quality_high,
-                ).forEach { (q, label) ->
-                    FilterChip(
-                        selected = quality == q,
-                        onClick = { quality = q },
-                        label = { Text(stringResource(label)) },
+            OvgSectionCard {
+                Column(modifier = Modifier.padding(vertical = 10.dp)) {
+                    Text(
+                        stringResource(R.string.export_quality),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
                     )
+                    Row(
+                        modifier = Modifier.padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        listOf(
+                            ExportConfig.Quality.LOW to R.string.quality_low,
+                            ExportConfig.Quality.MEDIUM to R.string.quality_medium,
+                            ExportConfig.Quality.HIGH to R.string.quality_high,
+                        ).forEach { (q, label) ->
+                            OvgFilterChip(
+                                selected = quality == q,
+                                onClick = { quality = q },
+                                label = stringResource(label),
+                            )
+                        }
+                    }
                 }
             }
 
@@ -218,6 +235,10 @@ fun ExportScreen(
                 onValueChange = { fileName = it },
                 label = { Text(stringResource(R.string.export_output_name)) },
                 singleLine = true,
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                ),
                 modifier = Modifier.fillMaxWidth(),
             )
 
@@ -251,7 +272,7 @@ fun ExportScreen(
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                    OutlinedButton(onClick = {
+                    GraphiteButton(onClick = {
                         context.startService(ExportService.cancelIntent(context))
                     }) {
                         Text(stringResource(R.string.cancel))
@@ -271,7 +292,7 @@ fun ExportScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    OutlinedButton(onClick = {
+                    GraphiteButton(onClick = {
                         context.startService(ExportService.cancelIntent(context))
                     }) {
                         Text(stringResource(R.string.cancel))
@@ -294,7 +315,7 @@ fun ExportScreen(
                         stringResource(R.string.export_done_body),
                         color = MaterialTheme.colorScheme.onSurface,
                     )
-                    Button(onClick = { ExportBus.reset() }) {
+                    GraphiteButton(onClick = { ExportBus.reset() }) {
                         Text(stringResource(R.string.close))
                     }
                 }
@@ -313,7 +334,7 @@ fun ExportScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Button(onClick = { ExportBus.reset() }) {
+                    GraphiteButton(onClick = { ExportBus.reset() }) {
                         Text(stringResource(R.string.retry))
                     }
                 }
@@ -322,19 +343,23 @@ fun ExportScreen(
                         stringResource(R.string.export_canceled),
                         color = MaterialTheme.colorScheme.onSurface,
                     )
-                    Button(onClick = { ExportBus.reset() }) {
+                    GraphiteButton(onClick = { ExportBus.reset() }) {
                         Text(stringResource(R.string.ok))
                     }
                 }
                 else -> {
-                    Button(
+                    GlazedOrangeButton(
                         onClick = {
                             val safe = ExportConfig.sanitizeFileName(fileName)
                             createDocument.launch("$safe.mp4")
                         },
                         enabled = canStart,
+                        modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text(stringResource(R.string.export_start))
+                        Text(
+                            stringResource(R.string.export_start),
+                            color = com.onevideog.editor.ui.theme.OnOrange,
+                        )
                     }
                 }
             }

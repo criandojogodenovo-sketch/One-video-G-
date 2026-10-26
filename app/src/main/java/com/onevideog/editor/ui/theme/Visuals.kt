@@ -1,14 +1,8 @@
 package com.onevideog.editor.ui.theme
 
-import androidx.compose.animation.core.LinearOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -32,9 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -148,6 +140,8 @@ val OnOrange: Color = Color(0xFF1A0E02)
 /**
  * Primary action button — glazed metallic orange, lit edge, soft orange
  * glow, springy press feedback. The content is an icon/text row.
+ * v0.9.3: `enabled` support — a disabled button dims to half alpha and
+ * swallows clicks (the export screen gates the start action on it).
  */
 @Composable
 fun GlazedOrangeButton(
@@ -156,17 +150,19 @@ fun GlazedOrangeButton(
     shape: Shape = RoundedCornerShape(18.dp),
     elevation: Dp = 12.dp,
     contentPadding: PaddingValues = PaddingValues(horizontal = 18.dp, vertical = 14.dp),
+    enabled: Boolean = true,
     interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
     content: @Composable RowScope.() -> Unit,
 ) {
     Box(
         modifier = modifier
+            .graphicsLayer { alpha = if (enabled) 1f else 0.45f }
             .pressScale(interactionSource)
             .softGlow(elevation, shape, OrangeLo)
             .clip(shape)
             .background(OvgOrangeBrush)
             .litEdge(shape, topAlpha = 0.45f, bottomAlpha = 0.06f)
-            .clickableNoRipple(interactionSource, onClick),
+            .clickableNoRipple(interactionSource) { if (enabled) onClick() },
         contentAlignment = Alignment.Center,
     ) {
         Row(
@@ -183,6 +179,7 @@ fun GraphiteButton(
     modifier: Modifier = Modifier,
     shape: Shape = RoundedCornerShape(18.dp),
     contentPadding: PaddingValues = PaddingValues(horizontal = 18.dp, vertical = 13.dp),
+    enabled: Boolean = true,
     interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
     content: @Composable RowScope.() -> Unit,
 ) {
@@ -190,12 +187,13 @@ fun GraphiteButton(
     val base = MaterialTheme.colorScheme.surface
     Box(
         modifier = modifier
+            .graphicsLayer { alpha = if (enabled) 1f else 0.45f }
             .pressScale(interactionSource)
             .softGlow(6.dp, shape, Color.Black)
             .clip(shape)
             .background(Brush.verticalGradient(0.0f to raised, 1.0f to base))
             .litEdge(shape, topAlpha = 0.22f, bottomAlpha = 0.04f)
-            .clickableNoRipple(interactionSource, onClick),
+            .clickableNoRipple(interactionSource) { if (enabled) onClick() },
         contentAlignment = Alignment.Center,
     ) {
         Row(
@@ -228,9 +226,11 @@ fun GraphiteCard(
 
 /**
  * Brand wordmark animation — the letters "O" and "G" enter low and launch up
- * with a soft spring, one after the other, carrying a light orange halo that
- * breathes in a calm loop. All motion lives in graphicsLayer blocks; after
- * the entrance the letters never recompose.
+ * with a soft spring, one after the other, glazed-orange gradient on the
+ * glyphs themselves. v0.9.3: the background is TRANSPARENT — the old radial
+ * halo behind the row was clipped by the row bounds and read as a brown
+ * rectangle behind the letters (device report). All motion lives in
+ * graphicsLayer blocks; after the entrance the letters never recompose.
  */
 @Composable
 fun OgWordmarkAnimation(
@@ -265,31 +265,9 @@ fun OgWordmarkAnimation(
         ),
         label = "ogG",
     )
-    // Calm glow loop: one slow breathing oscillation, never restarts.
-    val glow by rememberInfiniteTransition(label = "ogGlow").animateFloat(
-        initialValue = 0.10f,
-        targetValue = 0.26f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2600, easing = LinearOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "ogGlowAlpha",
-    )
 
     Row(
-        modifier = modifier
-            .drawBehind {
-                // Soft orange halo behind the letters (breathes with `glow`).
-                drawRect(
-                    brush = Brush.radialGradient(
-                        colors = listOf(OrangeMid.copy(alpha = glow), Color.Transparent),
-                        center = Offset(size.width / 2f, size.height / 2f),
-                        radius = size.width * 1.05f,
-                    ),
-                    topLeft = Offset.Zero,
-                    size = size,
-                )
-            },
+        modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         WordmarkLetter("O", oProgress, fontSize, fontSizePx)

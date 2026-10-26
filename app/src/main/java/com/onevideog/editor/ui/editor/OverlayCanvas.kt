@@ -59,7 +59,6 @@ import com.onevideog.editor.editor.KeyframeEvaluator
 import com.onevideog.editor.editor.OverlayBitmapRenderer
 import com.onevideog.editor.editor.OverlayLayout
 import android.graphics.Typeface
-import android.os.SystemClock
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -573,18 +572,28 @@ internal fun OverlayLayer(
         contentHeight = contentH,
     )
 
-    // ---- OVERLAY_DRAW evidence (throttled: on set change or 1 Hz) ----
+    // ---- OVERLAY_DRAW evidence (on set/transform change only) ----
+    // v0.9.3: the old gate also logged once per second for an UNCHANGED set
+    // (a parked preview filled the report with ~90 KB of duplicate events).
+    // Now a change in the drawn signature is what logs — id, box size AND
+    // transform values — so a move/scale/rotate/opacity edit still produces
+    // evidence, while a paused editor logs nothing at all.
     val drawLogGate = remember { OverlayDrawLogGate() }
     LaunchedEffect(placements) {
         // v0.5.9 (PONTO C): no draw evidence while the gate hides the layer.
         if (!overlaysVisible) return@LaunchedEffect
         val sig = placements.joinToString("|") { p ->
             "${p.parentId ?: p.overlay.id}:" +
-                "${p.widthPx.roundToInt()}x${p.heightPx.roundToInt()}"
+                "${p.widthPx.roundToInt()}x${p.heightPx.roundToInt()}" +
+                ":${p.transform.x}," +
+                "${p.transform.y}," +
+                "${p.transform.scale}," +
+                "${p.transform.rotationDeg}," +
+                "${p.transform.opacity}," +
+                "${p.overlay.visible}"
         }
-        val now = SystemClock.elapsedRealtime()
-        if (!drawLogGate.shouldLog(sig, now)) return@LaunchedEffect
-        drawLogGate.log(sig, now)
+        if (!drawLogGate.shouldLog(sig)) return@LaunchedEffect
+        drawLogGate.log(sig)
         for (p in placements) {
             val contentMeta = when (val r = p.render) {
                 is OverlayRender.TextBlock ->
@@ -896,21 +905,20 @@ internal fun OverlayLayer(
 }
 
 /**
- * Throttle gate for the OVERLAY_DRAW evidence: log when the drawn set
- * signature changes (add/remove/resize/edit) or at most once per second
- * for an unchanged set (live transform evidence while playing). Plain
- * holder — no snapshot state, so logging never triggers recomposition.
+ * Change gate for the OVERLAY_DRAW evidence: log ONLY when the drawn
+ * signature changes — the overlay set, its box sizes AND the transform
+ * values (move/scale/rotate/opacity/visibility). v0.9.3: the old 1 Hz
+ * heartbeat for an unchanged set was removed (a parked preview logged every
+ * second and filled the report with ~90 KB of duplicates). Plain holder —
+ * no snapshot state, so logging never triggers recomposition.
  */
 private class OverlayDrawLogGate {
     var lastSig: String? = null
-    var lastAtMs: Long = 0L
 
-    fun shouldLog(sig: String, nowMs: Long): Boolean =
-        sig != lastSig || nowMs - lastAtMs >= 1000L
+    fun shouldLog(sig: String): Boolean = sig != lastSig
 
-    fun log(sig: String, nowMs: Long) {
+    fun log(sig: String) {
         lastSig = sig
-        lastAtMs = nowMs
     }
 }
 

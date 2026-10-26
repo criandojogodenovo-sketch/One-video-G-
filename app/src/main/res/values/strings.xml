@@ -29,7 +29,6 @@
     <string name="a11y_tab_profile">Profile</string>
     <string name="a11y_avatar">Profile</string>
     <string name="banner_phrase">Cut. Create. Evolve.</string>
-    <string name="banner_subtitle">Offline video editing with a professional look.</string>
     <string name="a11y_banner">Highlight banner</string>
     <string name="new_composition">New composition</string>
     <string name="projects_card_title">Projects</string>
@@ -302,7 +301,7 @@
     <string name="error_effect_processing_title">Preview failed</string>
     <string name="error_effect_processing">The preview failed to process the video effects. You can reload the preview at the current position — the export keeps the full effects.</string>
     <string name="reload_preview">Reload preview</string>
-    <string name="preview_gl_suspended">This device cannot preview some video effects. The preview is shown without them; the export remains correct.</string>
+    <string name="preview_gl_suspended">Preview without effects; the export still applies them.</string>
     <string name="error_image_unreadable">The image could not be loaded. It may be missing, corrupted, or in a format this device cannot read. It was not added to the project.</string>
 
     <!-- Temporary diagnostics (v0.2.3) -->

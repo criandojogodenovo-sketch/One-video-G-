@@ -29,7 +29,6 @@
     <string name="a11y_tab_profile">Perfil</string>
     <string name="a11y_avatar">Perfil</string>
     <string name="banner_phrase">Corta. Cria. Evolui.</string>
-    <string name="banner_subtitle">Edição de vídeo offline com aspeto profissional.</string>
     <string name="a11y_banner">Banner de destaque</string>
     <string name="new_composition">Nova composição</string>
     <string name="projects_card_title">Projetos</string>
@@ -302,7 +301,7 @@
     <string name="error_effect_processing_title">A pré-visualização falhou</string>
     <string name="error_effect_processing">A pré-visualização falhou ao processar os efeitos de vídeo. Pode recarregar a pré-visualização na posição atual — a exportação mantém os efeitos completos.</string>
     <string name="reload_preview">Recarregar pré-visualização</string>
-    <string name="preview_gl_suspended">Este aparelho não consegue pré-visualizar alguns efeitos de vídeo. A pré-visualização é mostrada sem eles; a exportação mantém-se correta.</string>
+    <string name="preview_gl_suspended">Pré-visualização sem efeitos; a exportação continua a aplicá-los.</string>
     <string name="error_image_unreadable">Não foi possível carregar a imagem. Pode estar em falta, danificada, ou num formato que este aparelho não consegue ler. Não foi adicionada ao projeto.</string>
 
     <!-- Diagnóstico temporário (v0.2.3) -->

@@ -414,7 +414,10 @@ private fun HomeHeader(
     }
 }
 
-/** Feature banner: blurred video + anime scissors, impact phrase on top. */
+/** Feature banner: blurred video + anime scissors, impact phrase on top.
+ *  v0.9.3: the subtitle is gone (only "Corta. Cria. Evolui." remains) and
+ *  the phrase sits above a darker lower gradient so the scissors art can
+ *  never fight the text for readability. */
 @Composable
 private fun HeroBanner() {
     val shape = RoundedCornerShape(22.dp)
@@ -438,31 +441,23 @@ private fun HeroBanner() {
                 .background(
                     Brush.verticalGradient(
                         0.00f to Color.Black.copy(alpha = 0.30f),
-                        0.42f to Color.Black.copy(alpha = 0.05f),
-                        1.00f to Color.Black.copy(alpha = 0.86f),
+                        0.42f to Color.Black.copy(alpha = 0.08f),
+                        0.62f to Color.Black.copy(alpha = 0.55f),
+                        1.00f to Color.Black.copy(alpha = 0.94f),
                     ),
                 ),
         )
-        Column(
+        Text(
+            stringResource(R.string.banner_phrase),
+            style = MaterialTheme.typography.displaySmall.copy(
+                fontWeight = FontWeight.Black,
+                fontSize = 30.sp,
+            ),
+            color = Color.White,
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .padding(18.dp),
-        ) {
-            Text(
-                stringResource(R.string.banner_phrase),
-                style = MaterialTheme.typography.displaySmall.copy(
-                    fontWeight = FontWeight.Black,
-                    fontSize = 30.sp,
-                ),
-                color = Color.White,
-            )
-            Text(
-                stringResource(R.string.banner_subtitle),
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color.White.copy(alpha = 0.82f),
-                modifier = Modifier.padding(top = 4.dp),
-            )
-        }
+                .padding(start = 18.dp, end = 18.dp, bottom = 20.dp),
+        )
     }
 }
 

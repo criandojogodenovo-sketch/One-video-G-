@@ -1,7 +1,9 @@
 package com.onevideog.editor.ui.editor
 
+import android.view.HapticFeedbackConstants
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -34,6 +36,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -62,7 +65,9 @@ import kotlin.math.roundToLong
  * handles; draw order stays the explicit z-order property.
  *
  * All edits commit once per gesture (undo-friendly) and immediately affect
- * preview and export.
+ * preview and export. v0.9.3 (CapCut parity): selected bars show the orange
+ * frame, the pegs are orange, trims give a light haptic and a live duration
+ * chip — the SAME trim language as the video track.
  */
 
 private const val MIN_AUDIO_MS = 150L
@@ -76,6 +81,7 @@ internal fun AudioTrackRow(
     onOpenTool: (Tool) -> Unit,
     videoEndMs: Long,
 ) {
+    val view = LocalView.current
     var liveStart by remember(audioClip.id, audioClip.startMs) { mutableStateOf<Long?>(null) }
     var liveTrimStart by remember(audioClip.id, audioClip.trimStartMs) { mutableStateOf<Long?>(null) }
     var liveTrimEnd by remember(audioClip.id, audioClip.trimEndMs) { mutableStateOf<Long?>(null) }
@@ -101,6 +107,19 @@ internal fun AudioTrackRow(
                 .padding(horizontal = 3.dp, vertical = 2.dp)
                 .width(with(LocalDensity.current) { scale.spanToPx(durationMs).toDp() })
                 .clip(RoundedCornerShape(6.dp))
+                .then(
+                    // v0.9.3: the orange selection frame — the SAME trim
+                    // language as the video track (pegs live below).
+                    if (selected) {
+                        Modifier.border(
+                            width = 1.5.dp,
+                            color = MaterialTheme.colorScheme.primary,
+                            shape = RoundedCornerShape(6.dp),
+                        )
+                    } else {
+                        Modifier
+                    },
+                )
                 .background(
                     (if (selected) MaterialTheme.colorScheme.tertiary.copy(alpha = 0.4f)
                     else MaterialTheme.colorScheme.tertiary.copy(alpha = 0.18f)).copy(alpha = 
@@ -118,7 +137,12 @@ internal fun AudioTrackRow(
                 }
                 .pointerInput(audioClip.id, audioClip.startMs, audioClip.trimStartMs, audioClip.trimEndMs) {
                     detectDragGestures(
+                        onDragStart = {
+                            // v0.9.3: light haptic on trim start (CapCut parity).
+                            view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        },
                         onDragEnd = {
+                            view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                             liveStart?.let { viewModel.moveAudioClip(audioClip.id, it) }
                             liveStart = null
                             liveTrimStart = null
@@ -207,7 +231,11 @@ internal fun AudioTrackRow(
                     .fillMaxHeight()
                     .pointerInput(audioClip.id, audioClip.trimStartMs, audioClip.startMs) {
                         detectDragGestures(
+                            onDragStart = {
+                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                            },
                             onDragEnd = {
+                                view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                                 liveTrimStart?.let {
                                     viewModel.trimAudioClip(
                                         audioClip.id, it, audioClip.trimEndMs, liveStart,
@@ -251,7 +279,11 @@ internal fun AudioTrackRow(
                     .fillMaxHeight()
                     .pointerInput(audioClip.id, audioClip.trimEndMs) {
                         detectDragGestures(
+                            onDragStart = {
+                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                            },
                             onDragEnd = {
+                                view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                                 liveTrimEnd?.let {
                                     viewModel.trimAudioClip(
                                         audioClip.id, audioClip.trimStartMs, it, null,
@@ -343,6 +375,7 @@ private fun OverlayBar(
     onOpenTool: (Tool) -> Unit,
     videoEndMs: Long,
 ) {
+    val view = LocalView.current
     var liveStart by remember(overlay.id, overlay.startMs) { mutableStateOf<Long?>(null) }
     var liveEnd by remember(overlay.id, overlay.endMs) { mutableStateOf<Long?>(null) }
     val startMs = liveStart ?: overlay.startMs
@@ -361,6 +394,19 @@ private fun OverlayBar(
             .padding(start = 3.dp, top = 2.dp, bottom = 2.dp)
             .width(barW)
             .clip(RoundedCornerShape(6.dp))
+            .then(
+                // v0.9.3: the orange selection frame — the SAME trim
+                // language as the video track.
+                if (selected) {
+                    Modifier.border(
+                        width = 1.5.dp,
+                        color = MaterialTheme.colorScheme.primary,
+                        shape = RoundedCornerShape(6.dp),
+                    )
+                } else {
+                    Modifier
+                },
+            )
             .background(
                 (if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
                 else MaterialTheme.colorScheme.primary.copy(alpha = 0.22f))
@@ -383,7 +429,11 @@ private fun OverlayBar(
             }
             .pointerInput(overlay.id, overlay.startMs, overlay.endMs) {
                 detectDragGestures(
+                    onDragStart = {
+                        view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                    },
                     onDragEnd = {
+                        view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                         liveStart?.let { viewModel.moveOverlay(overlay.id, it) }
                         liveStart = null
                         liveEnd = null
@@ -498,7 +548,11 @@ private fun OverlayBar(
                 .fillMaxHeight()
                 .pointerInput(overlay.id, overlay.startMs, overlay.endMs) {
                     detectDragGestures(
+                        onDragStart = {
+                            view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        },
                         onDragEnd = {
+                            view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                             liveStart?.let { viewModel.trimOverlayStart(overlay.id, it) }
                             liveStart = null
                         },
@@ -532,7 +586,11 @@ private fun OverlayBar(
                 .fillMaxHeight()
                 .pointerInput(overlay.id, overlay.startMs, overlay.endMs) {
                     detectDragGestures(
+                        onDragStart = {
+                            view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        },
                         onDragEnd = {
+                            view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                             liveEnd?.let { viewModel.trimOverlayEnd(overlay.id, it) }
                             liveEnd = null
                         },
@@ -557,6 +615,24 @@ private fun OverlayBar(
                     .clip(RoundedCornerShape(2.dp))
                     .background(MaterialTheme.colorScheme.primary),
             )
+        }
+        // v0.9.3: live duration chip while trimming (the SAME language as
+        // the video track's pegs).
+        if ((liveStart != null || liveEnd != null) && endMs > startMs) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .offset(y = (-18).dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.9f))
+                    .padding(horizontal = 6.dp, vertical = 1.dp),
+            ) {
+                Text(
+                    formatDuration(duration),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = com.onevideog.editor.ui.theme.OnOrange,
+                )
+            }
         }
     }
 }

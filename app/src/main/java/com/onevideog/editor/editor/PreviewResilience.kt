@@ -107,3 +107,66 @@ class PreviewRecoveryBudget(private val maxAttempts: Int = PLAYER_RECOVERY_MAX_A
         attempts = 0
     }
 }
+
+/**
+ * v0.9.3 — the processing-fault policy (v0.9.2 device report, realme
+ * RMX3624 / Mali-G57): a poisoned GL effect chain failed with
+ * ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED and the old policy re-prepared
+ * THE SAME configuration three times (burning the whole budget on a
+ * deterministically failing setup) while each re-prepare churned the
+ * surface — the churn itself then produced "Detaching surface timed out"
+ * (a GENERIC code), which skipped the degrade path and left the player
+ * dead in IDLE.
+ *
+ * New policy (user prescription): the SAME error must NOT be retried three
+ * times. Consecutive processing failures WITHOUT an intervening READY
+ * prove the configuration is poisoned:
+ *  - the 1st failure gets ONE quick retry (transient GL context losses do
+ *    exist — a single no-churn re-prepare catches them);
+ *  - the 2nd (the REPEAT) suspends the preview GL effects immediately —
+ *    the honest banner takes over and the player keeps working;
+ *  - a TIMEOUT that lands while a processing fault is suspected (the
+ *    recovery churn of the poisoned pipeline) suspends too — it is the
+ *    same root failure wearing a generic code;
+ *  - any READY resets the counter (the pipeline proved itself again).
+ *
+ * Pure and JVM-tested — the composable only wires it.
+ */
+class PreviewProcessingPolicy(private val retriesBeforeSuspend: Int = 1) {
+
+    /** Consecutive processing failures without an intervening READY. */
+    var processingFaults: Int = 0
+        private set
+
+    /** At least one processing failure is awaiting proof (READY/recovery). */
+    val hasProcessingFault: Boolean get() = processingFaults > 0
+
+    /**
+     * True when the effect chain must be suspended NOW: the repeat failure
+     * (faults > retriesBeforeSuspend) or any later failure of the same
+     * stretch.
+     */
+    val shouldSuspend: Boolean get() = processingFaults > retriesBeforeSuspend
+
+    /** Registers one EFFECT_PROCESSING failure; returns [shouldSuspend]. */
+    fun onProcessingError(): Boolean {
+        processingFaults += 1
+        return shouldSuspend
+    }
+
+    /**
+     * A TIMEOUT observed while a processing fault is suspected — the
+     * poisoned-pipeline recovery churn (surface detach storm) is the same
+     * root failure. Suspends exactly like a repeated processing error.
+     */
+    fun onTimeoutDuringProcessingFault(): Boolean {
+        // Jump straight past the retry allowance: the repeat already happened.
+        processingFaults = maxOf(processingFaults, retriesBeforeSuspend + 1)
+        return shouldSuspend
+    }
+
+    /** READY (or a manual reload) — the pipeline proved itself again. */
+    fun onPipelineProven() {
+        processingFaults = 0
+    }
+}

@@ -5,6 +5,7 @@ import com.onevideog.editor.editor.OverlayDrawGate
 import com.onevideog.editor.editor.PLAYER_RECOVERY_MAX_ATTEMPTS
 import com.onevideog.editor.editor.PlaybackErrorInfo
 import com.onevideog.editor.editor.PlaybackErrorPolicy
+import com.onevideog.editor.editor.PreviewProcessingPolicy
 import com.onevideog.editor.editor.PreviewRecoveryBudget
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -24,6 +25,16 @@ import org.junit.Test
  *  - BUG C: the overlay gate resumed drawing on a DEAD player
  *    (playerState=IDLE at 21:41:42.905 in the device report) — IDLE must
  *    suppress exactly like BUFFERING.
+ *
+ * v0.9.3 — the processing-fault policy (the v0.9.2 report: the same blur
+ * chain failed 3x and the recovery churn then threw the detach TIMEOUT —
+ * a generic code — leaving the player dead in IDLE):
+ *
+ *  - the 1st processing failure gets exactly ONE quick retry;
+ *  - the REPEAT suspends the preview GL effects immediately (no third
+ *    attempt with the same configuration);
+ *  - a TIMEOUT while a processing fault is suspected suspends too;
+ *  - a READY (or a manual reload) resets the counter.
  */
 class PreviewResilienceTest {
 
@@ -146,5 +157,65 @@ class PreviewResilienceTest {
         budget.onManualReload()
         assertTrue(budget.canAttempt())
         assertEquals(0, budget.attempts)
+    }
+
+    // ------------------------------------------- PreviewProcessingPolicy
+
+    @Test
+    fun `first processing failure allows ONE retry and the repeat suspends (v0.9.3)`() {
+        val policy = PreviewProcessingPolicy()
+        assertFalse(policy.hasProcessingFault)
+        // 1st failure: the quick retry — never suspend yet.
+        assertFalse(policy.onProcessingError())
+        assertTrue(policy.hasProcessingFault)
+        assertFalse(policy.shouldSuspend)
+        // The REPEAT: suspend immediately — the same configuration is never
+        // re-prepared a third time (the v0.9.2 report burned the budget on
+        // exactly this loop).
+        assertTrue(policy.onProcessingError())
+        assertTrue(policy.shouldSuspend)
+    }
+
+    @Test
+    fun `timeout during a processing fault suspends (the detach-timeout path)`() {
+        val policy = PreviewProcessingPolicy()
+        // The poisoned chain failed once; the recovery churn then produced
+        // ERROR_CODE_TIMEOUT ("Detaching surface timed out") — a GENERIC
+        // code that used to skip the degrade path and leave the player dead.
+        assertFalse(policy.onProcessingError())
+        assertTrue(policy.hasProcessingFault)
+        assertTrue(policy.onTimeoutDuringProcessingFault())
+        assertTrue(policy.shouldSuspend)
+    }
+
+    @Test
+    fun `timeout WITHOUT a processing fault does not suspend`() {
+        val policy = PreviewProcessingPolicy()
+        assertFalse(policy.hasProcessingFault)
+        assertFalse(policy.onTimeoutDuringProcessingFault())
+        // A lone timeout (e.g. a normal detach during navigation) is not an
+        // effect-chain failure — the budget path handles it.
+        assertFalse(policy.shouldSuspend)
+    }
+
+    @Test
+    fun `READY resets the processing fault counter (healthy session)`() {
+        val policy = PreviewProcessingPolicy()
+        // Transient GL hiccup: one failure, one quick retry, then READY —
+        // the pipeline proved itself, the next failure is a NEW stretch.
+        policy.onProcessingError()
+        policy.onPipelineProven()
+        assertFalse(policy.hasProcessingFault)
+        assertFalse(policy.onProcessingError())
+        assertFalse(policy.shouldSuspend)
+    }
+
+    @Test
+    fun `manual reload proves the pipeline again`() {
+        val policy = PreviewProcessingPolicy()
+        policy.onProcessingError()
+        assertTrue(policy.hasProcessingFault)
+        policy.onPipelineProven()
+        assertFalse(policy.hasProcessingFault)
     }
 }
