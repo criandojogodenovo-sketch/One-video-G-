@@ -206,6 +206,10 @@ fun PreviewStage(viewModel: EditorViewModel) {
     // BUFFERING, i.e. the video frame on screen is stale/absent).
     var playerState by remember { mutableStateOf(Player.STATE_IDLE) }
     val geometryTracker = remember { ViewportGeometryTracker() }
+    // v0.9.4 (BUG 3): PREVIEW_RENDER is change-only — onVideoSizeChanged
+    // fires on every (re)prepare and the SAME decoder geometry must not
+    // re-emit the evidence event.
+    val renderLogGate = remember { com.onevideog.editor.editor.PreviewRenderLogGate() }
     // v0.5.7 (ponto 5): the CLIP's declared video geometry (probed at import
     // and persisted with the project) is authoritative when the decoder has
     // not reported a size (video=none in every VIEWPORT_GEOMETRY of the
@@ -291,7 +295,13 @@ fun PreviewStage(viewModel: EditorViewModel) {
                 // v0.3.0: the event carries the playback context (state +
                 // playhead vs video range) so "parked at the end / player
                 // stopped" can never be misread as "the video was lost".
+                // v0.9.4 (BUG 3): change-only — the same geometry (or a
+                // repeated no-video-track callback) emits ONCE; only a REAL
+                // geometry change logs again.
                 videoSize = size
+                if (!renderLogGate.shouldLog(size.width, size.height, size.pixelWidthHeightRatio)) {
+                    return
+                }
                 if (size.width <= 0 || size.height <= 0) {
                     val videoEnd = ProjectMath.videoDurationMs(project.clips)
                     DiagnosticsLogger.d(
@@ -816,7 +826,18 @@ fun PreviewStage(viewModel: EditorViewModel) {
     // ------------------------ audio preview sync (main) -----------------------
     val audioClips = project.audioClips
     val videoDurationMs = ProjectMath.videoDurationMs(project.clips)
-    LaunchedEffect(state.isPlaying, audioClips, viewModel.seekToken.collectAsState().value) {
+    // v0.9.4 (BUG 2): the loop RESTARTS on every seek token / audio clip /
+    // video duration change — the restart's first sync() call IS the
+    // immediate post-commit sync (no wait for the 100 ms tick). The keys
+    // cover every commit family: seeks + scrub end (seekToken), audio
+    // trim/move (audioClips), video trim (videoDurationMs — the audio must
+    // re-clamp to the new video end immediately, the v0.2.5 contract).
+    LaunchedEffect(
+        state.isPlaying,
+        audioClips,
+        videoDurationMs,
+        viewModel.seekToken.collectAsState().value,
+    ) {
         while (isActive) {
             audioController.sync(
                 audioClips, state.playheadMs, state.isPlaying, videoDurationMs,

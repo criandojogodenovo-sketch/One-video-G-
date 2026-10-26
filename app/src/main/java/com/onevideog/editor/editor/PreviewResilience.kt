@@ -173,3 +173,22 @@ class PreviewProcessingPolicy(private val retriesBeforeSuspend: Int = 1) {
         processingFaults = 0
     }
 }
+
+/**
+ * v0.9.4 (BUG 3 — "só em mudança real" log rule): change-only gate for the
+ * PREVIEW_RENDER evidence. onVideoSizeChanged fires on every (re)prepare —
+ * the same decoder geometry (w x h @ par, or the repeated "no video track"
+ * case) must not re-emit the event. Pure — JVM-tested.
+ */
+class PreviewRenderLogGate {
+    var lastSig: String? = null
+        private set
+
+    /** True exactly when the decoder geometry signature changed. */
+    fun shouldLog(width: Int, height: Int, par: Float): Boolean {
+        val sig = if (width <= 0 || height <= 0) "none" else "${width}x${height}:$par"
+        val changed = sig != lastSig
+        if (changed) lastSig = sig
+        return changed
+    }
+}

@@ -1675,6 +1675,40 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private val _seekToken = MutableStateFlow(0)
     val seekToken: StateFlow<Int> get() = _seekToken
 
+    // ---------------------------------------------------------------------
+    // v0.9.4 (BUG 1 — device report op=pvw-27375504): trim-peg drag freeze.
+    // While a trim peg is dragged, the preview must be FROZEN on the last
+    // decoded frame (the SurfaceView is never cleared, never seeked) — the
+    // v0.9.3 pegs seeked the player per drag frame and the decoder sat in
+    // permanent BUFFERING. The drag now pauses playback ONCE at the start
+    // (same was-playing contract as the scrub) and resumes after the
+    // single end-of-gesture commit. Pure state flag: the preview stage and
+    // the audio controller follow through their existing isPlaying effects.
+    private val _trimDragActive = MutableStateFlow(false)
+    val trimDragActive: StateFlow<Boolean> get() = _trimDragActive
+    private var wasPlayingBeforeTrimDrag = false
+
+    /** Drag started on any trim peg: freeze the preview (pause once). */
+    fun beginTrimDrag() {
+        if (_trimDragActive.value) return
+        wasPlayingBeforeTrimDrag = _ui.value.isPlaying
+        _trimDragActive.value = true
+        setPlaying(false)
+        DiagnosticsLogger.d(
+            "timeline", "TRIM_DRAG_FREEZE", null,
+            "trim peg drag started; preview frozen on the last frame",
+            meta = listOf("wasPlaying" to wasPlayingBeforeTrimDrag.toString()),
+        )
+    }
+
+    /** Drag ended/cancelled: restore the pre-drag play state. */
+    fun endTrimDrag() {
+        if (!_trimDragActive.value) return
+        _trimDragActive.value = false
+        if (wasPlayingBeforeTrimDrag) setPlaying(true)
+        wasPlayingBeforeTrimDrag = false
+    }
+
     private var wasPlayingBeforeScrub = false
 
     /**

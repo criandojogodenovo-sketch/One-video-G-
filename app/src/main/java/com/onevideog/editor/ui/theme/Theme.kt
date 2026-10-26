@@ -46,8 +46,10 @@ val TextFaint = Color(0xFF7E828F)
 val DangerRed = Color(0xFFE2574C)
 val SuccessGreen = Color(0xFF55B882)
 
-/** The ONE complete scheme — every slot orange/graphite, zero M3 purple. */
-private val DarkScheme = darkColorScheme(
+/** The ONE complete scheme — every slot orange/graphite, zero M3 purple.
+ *  `internal` so ThemeSchemeTest can pin the identity (the v0.9.4
+ *  non-regression lock for the complete colorScheme). */
+internal val DarkScheme = darkColorScheme(
     // Primary — glazed metallic orange.
     primary = OrangeMid,
     onPrimary = Color(0xFF1A0E02),
