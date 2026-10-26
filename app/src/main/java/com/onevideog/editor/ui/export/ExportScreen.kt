@@ -43,12 +43,12 @@ import com.onevideog.editor.editor.ExportManager
 import com.onevideog.editor.editor.ExportService
 import com.onevideog.editor.editor.EditorViewModel
 import com.onevideog.editor.editor.ProjectMath
-import com.onevideog.editor.ui.common.GraphiteButton
 import com.onevideog.editor.ui.common.OvgFilterChip
 import com.onevideog.editor.ui.common.OvgSectionCard
 import com.onevideog.editor.ui.common.OvgTopBar
 import com.onevideog.editor.ui.home.formatDuration
 import com.onevideog.editor.ui.theme.GlazedOrangeButton
+import com.onevideog.editor.ui.theme.GraphiteButton
 
 /** Localized, actionable failure descriptions for the export state machine. */
 @Composable

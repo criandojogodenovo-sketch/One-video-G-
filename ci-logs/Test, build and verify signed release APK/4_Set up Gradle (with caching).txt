@@ -1,0 +1,34 @@
+﻿2026-10-26T09:03:05.3253691Z ##[group]Run gradle/actions/setup-gradle@v4
+2026-10-26T09:03:05.3254582Z with:
+2026-10-26T09:03:05.3255207Z   cache-disabled: false
+2026-10-26T09:03:05.3255913Z   cache-read-only: true
+2026-10-26T09:03:05.3256580Z   cache-write-only: false
+2026-10-26T09:03:05.3257216Z   cache-overwrite-existing: false
+2026-10-26T09:03:05.3257651Z   cache-cleanup: on-success
+2026-10-26T09:03:05.3258313Z   gradle-home-cache-includes: caches
+notifications
+
+2026-10-26T09:03:05.3258827Z   add-job-summary: always
+2026-10-26T09:03:05.3259422Z   add-job-summary-as-pr-comment: never
+2026-10-26T09:03:05.3259893Z   dependency-graph: disabled
+2026-10-26T09:03:05.3260501Z   dependency-graph-report-dir: dependency-graph-reports
+2026-10-26T09:03:05.3261074Z   dependency-graph-continue-on-failure: true
+2026-10-26T09:03:05.3261818Z   build-scan-publish: false
+2026-10-26T09:03:05.3262267Z   validate-wrappers: true
+2026-10-26T09:03:05.3262682Z   allow-snapshot-wrappers: false
+2026-10-26T09:03:05.3263731Z   gradle-home-cache-strict-match: false
+2026-10-26T09:03:05.3264453Z   workflow-job-context: null
+2026-10-26T09:03:05.3267846Z   github-token: ***
+2026-10-26T09:03:05.3268625Z env:
+2026-10-26T09:03:05.3269317Z   APP_VERSION: 0.9.3
+2026-10-26T09:03:05.3269929Z   JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.20-1/x64
+2026-10-26T09:03:05.3270910Z   JAVA_HOME_17_X64: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.20-1/x64
+2026-10-26T09:03:05.3272011Z ##[endgroup]
+2026-10-26T09:03:06.9652743Z Merged default JDK locations into /home/runner/.m2/toolchains.xml
+2026-10-26T09:03:06.9656622Z ##[group]Restore Gradle state from cache
+2026-10-26T09:03:07.0291907Z Gradle User Home cache not found. Will initialize empty.
+2026-10-26T09:03:07.0292983Z ##[endgroup]
+2026-10-26T09:03:07.0396618Z ##[group]All Gradle Wrapper jars are valid
+2026-10-26T09:03:07.0398176Z ✓ Found known Gradle Wrapper JAR files:
+2026-10-26T09:03:07.0399373Z   498495120a03b9a6ab5d155f5de3c8f0d986a449153702fb80fc80e134484f17 gradle/wrapper/gradle-wrapper.jar
+2026-10-26T09:03:07.0400777Z ##[endgroup]

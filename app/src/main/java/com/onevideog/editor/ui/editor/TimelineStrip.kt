@@ -64,6 +64,7 @@ import com.onevideog.editor.ui.home.formatDuration
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 /**
  * Multi-track timeline: scrub ruler, video track (proportional thumbnails),
