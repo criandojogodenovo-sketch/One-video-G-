@@ -1,8 +1,8 @@
-2026-10-26T09:11:03.7210000Z Requested labels: ubuntu-latest
-2026-10-26T09:11:03.7210000Z Job defined at: criandojogodenovo-sketch/One-video-G-/.github/workflows/android-apk.yml@refs/pull/26/merge
-2026-10-26T09:11:03.7210000Z Waiting for a runner to pick up this job...
-2026-10-26T09:11:03.8600000Z Job is about to start running on the hosted runner: GitHub Actions 1000001556
-2026-10-26T09:11:03.7200000Z Evaluating release.if
-2026-10-26T09:11:03.7200000Z Evaluating: success()
-2026-10-26T09:11:03.7200000Z Result: true
-2026-10-26T09:11:03.8610000Z Job is waiting for a hosted runner to come online.
+2026-10-26T09:18:38.2010000Z Evaluating release.if
+2026-10-26T09:18:38.2010000Z Evaluating: success()
+2026-10-26T09:18:38.2010000Z Result: true
+2026-10-26T09:18:38.2750000Z Job is waiting for a hosted runner to come online.
+2026-10-26T09:18:38.2380000Z Requested labels: ubuntu-latest
+2026-10-26T09:18:38.2380000Z Job defined at: criandojogodenovo-sketch/One-video-G-/.github/workflows/android-apk.yml@refs/pull/26/merge
+2026-10-26T09:18:38.2380000Z Waiting for a runner to pick up this job...
+2026-10-26T09:18:38.2750000Z Job is about to start running on the hosted runner: GitHub Actions 1000001557

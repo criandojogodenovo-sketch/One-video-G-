@@ -162,7 +162,7 @@ class PreviewResilienceTest {
     // ------------------------------------------- PreviewProcessingPolicy
 
     @Test
-    fun `first processing failure allows ONE retry and the repeat suspends (v0.9.3)`() {
+    fun `first processing failure allows ONE retry and the repeat suspends`() {
         val policy = PreviewProcessingPolicy()
         assertFalse(policy.hasProcessingFault)
         // 1st failure: the quick retry — never suspend yet.
