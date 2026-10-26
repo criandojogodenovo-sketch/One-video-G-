@@ -1,32 +1,32 @@
-﻿2026-10-26T09:18:42.8349247Z ##[group]Run actions/setup-java@v4
-2026-10-26T09:18:42.8350526Z with:
-2026-10-26T09:18:42.8351295Z   distribution: temurin
-2026-10-26T09:18:42.8352161Z   java-version: 17
-2026-10-26T09:18:42.8352979Z   java-package: jdk
-2026-10-26T09:18:42.8353809Z   check-latest: false
-2026-10-26T09:18:42.8354658Z   server-id: github
-2026-10-26T09:18:42.8355495Z   server-username: GITHUB_ACTOR
-2026-10-26T09:18:42.8356473Z   server-password: GITHUB_TOKEN
-2026-10-26T09:18:42.8357438Z   overwrite-settings: true
-2026-10-26T09:18:42.8358333Z   job-status: success
-2026-10-26T09:18:42.8367561Z   token: ***
-2026-10-26T09:18:42.8368323Z env:
-2026-10-26T09:18:42.8369051Z   APP_VERSION: 0.9.3
-2026-10-26T09:18:42.8369997Z ##[endgroup]
-2026-10-26T09:18:43.0122419Z ##[warning]setup-java v4 is deprecated and will no longer receive updates. Please migrate to actions/setup-java@v5.
-2026-10-26T09:18:43.0138132Z ##[group]Installed distributions
-2026-10-26T09:18:43.0180365Z Resolved Java 17.0.20+1 from tool-cache
-2026-10-26T09:18:43.0182252Z Setting Java 17.0.20+1 as the default
-2026-10-26T09:18:43.0193187Z (node:2278) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
-2026-10-26T09:18:43.0196053Z (Use `node --trace-deprecation ...` to show where the warning was created)
-2026-10-26T09:18:43.0197795Z Creating toolchains.xml for JDK version 17 from temurin
-2026-10-26T09:18:43.0274366Z Writing to /home/runner/.m2/toolchains.xml
-2026-10-26T09:18:43.0275491Z 
-2026-10-26T09:18:43.0275878Z Java configuration:
-2026-10-26T09:18:43.0276776Z   Distribution: temurin
-2026-10-26T09:18:43.0277644Z   Version: 17.0.20+1
-2026-10-26T09:18:43.0279281Z   Path: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.20-1/x64
-2026-10-26T09:18:43.0280533Z 
-2026-10-26T09:18:43.0282062Z ##[endgroup]
-2026-10-26T09:18:43.0300921Z Creating settings.xml with server-id: github
-2026-10-26T09:18:43.0328491Z Writing to /home/runner/.m2/settings.xml
+﻿2026-10-26T09:25:43.6693907Z ##[group]Run actions/setup-java@v4
+2026-10-26T09:25:43.6694960Z with:
+2026-10-26T09:25:43.6695731Z   distribution: temurin
+2026-10-26T09:25:43.6696586Z   java-version: 17
+2026-10-26T09:25:43.6697406Z   java-package: jdk
+2026-10-26T09:25:43.6698225Z   check-latest: false
+2026-10-26T09:25:43.6699239Z   server-id: github
+2026-10-26T09:25:43.6700085Z   server-username: GITHUB_ACTOR
+2026-10-26T09:25:43.6701071Z   server-password: GITHUB_TOKEN
+2026-10-26T09:25:43.6702039Z   overwrite-settings: true
+2026-10-26T09:25:43.6702944Z   job-status: success
+2026-10-26T09:25:43.6711687Z   token: ***
+2026-10-26T09:25:43.6712476Z env:
+2026-10-26T09:25:43.6713218Z   APP_VERSION: 0.9.3
+2026-10-26T09:25:43.6714054Z ##[endgroup]
+2026-10-26T09:25:43.8397343Z ##[warning]setup-java v4 is deprecated and will no longer receive updates. Please migrate to actions/setup-java@v5.
+2026-10-26T09:25:43.8407323Z ##[group]Installed distributions
+2026-10-26T09:25:43.8577838Z Resolved Java 17.0.20+1 from tool-cache
+2026-10-26T09:25:43.8579793Z Setting Java 17.0.20+1 as the default
+2026-10-26T09:25:43.8590374Z (node:2277) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-26T09:25:43.8594550Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-26T09:25:43.8597364Z Creating toolchains.xml for JDK version 17 from temurin
+2026-10-26T09:25:43.8672592Z Writing to /home/runner/.m2/toolchains.xml
+2026-10-26T09:25:43.8673716Z 
+2026-10-26T09:25:43.8674244Z Java configuration:
+2026-10-26T09:25:43.8675123Z   Distribution: temurin
+2026-10-26T09:25:43.8675992Z   Version: 17.0.20+1
+2026-10-26T09:25:43.8677448Z   Path: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.20-1/x64
+2026-10-26T09:25:43.8679020Z 
+2026-10-26T09:25:43.8680368Z ##[endgroup]
+2026-10-26T09:25:43.8698642Z Creating settings.xml with server-id: github
+2026-10-26T09:25:43.8728976Z Writing to /home/runner/.m2/settings.xml

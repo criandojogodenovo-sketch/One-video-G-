@@ -158,8 +158,11 @@ class PreviewProcessingPolicy(private val retriesBeforeSuspend: Int = 1) {
      * A TIMEOUT observed while a processing fault is suspected — the
      * poisoned-pipeline recovery churn (surface detach storm) is the same
      * root failure. Suspends exactly like a repeated processing error.
+     * A TIMEOUT with NO pending processing fault is NOT an effect-chain
+     * failure (e.g. a normal detach) — returns false untouched.
      */
     fun onTimeoutDuringProcessingFault(): Boolean {
+        if (processingFaults == 0) return false
         // Jump straight past the retry allowance: the repeat already happened.
         processingFaults = maxOf(processingFaults, retriesBeforeSuspend + 1)
         return shouldSuspend

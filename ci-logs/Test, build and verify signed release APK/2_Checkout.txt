@@ -1,91 +1,91 @@
-﻿2026-10-26T09:18:42.0711130Z ##[group]Run actions/checkout@v4
-2026-10-26T09:18:42.0712676Z with:
-2026-10-26T09:18:42.0713686Z   repository: criandojogodenovo-sketch/One-video-G-
-2026-10-26T09:18:42.0723775Z   token: ***
-2026-10-26T09:18:42.0724624Z   ssh-strict: true
-2026-10-26T09:18:42.0725474Z   ssh-user: git
-2026-10-26T09:18:42.0726344Z   persist-credentials: true
-2026-10-26T09:18:42.0727300Z   clean: true
-2026-10-26T09:18:42.0728171Z   sparse-checkout-cone-mode: true
-2026-10-26T09:18:42.0729203Z   fetch-depth: 1
-2026-10-26T09:18:42.0730312Z   fetch-tags: false
-2026-10-26T09:18:42.0731212Z   show-progress: true
-2026-10-26T09:18:42.0732101Z   lfs: false
-2026-10-26T09:18:42.0732924Z   submodules: false
-2026-10-26T09:18:42.0733816Z   set-safe-directory: true
-2026-10-26T09:18:42.0734852Z   allow-unsafe-pr-checkout: false
-2026-10-26T09:18:42.0736176Z env:
-2026-10-26T09:18:42.0736966Z   APP_VERSION: 0.9.3
-2026-10-26T09:18:42.0737828Z ##[endgroup]
-2026-10-26T09:18:42.1811992Z Syncing repository: criandojogodenovo-sketch/One-video-G-
-2026-10-26T09:18:42.1816568Z ##[group]Getting Git version info
-2026-10-26T09:18:42.1818513Z Working directory is '/home/runner/work/One-video-G-/One-video-G-'
-2026-10-26T09:18:42.1821605Z [command]/usr/bin/git version
-2026-10-26T09:18:42.1862806Z git version 2.55.0
-2026-10-26T09:18:42.1901793Z ##[endgroup]
-2026-10-26T09:18:42.1916928Z Temporarily overriding HOME='/home/runner/work/_temp/e45c58d0-6d00-4f63-95ea-ea207f9f9b43' before making global git config changes
-2026-10-26T09:18:42.1921927Z Adding repository directory to the temporary git global config as a safe directory
-2026-10-26T09:18:42.1926127Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/One-video-G-/One-video-G-
-2026-10-26T09:18:42.2037976Z Deleting the contents of '/home/runner/work/One-video-G-/One-video-G-'
-2026-10-26T09:18:42.2043307Z ##[group]Initializing the repository
-2026-10-26T09:18:42.2046140Z [command]/usr/bin/git init /home/runner/work/One-video-G-/One-video-G-
-2026-10-26T09:18:42.2150246Z hint: Using 'master' as the name for the initial branch. This default branch name
-2026-10-26T09:18:42.2154251Z hint: will change to "main" in Git 3.0. To configure the initial branch name
-2026-10-26T09:18:42.2158845Z hint: to use in all of your new repositories, which will suppress this warning,
-2026-10-26T09:18:42.2161950Z hint: call:
-2026-10-26T09:18:42.2163638Z hint:
-2026-10-26T09:18:42.2165418Z hint: 	git config --global init.defaultBranch <name>
-2026-10-26T09:18:42.2167460Z hint:
-2026-10-26T09:18:42.2169308Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
-2026-10-26T09:18:42.2172902Z hint: 'development'. The just-created branch can be renamed via this command:
-2026-10-26T09:18:42.2174460Z hint:
-2026-10-26T09:18:42.2175307Z hint: 	git branch -m <name>
-2026-10-26T09:18:42.2176280Z hint:
-2026-10-26T09:18:42.2177554Z hint: Disable this message with "git config set advice.defaultBranchName false"
-2026-10-26T09:18:42.2179713Z Initialized empty Git repository in /home/runner/work/One-video-G-/One-video-G-/.git/
-2026-10-26T09:18:42.2184988Z [command]/usr/bin/git remote add origin https://github.com/criandojogodenovo-sketch/One-video-G-
-2026-10-26T09:18:42.2220594Z ##[endgroup]
-2026-10-26T09:18:42.2223195Z ##[group]Disabling automatic garbage collection
-2026-10-26T09:18:42.2225608Z [command]/usr/bin/git config --local gc.auto 0
-2026-10-26T09:18:42.2410901Z ##[endgroup]
-2026-10-26T09:18:42.2413732Z ##[group]Setting up auth
-2026-10-26T09:18:42.2421296Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
-2026-10-26T09:18:42.2469755Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
-2026-10-26T09:18:42.2814247Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
-2026-10-26T09:18:42.2851847Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
-2026-10-26T09:18:42.3077230Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
-2026-10-26T09:18:42.3114958Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
-2026-10-26T09:18:42.3338875Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
-2026-10-26T09:18:42.3382842Z ##[endgroup]
-2026-10-26T09:18:42.3392550Z ##[group]Fetching the repository
-2026-10-26T09:18:42.3395525Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +d83f8c13d2fda6bd9fffadc4fd1f258f1a6895d0:refs/remotes/pull/26/merge
-2026-10-26T09:18:42.7450643Z From https://github.com/criandojogodenovo-sketch/One-video-G-
-2026-10-26T09:18:42.7452765Z  * [new ref]         d83f8c13d2fda6bd9fffadc4fd1f258f1a6895d0 -> pull/26/merge
-2026-10-26T09:18:42.7456890Z ##[endgroup]
-2026-10-26T09:18:42.7458764Z ##[group]Determining the checkout info
-2026-10-26T09:18:42.7460828Z ##[endgroup]
-2026-10-26T09:18:42.7464894Z [command]/usr/bin/git sparse-checkout disable
-2026-10-26T09:18:42.7529631Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
-2026-10-26T09:18:42.7564224Z ##[group]Checking out the ref
-2026-10-26T09:18:42.7568189Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/26/merge
-2026-10-26T09:18:42.7820882Z Note: switching to 'refs/remotes/pull/26/merge'.
-2026-10-26T09:18:42.7821998Z 
-2026-10-26T09:18:42.7822721Z You are in 'detached HEAD' state. You can look around, make experimental
-2026-10-26T09:18:42.7824474Z changes and commit them, and you can discard any commits you make in this
-2026-10-26T09:18:42.7826503Z state without impacting any branches by switching back to a branch.
-2026-10-26T09:18:42.7827492Z 
-2026-10-26T09:18:42.7828165Z If you want to create a new branch to retain commits you create, you may
-2026-10-26T09:18:42.7829794Z do so (now or later) by using -c with the switch command. Example:
-2026-10-26T09:18:42.7831546Z 
-2026-10-26T09:18:42.7832240Z   git switch -c <new-branch-name>
-2026-10-26T09:18:42.7833418Z 
-2026-10-26T09:18:42.7834045Z Or undo this operation with:
-2026-10-26T09:18:42.7835015Z 
-2026-10-26T09:18:42.7835537Z   git switch -
-2026-10-26T09:18:42.7836295Z 
-2026-10-26T09:18:42.7837568Z Turn off this advice by setting config variable advice.detachedHead to false
-2026-10-26T09:18:42.7839080Z 
-2026-10-26T09:18:42.7840561Z HEAD is now at d83f8c1 Merge be16f42785cbbfda8d6e8649d70471a0831427a3 into 327d323ca32af2209cdde3327c4598bd1d295ced
-2026-10-26T09:18:42.7848137Z ##[endgroup]
-2026-10-26T09:18:42.7902707Z [command]/usr/bin/git log -1 --format=%H
-2026-10-26T09:18:42.7935706Z d83f8c13d2fda6bd9fffadc4fd1f258f1a6895d0
+﻿2026-10-26T09:25:42.9624879Z ##[group]Run actions/checkout@v4
+2026-10-26T09:25:42.9626309Z with:
+2026-10-26T09:25:42.9627303Z   repository: criandojogodenovo-sketch/One-video-G-
+2026-10-26T09:25:42.9636837Z   token: ***
+2026-10-26T09:25:42.9637703Z   ssh-strict: true
+2026-10-26T09:25:42.9638846Z   ssh-user: git
+2026-10-26T09:25:42.9639729Z   persist-credentials: true
+2026-10-26T09:25:42.9640695Z   clean: true
+2026-10-26T09:25:42.9641559Z   sparse-checkout-cone-mode: true
+2026-10-26T09:25:42.9642577Z   fetch-depth: 1
+2026-10-26T09:25:42.9643433Z   fetch-tags: false
+2026-10-26T09:25:42.9644286Z   show-progress: true
+2026-10-26T09:25:42.9645154Z   lfs: false
+2026-10-26T09:25:42.9645971Z   submodules: false
+2026-10-26T09:25:42.9646847Z   set-safe-directory: true
+2026-10-26T09:25:42.9647872Z   allow-unsafe-pr-checkout: false
+2026-10-26T09:25:42.9649599Z env:
+2026-10-26T09:25:42.9650421Z   APP_VERSION: 0.9.3
+2026-10-26T09:25:42.9651281Z ##[endgroup]
+2026-10-26T09:25:43.0703308Z Syncing repository: criandojogodenovo-sketch/One-video-G-
+2026-10-26T09:25:43.0706793Z ##[group]Getting Git version info
+2026-10-26T09:25:43.0709492Z Working directory is '/home/runner/work/One-video-G-/One-video-G-'
+2026-10-26T09:25:43.0711742Z [command]/usr/bin/git version
+2026-10-26T09:25:43.0796991Z git version 2.55.0
+2026-10-26T09:25:43.0823641Z ##[endgroup]
+2026-10-26T09:25:43.0840915Z Temporarily overriding HOME='/home/runner/work/_temp/c451bf6d-d731-442a-afd0-76ea5a7f8435' before making global git config changes
+2026-10-26T09:25:43.0845780Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-26T09:25:43.0849964Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/One-video-G-/One-video-G-
+2026-10-26T09:25:43.0899417Z Deleting the contents of '/home/runner/work/One-video-G-/One-video-G-'
+2026-10-26T09:25:43.0905275Z ##[group]Initializing the repository
+2026-10-26T09:25:43.0910992Z [command]/usr/bin/git init /home/runner/work/One-video-G-/One-video-G-
+2026-10-26T09:25:43.1043197Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-10-26T09:25:43.1047559Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-10-26T09:25:43.1051875Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-10-26T09:25:43.1054781Z hint: call:
+2026-10-26T09:25:43.1056295Z hint:
+2026-10-26T09:25:43.1058062Z hint: 	git config --global init.defaultBranch <name>
+2026-10-26T09:25:43.1060699Z hint:
+2026-10-26T09:25:43.1062872Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-10-26T09:25:43.1066443Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-10-26T09:25:43.1069669Z hint:
+2026-10-26T09:25:43.1071239Z hint: 	git branch -m <name>
+2026-10-26T09:25:43.1073385Z hint:
+2026-10-26T09:25:43.1075703Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-10-26T09:25:43.1080058Z Initialized empty Git repository in /home/runner/work/One-video-G-/One-video-G-/.git/
+2026-10-26T09:25:43.1087114Z [command]/usr/bin/git remote add origin https://github.com/criandojogodenovo-sketch/One-video-G-
+2026-10-26T09:25:43.1130177Z ##[endgroup]
+2026-10-26T09:25:43.1132657Z ##[group]Disabling automatic garbage collection
+2026-10-26T09:25:43.1136537Z [command]/usr/bin/git config --local gc.auto 0
+2026-10-26T09:25:43.1186254Z ##[endgroup]
+2026-10-26T09:25:43.1189323Z ##[group]Setting up auth
+2026-10-26T09:25:43.1197762Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-26T09:25:43.1238488Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-26T09:25:43.1607121Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-26T09:25:43.1645891Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-26T09:25:43.1873551Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-26T09:25:43.1913124Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-26T09:25:43.2143960Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-10-26T09:25:43.2187365Z ##[endgroup]
+2026-10-26T09:25:43.2189294Z ##[group]Fetching the repository
+2026-10-26T09:25:43.2198714Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +d8d81e0a58790650a21e542f1dfbfb1e670b1a13:refs/remotes/pull/26/merge
+2026-10-26T09:25:43.5850260Z From https://github.com/criandojogodenovo-sketch/One-video-G-
+2026-10-26T09:25:43.5852487Z  * [new ref]         d8d81e0a58790650a21e542f1dfbfb1e670b1a13 -> pull/26/merge
+2026-10-26T09:25:43.5856900Z ##[endgroup]
+2026-10-26T09:25:43.5859123Z ##[group]Determining the checkout info
+2026-10-26T09:25:43.5861115Z ##[endgroup]
+2026-10-26T09:25:43.5864697Z [command]/usr/bin/git sparse-checkout disable
+2026-10-26T09:25:43.5922014Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-10-26T09:25:43.5956042Z ##[group]Checking out the ref
+2026-10-26T09:25:43.5959726Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/26/merge
+2026-10-26T09:25:43.6210167Z Note: switching to 'refs/remotes/pull/26/merge'.
+2026-10-26T09:25:43.6211463Z 
+2026-10-26T09:25:43.6212527Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-10-26T09:25:43.6215464Z changes and commit them, and you can discard any commits you make in this
+2026-10-26T09:25:43.6218978Z state without impacting any branches by switching back to a branch.
+2026-10-26T09:25:43.6220757Z 
+2026-10-26T09:25:43.6221894Z If you want to create a new branch to retain commits you create, you may
+2026-10-26T09:25:43.6224548Z do so (now or later) by using -c with the switch command. Example:
+2026-10-26T09:25:43.6226159Z 
+2026-10-26T09:25:43.6226833Z   git switch -c <new-branch-name>
+2026-10-26T09:25:43.6227892Z 
+2026-10-26T09:25:43.6228831Z Or undo this operation with:
+2026-10-26T09:25:43.6229919Z 
+2026-10-26T09:25:43.6230540Z   git switch -
+2026-10-26T09:25:43.6231365Z 
+2026-10-26T09:25:43.6232611Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-10-26T09:25:43.6234421Z 
+2026-10-26T09:25:43.6236535Z HEAD is now at d8d81e0 Merge 7477553a73d8c0fa6074084ed3090bcf7230faa5 into 327d323ca32af2209cdde3327c4598bd1d295ced
+2026-10-26T09:25:43.6242254Z ##[endgroup]
+2026-10-26T09:25:43.6275871Z [command]/usr/bin/git log -1 --format=%H
+2026-10-26T09:25:43.6302735Z d8d81e0a58790650a21e542f1dfbfb1e670b1a13
