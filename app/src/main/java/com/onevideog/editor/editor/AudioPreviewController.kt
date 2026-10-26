@@ -63,6 +63,9 @@ class AudioPreviewController(context: Context) {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val players = LinkedHashMap<String, ExoPlayer>()
     private val processors = LinkedHashMap<String, GainAutomationAudioProcessor>()
+    // v0.9.4 (BUG 2): the window signature each player's MediaItem was BUILT
+    // with — the rebuild trigger when the clip is edited (trim/move).
+    private val windows = HashMap<String, String>()
     private val failedClips = HashSet<String>()
     private val lastSyncLogAt = HashMap<String, Long>()
 
@@ -93,6 +96,7 @@ class AudioPreviewController(context: Context) {
         players.keys.filterNot { it in validIds }.forEach { id ->
             players.remove(id)?.safeRelease()
             processors.remove(id)
+            windows.remove(id)
             lastSyncLogAt.remove(id)
         }
 
@@ -119,6 +123,7 @@ class AudioPreviewController(context: Context) {
             val active = player
                 ?: createPlayer(clip)?.also {
                     players[clip.id] = it
+                    windows[clip.id] = AudioPreviewSync.windowSignatureOf(clip)
                 } ?: continue
             if (active.playbackState == Player.STATE_IDLE) active.prepare()
             active.volume = clip.volume.coerceIn(0f, 1f)
@@ -131,23 +136,52 @@ class AudioPreviewController(context: Context) {
                 processor.updateProfile(GainAutomationAudioProcessor.profileOf(clip))
                 processor.anchorTo(active.currentPosition)
             }
-            val drift = kotlin.math.abs(active.currentPosition - windowPositionMs)
-            if (drift > DRIFT_TOLERANCE_MS) {
-                active.seekTo(windowPositionMs)
-                // v0.8.0 (Q5): the audio↔video offset evidence — the drift
-                // between the audio player's clock and the preview playhead
-                // at re-seek time, for device-side sync validation. Rate
-                // limited per clip so the diagnostics ring is not flooded.
+            // v0.9.4 (BUG 2): the decision is pure (AudioPreviewSync) —
+            // window rebuild on edit (the stale-ClippingConfiguration bug
+            // that left the audio CONTENT offset by the trim delta), drift
+            // correction at 150 ms, and the AUDIO_SYNC evidence rule
+            // (only on correction or residual drift > 100 ms).
+            val decision = AudioPreviewSync.decide(
+                clip = clip,
+                playheadMs = playheadMs,
+                videoDurationMs = videoDurationMs,
+                playing = playing,
+                snapshot = AudioPreviewSync.PlayerSnapshot(
+                    windowSignature = windows[clip.id]
+                        ?: AudioPreviewSync.windowSignatureOf(clip),
+                    positionMs = active.currentPosition,
+                    isPlaying = active.isPlaying,
+                ),
+            )
+            if (decision.rebuildWindow) {
+                // ONE re-prepare per edit commit: rebuild the item with the
+                // clip's CURRENT window and land at the right position —
+                // the content offset disappears in the same pass.
+                runCatching {
+                    active.setMediaItem(mediaItemFor(clip), windowPositionMs)
+                    active.prepare()
+                    windows[clip.id] = AudioPreviewSync.windowSignatureOf(clip)
+                }
+            } else if (decision.seekToMs != null) {
+                active.seekTo(decision.seekToMs)
+            }
+            if (decision.driftMs != null) {
                 val now = android.os.SystemClock.elapsedRealtime()
-                val last = lastSyncLogAt[clip.id] ?: 0L
-                if (now - last >= SYNC_LOG_INTERVAL_MS) {
+                val isCorrection = decision.rebuildWindow || decision.seekToMs != null
+                if (isCorrection ||
+                    AudioPreviewSync.shouldLogAudioSync(now, lastSyncLogAt[clip.id] ?: 0L)
+                ) {
                     lastSyncLogAt[clip.id] = now
                     DiagnosticsLogger.i(
                         "playback", "AUDIO_SYNC", null,
-                        "audio preview drift re-seek (audio-video offset evidence)",
+                        if (decision.rebuildWindow) {
+                            "audio window rebuilt after an edit (audio-video offset fixed)"
+                        } else {
+                            "audio preview drift re-seek (audio-video offset evidence)"
+                        },
                         meta = listOf(
                             "clip" to DiagSanitizer.fingerprint(clip.id),
-                            "driftMs" to drift.toString(),
+                            "driftMs" to decision.driftMs.toString(),
                             "targetMs" to windowPositionMs.toString(),
                             "playing" to playing.toString(),
                         ),
@@ -171,6 +205,7 @@ class AudioPreviewController(context: Context) {
         players.values.forEach { it.safeRelease() }
         players.clear()
         processors.clear()
+        windows.clear()
         failedClips.clear()
         lastSyncLogAt.clear()
     }
@@ -239,6 +274,19 @@ class AudioPreviewController(context: Context) {
         null
     }
 
+    /** The MediaItem the player is (re)built from — ONE definition so the
+     *  created window and the rebuilt window can never drift. */
+    private fun mediaItemFor(clip: AudioClipItem): MediaItem =
+        MediaItem.Builder()
+            .setUri(android.net.Uri.parse(clip.uri))
+            .setClippingConfiguration(
+                MediaItem.ClippingConfiguration.Builder()
+                    .setStartPositionMs(clip.trimStartMs)
+                    .setEndPositionMs(clip.trimEndMs)
+                    .build(),
+            )
+            .build()
+
     private fun ExoPlayer.safeRelease() {
         runCatching {
             release()
@@ -246,8 +294,6 @@ class AudioPreviewController(context: Context) {
     }
 
     private companion object {
-        const val DRIFT_TOLERANCE_MS = 250L
-        const val SYNC_LOG_INTERVAL_MS = 3_000L
         const val TAG = "OvgAudioPreview"
     }
 }

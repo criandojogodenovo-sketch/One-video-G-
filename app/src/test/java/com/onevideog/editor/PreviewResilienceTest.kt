@@ -7,6 +7,7 @@ import com.onevideog.editor.editor.PlaybackErrorInfo
 import com.onevideog.editor.editor.PlaybackErrorPolicy
 import com.onevideog.editor.editor.PreviewProcessingPolicy
 import com.onevideog.editor.editor.PreviewRecoveryBudget
+import com.onevideog.editor.editor.PreviewRenderLogGate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -217,5 +218,23 @@ class PreviewResilienceTest {
         assertTrue(policy.hasProcessingFault)
         policy.onPipelineProven()
         assertFalse(policy.hasProcessingFault)
+    }
+
+    // -------------------------------------------------- PreviewRenderLogGate
+
+    @Test
+    fun `PREVIEW_RENDER emits only on a real geometry change (v0_9_4)`() {
+        val gate = PreviewRenderLogGate()
+        // First callback: the geometry is new evidence.
+        assertTrue(gate.shouldLog(1920, 1080, 1f))
+        // Every (re)prepare repeating the SAME geometry: silent.
+        repeat(5) {
+            assertFalse(gate.shouldLog(1920, 1080, 1f))
+        }
+        // Repeated "no video track" callbacks: silent after the first.
+        assertTrue(gate.shouldLog(0, 0, 1f))
+        assertFalse(gate.shouldLog(0, 0, 1f))
+        // A REAL change (different item) logs again.
+        assertTrue(gate.shouldLog(1280, 720, 1f))
     }
 }

@@ -64,7 +64,6 @@ import com.onevideog.editor.ui.home.formatDuration
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
-import kotlin.math.roundToLong
 
 /**
  * Multi-track timeline: scrub ruler, video track (proportional thumbnails),
@@ -472,17 +471,25 @@ private fun TransitionBadge(hasTransition: Boolean, onClick: () -> Unit) {
 /**
  * One video clip block. v0.9.3 (CapCut-style trim handles): tapping selects
  * the clip and draws the orange frame with TRIM PEGS on both ends; dragging
- * a peg cuts the start/end in REAL TIME — live block width, live duration
- * chip, a light haptic and a boundary frame preview (the playhead follows
- * the dragged edge). The change commits ONCE at gesture end through the
- * existing [EditorViewModel.trimClip] (one undo step; the split tool and
- * the TRIM sheet keep working exactly as before).
+ * a peg cuts the start/end with LIVE block width, live duration chip and a
+ * light haptic. v0.9.4 (BUG 1, device op=pvw-27375504): the drag NO LONGER
+ * touches the player — the v0.9.3 boundary-frame "peek" seeked the preview
+ * at EVERY drag frame and the decoder sat in permanent BUFFERING (screen
+ * flicker/black). The gesture now runs through the pure [TrimDragSession]:
+ *  - on drag start the preview is FROZEN once (ViewModel pauses playback;
+ *    the SurfaceView keeps showing the last decoded frame — never cleared,
+ *    never seeked);
+ *  - every movement only advances Compose state (frame, pegs and the
+ *    duration chip still update at 60 fps);
+ *  - the gesture commits ONCE at the end through the existing
+ *    [EditorViewModel.trimClip] (one undo step; the split tool and the TRIM
+ *    sheet keep working exactly as before) followed by EXACTLY ONE seek to
+ *    the dragged edge's frame in the new window.
  *
  * Drag math: px -> output ms through the shared [TimelineScale], output ->
  * source ms via the clip speed (exact for constant-speed clips; ramped
  * clips get a close approximation during the drag and the EXACT plan at
- * commit). The preview seek maps the new boundary back through the shared
- * ProjectMath so the player shows the frame at the edge being cut.
+ * commit) — unchanged from v0.9.3, now inside the tested session.
  */
 @Composable
 private fun ClipBlock(
@@ -498,41 +505,58 @@ private fun ClipBlock(
     val density = LocalDensity.current
     val view = LocalView.current
     // Live trim (source ms) — local drag preview; committed once at the end.
+    // v0.9.4: the values are owned by the pure [TrimDragSession]; the
+    // composables below only mirror them into Compose state (60 fps chip).
+    var session by remember(clip.id, clip.trimStartMs, clip.trimEndMs) {
+        mutableStateOf<com.onevideog.editor.editor.TrimDragSession?>(null)
+    }
     var liveTrimStart by remember(clip.id, clip.trimStartMs) { mutableStateOf<Long?>(null) }
     var liveTrimEnd by remember(clip.id, clip.trimEndMs) { mutableStateOf<Long?>(null) }
     val trimStartMs = liveTrimStart ?: clip.trimStartMs
     val trimEndMs = liveTrimEnd ?: clip.trimEndMs
     val dragging = liveTrimStart != null || liveTrimEnd != null
-    val minClipMs = TimelineLogic.MIN_CLIP_SOURCE_MS
 
     val widthDp = with(density) {
         val liveClip = clip.withTrim(trimStartMs, trimEndMs)
         scale.spanToPx(SpeedRampPlanner.outputDurationMs(liveClip)).toDp().coerceAtLeast(56.dp)
     }
 
-    // Projects the SOURCE boundary ms to the playhead (project time) so the
-    // preview shows the frame at the edge being dragged.
-    fun seekPreviewToSourceMs(sourceMs: Long) {
-        val itemLocal = (sourceMs - clip.trimStartMs).coerceIn(
-            0L,
-            (clip.trimEndMs - clip.trimStartMs).coerceAtLeast(0),
-        )
-        val clipStart = TimelineLogic.clipStartMs(
-            viewModel.ui.value.project?.clips ?: emptyList(),
-            index,
-        )
-        viewModel.seekTo(clipStart + com.onevideog.editor.editor.ProjectMath
-            .itemLocalToProjectMs(clip, itemLocal))
+    /** Starts (or resumes) the drag session for [peg]. The clip start is
+     *  captured ONCE per gesture (stable while the live state holds). */
+    fun beginPegDrag(peg: com.onevideog.editor.editor.TrimDragSession.Peg) {
+        if (session == null) {
+            val clipStart = TimelineLogic.clipStartMs(
+                viewModel.ui.value.project?.clips ?: emptyList(),
+                index,
+            )
+            session = com.onevideog.editor.editor.TrimDragSession(
+                clip, peg, scale, clipStart,
+            )
+            viewModel.beginTrimDrag() // freeze the preview ONCE per gesture
+        }
     }
 
     fun commitLiveTrim() {
-        val s = liveTrimStart
-        val e = liveTrimEnd
-        if (s != null && e != null && (s != clip.trimStartMs || e != clip.trimEndMs)) {
-            viewModel.trimClip(clip.id, s, e)
+        val s = session ?: return
+        val commit = s.commit()
+        if (commit != null) {
+            // The gesture's SINGLE outcome: one trim (one undo step) plus
+            // EXACTLY ONE seek to the boundary frame of the new window.
+            viewModel.trimClip(clip.id, commit.trimStartMs, commit.trimEndMs)
+            viewModel.seekTo(commit.seekProjectMs)
         }
+        session = null
         liveTrimStart = null
         liveTrimEnd = null
+        viewModel.endTrimDrag() // unfreeze after the commit landed
+    }
+
+    fun cancelLiveTrim() {
+        session?.cancel()
+        session = null
+        liveTrimStart = null
+        liveTrimEnd = null
+        viewModel.endTrimDrag()
     }
 
     Box(modifier = Modifier.padding(horizontal = 3.dp).width(widthDp)) {
@@ -596,6 +620,8 @@ private fun ClipBlock(
 
         // Trim pegs overlay the block edges; the duration chip floats above.
         // Only when the clip is selected — the CapCut interaction contract.
+        // v0.9.4 (BUG 1): the pegs go through the pure TrimDragSession —
+        // zero player seeks during the drag, ONE commit + ONE seek at the end.
         if (selected) {
             val pegShape = RoundedCornerShape(3.dp)
             // Left peg: drags the clip START.
@@ -608,28 +634,26 @@ private fun ClipBlock(
                         detectDragGestures(
                             onDragStart = { _ ->
                                 view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                beginPegDrag(
+                                    com.onevideog.editor.editor.TrimDragSession.Peg.START,
+                                )
                             },
                             onDragEnd = {
                                 view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                                 commitLiveTrim()
                             },
-                            onDragCancel = {
-                                liveTrimStart = null
-                                liveTrimEnd = null
-                            },
+                            onDragCancel = { cancelLiveTrim() },
                         ) { change, dragAmount ->
                             change.consume()
-                            val deltaSource = scale.pxToTime(dragAmount.x) * clip.speed
-                            val currentStart = liveTrimStart ?: clip.trimStartMs
-                            val maxStart = (clip.trimEndMs - minClipMs).coerceAtLeast(0L)
-                            val newStart = (currentStart + deltaSource).roundToLong()
-                                .coerceIn(0L, maxStart)
-                            if (newStart == currentStart) {
+                            // Live values ONLY — the player stays frozen.
+                            val s = session ?: return@detectDragGestures
+                            val previous = s.liveTrimStartMs
+                            s.update(dragAmount.x)
+                            if (s.liveTrimStartMs == previous) {
                                 view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                             }
-                            liveTrimStart = newStart
-                            liveTrimEnd = clip.trimEndMs
-                            seekPreviewToSourceMs(newStart)
+                            liveTrimStart = s.liveTrimStartMs
+                            liveTrimEnd = s.liveTrimEndMs
                         }
                     },
                 contentAlignment = Alignment.Center,
@@ -652,29 +676,26 @@ private fun ClipBlock(
                         detectDragGestures(
                             onDragStart = { _ ->
                                 view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                beginPegDrag(
+                                    com.onevideog.editor.editor.TrimDragSession.Peg.END,
+                                )
                             },
                             onDragEnd = {
                                 view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                                 commitLiveTrim()
                             },
-                            onDragCancel = {
-                                liveTrimStart = null
-                                liveTrimEnd = null
-                            },
+                            onDragCancel = { cancelLiveTrim() },
                         ) { change, dragAmount ->
                             change.consume()
-                            val deltaSource = scale.pxToTime(dragAmount.x) * clip.speed
-                            val currentEnd = liveTrimEnd ?: clip.trimEndMs
-                            val minEnd = (clip.trimStartMs + minClipMs)
-                                .coerceAtMost(clip.sourceDurationMs)
-                            val newEnd = (currentEnd + deltaSource).roundToLong()
-                                .coerceIn(minEnd, clip.sourceDurationMs)
-                            if (newEnd == currentEnd) {
+                            // Live values ONLY — the player stays frozen.
+                            val s = session ?: return@detectDragGestures
+                            val previous = s.liveTrimEndMs
+                            s.update(dragAmount.x)
+                            if (s.liveTrimEndMs == previous) {
                                 view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                             }
-                            liveTrimStart = clip.trimStartMs
-                            liveTrimEnd = newEnd
-                            seekPreviewToSourceMs(newEnd - 1)
+                            liveTrimStart = s.liveTrimStartMs
+                            liveTrimEnd = s.liveTrimEndMs
                         }
                     },
                 contentAlignment = Alignment.Center,

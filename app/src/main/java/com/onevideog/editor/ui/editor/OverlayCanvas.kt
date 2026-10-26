@@ -397,10 +397,11 @@ internal fun PlacedOverlay.toCanvas(local: Offset): Offset {
  *    same code path (black 16:9 stage, no PlayerView content).
  *
  * Evidence: every active overlay is logged as OVERLAY_DRAW (id, kind, x, y,
- * scale, rotation, opacity, visible, bitmap/text size) when the drawn set
- * changes, or at most once per second for the same set while playing — the
- * device diagnosis for the rewrite was activeOverlays=1 with no draw
- * evidence at all.
+ * scale, rotation, opacity, visible, bitmap/text size) ONLY when the drawn
+ * state changes — the v0.9.4 gate lives at the op id (OverlayDrawLogGates),
+ * so neither a parked preview nor a recreated composition can emit
+ * duplicates (no timer; the v0.9.2 report's ~90 KB heartbeat is gone for
+ * good).
  *
  * Gestures: tap to select/deselect, drag body to move, corner handle to
  * scale, top handle to rotate (clockwise-positive), delete chip to remove,
@@ -575,26 +576,18 @@ internal fun OverlayLayer(
     // ---- OVERLAY_DRAW evidence (on set/transform change only) ----
     // v0.9.3: the old gate also logged once per second for an UNCHANGED set
     // (a parked preview filled the report with ~90 KB of duplicate events).
-    // Now a change in the drawn signature is what logs — id, box size AND
-    // transform values — so a move/scale/rotate/opacity edit still produces
-    // evidence, while a paused editor logs nothing at all.
-    val drawLogGate = remember { OverlayDrawLogGate() }
+    // v0.9.4 (BUG 3, device op=pvw-8c2a1a5d): the gate state now LIVES at
+    // the op id ([OverlayDrawLogGates]) — a recreated composition slot can
+    // no longer reset it and re-log the same state (the surviving ~1 Hz
+    // duplicate heartbeat) — and the signature covers EVERY logged field
+    // (id, seg, kind, box, transform, visibility AND content), so identical
+    // logged output and identical signature are the same thing. No timer.
+    val drawLogGate = remember { com.onevideog.editor.editor.OverlayDrawLogGates.gateFor(opId) }
     LaunchedEffect(placements) {
         // v0.5.9 (PONTO C): no draw evidence while the gate hides the layer.
         if (!overlaysVisible) return@LaunchedEffect
-        val sig = placements.joinToString("|") { p ->
-            "${p.parentId ?: p.overlay.id}:" +
-                "${p.widthPx.roundToInt()}x${p.heightPx.roundToInt()}" +
-                ":${p.transform.x}," +
-                "${p.transform.y}," +
-                "${p.transform.scale}," +
-                "${p.transform.rotationDeg}," +
-                "${p.transform.opacity}," +
-                "${p.overlay.visible}"
-        }
-        if (!drawLogGate.shouldLog(sig)) return@LaunchedEffect
-        drawLogGate.log(sig)
-        for (p in placements) {
+        data class DrawRecord(val sigPart: String, val placed: PlacedOverlay, val content: String)
+        val records = placements.map { p ->
             val contentMeta = when (val r = p.render) {
                 is OverlayRender.TextBlock ->
                     "text block=${r.layout.blockW}x${r.layout.blockH}" +
@@ -608,6 +601,26 @@ internal fun OverlayLayer(
                     "styled bitmap=${r.bitmap.width}x${r.bitmap.height}" +
                         " boxScale=${r.boxScale}"
             }
+            DrawRecord(
+                sigPart = "${p.parentId ?: p.overlay.id}:" +
+                    "${p.overlay.kind.name}:" +
+                    "${p.widthPx.roundToInt()}x${p.heightPx.roundToInt()}" +
+                    ":${p.transform.x}," +
+                    "${p.transform.y}," +
+                    "${p.transform.scale}," +
+                    "${p.transform.rotationDeg}," +
+                    "${p.transform.opacity}," +
+                    "${p.overlay.visible}" +
+                    ":$contentMeta",
+                placed = p,
+                content = contentMeta,
+            )
+        }
+        val sig = records.joinToString("|") { it.sigPart }
+        if (!drawLogGate.shouldLog(sig)) return@LaunchedEffect
+        drawLogGate.log(sig)
+        for (rec in records) {
+            val p = rec.placed
             DiagnosticsLogger.d(
                 "preview", ImageImportStages.OVERLAY_DRAW, opId,
                 "overlay rendered by compose layer",
@@ -627,7 +640,7 @@ internal fun OverlayLayer(
                     add("opacity" to p.transform.opacity.toString())
                     add("visible" to p.overlay.visible.toString())
                     add("boxPx" to "${p.widthPx.roundToInt()}x${p.heightPx.roundToInt()}")
-                    add("content" to contentMeta)
+                    add("content" to rec.content)
                 },
             )
         }
@@ -901,24 +914,6 @@ internal fun OverlayLayer(
                 ?.locked ?: chrome.overlay.locked
             drawSelectionChrome(chrome, interactive = !locked)
         }
-    }
-}
-
-/**
- * Change gate for the OVERLAY_DRAW evidence: log ONLY when the drawn
- * signature changes — the overlay set, its box sizes AND the transform
- * values (move/scale/rotate/opacity/visibility). v0.9.3: the old 1 Hz
- * heartbeat for an unchanged set was removed (a parked preview logged every
- * second and filled the report with ~90 KB of duplicates). Plain holder —
- * no snapshot state, so logging never triggers recomposition.
- */
-private class OverlayDrawLogGate {
-    var lastSig: String? = null
-
-    fun shouldLog(sig: String): Boolean = sig != lastSig
-
-    fun log(sig: String) {
-        lastSig = sig
     }
 }
 
