@@ -1,7 +1,9 @@
 package com.onevideog.editor.ui.editor
 
+import android.view.HapticFeedbackConstants
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -48,17 +50,21 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.onevideog.editor.R
 import com.onevideog.editor.data.Clip
 import com.onevideog.editor.editor.EditorViewModel
+import com.onevideog.editor.editor.SpeedRampPlanner
+import com.onevideog.editor.editor.TimelineLogic
 import com.onevideog.editor.editor.TimelineScale
 import com.onevideog.editor.ui.home.formatDuration
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 /**
  * Multi-track timeline: scrub ruler, video track (proportional thumbnails),
@@ -463,6 +469,21 @@ private fun TransitionBadge(hasTransition: Boolean, onClick: () -> Unit) {
     }
 }
 
+/**
+ * One video clip block. v0.9.3 (CapCut-style trim handles): tapping selects
+ * the clip and draws the orange frame with TRIM PEGS on both ends; dragging
+ * a peg cuts the start/end in REAL TIME — live block width, live duration
+ * chip, a light haptic and a boundary frame preview (the playhead follows
+ * the dragged edge). The change commits ONCE at gesture end through the
+ * existing [EditorViewModel.trimClip] (one undo step; the split tool and
+ * the TRIM sheet keep working exactly as before).
+ *
+ * Drag math: px -> output ms through the shared [TimelineScale], output ->
+ * source ms via the clip speed (exact for constant-speed clips; ramped
+ * clips get a close approximation during the drag and the EXACT plan at
+ * commit). The preview seek maps the new boundary back through the shared
+ * ProjectMath so the player shows the frame at the edge being cut.
+ */
 @Composable
 private fun ClipBlock(
     clip: Clip,
@@ -475,58 +496,218 @@ private fun ClipBlock(
     onClick: () -> Unit,
 ) {
     val density = LocalDensity.current
-    // Proportional to the clip's timeline duration (min width keeps tiny
-    // clips touchable; the old 620dp cap that visually compressed long
-    // clips and desynced them from the playhead is gone).
+    val view = LocalView.current
+    // Live trim (source ms) — local drag preview; committed once at the end.
+    var liveTrimStart by remember(clip.id, clip.trimStartMs) { mutableStateOf<Long?>(null) }
+    var liveTrimEnd by remember(clip.id, clip.trimEndMs) { mutableStateOf<Long?>(null) }
+    val trimStartMs = liveTrimStart ?: clip.trimStartMs
+    val trimEndMs = liveTrimEnd ?: clip.trimEndMs
+    val dragging = liveTrimStart != null || liveTrimEnd != null
+    val minClipMs = TimelineLogic.MIN_CLIP_SOURCE_MS
+
     val widthDp = with(density) {
-        scale.spanToPx(clip.effectiveDurationMs).toDp().coerceAtLeast(56.dp)
+        val liveClip = clip.withTrim(trimStartMs, trimEndMs)
+        scale.spanToPx(SpeedRampPlanner.outputDurationMs(liveClip)).toDp().coerceAtLeast(56.dp)
     }
-    Column(
-        modifier = Modifier
-            .padding(horizontal = 3.dp)
-            .width(widthDp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(
-                if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
-                else MaterialTheme.colorScheme.surfaceVariant,
-            )
-            .clickable(onClick = onClick)
-            .padding(3.dp),
-    ) {
-        val thumbFiles = remember(clip.id, clip.trimEndMs, clip.trimStartMs) {
-            viewModel.thumbFilesForClip(clip, projectId)
+
+    // Projects the SOURCE boundary ms to the playhead (project time) so the
+    // preview shows the frame at the edge being dragged.
+    fun seekPreviewToSourceMs(sourceMs: Long) {
+        val itemLocal = (sourceMs - clip.trimStartMs).coerceIn(
+            0L,
+            (clip.trimEndMs - clip.trimStartMs).coerceAtLeast(0),
+        )
+        val clipStart = TimelineLogic.clipStartMs(
+            viewModel.ui.value.project?.clips ?: emptyList(),
+            index,
+        )
+        viewModel.seekTo(clipStart + com.onevideog.editor.editor.ProjectMath
+            .itemLocalToProjectMs(clip, itemLocal))
+    }
+
+    fun commitLiveTrim() {
+        val s = liveTrimStart
+        val e = liveTrimEnd
+        if (s != null && e != null && (s != clip.trimStartMs || e != clip.trimEndMs)) {
+            viewModel.trimClip(clip.id, s, e)
         }
-        if (thumbFiles.isEmpty()) {
+        liveTrimStart = null
+        liveTrimEnd = null
+    }
+
+    Box(modifier = Modifier.padding(horizontal = 3.dp).width(widthDp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .then(
+                    if (selected) {
+                        Modifier.border(
+                            width = 2.dp,
+                            color = MaterialTheme.colorScheme.primary,
+                            shape = RoundedCornerShape(8.dp),
+                        )
+                    } else {
+                        Modifier
+                    },
+                )
+                .background(
+                    if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+                    else MaterialTheme.colorScheme.surfaceVariant,
+                )
+                .clickable(onClick = onClick)
+                .padding(3.dp),
+        ) {
+            val thumbFiles = remember(clip.id, clip.trimEndMs, clip.trimStartMs) {
+                viewModel.thumbFilesForClip(clip, projectId)
+            }
+            if (thumbFiles.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        stringResource(R.string.clip_label, index + 1),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            } else {
+                LazyRow(modifier = Modifier.height(48.dp)) {
+                    itemsIndexed(thumbFiles) { _, file ->
+                        ThumbImage(path = file.absolutePath, viewModel = viewModel)
+                    }
+                }
+            }
+            Text(
+                (if (missing) stringResource(R.string.editor_clip_missing) + " · " else "") +
+                    formatDuration(trimStartMs) + "–" + formatDuration(trimEndMs) +
+                    " · " + formatDuration(trimEndMs - trimStartMs) +
+                    (if (clip.speed != 1f) " · " + String.format("%.2fx", clip.speed) else ""),
+                style = MaterialTheme.typography.labelSmall,
+                color = if (missing) MaterialTheme.colorScheme.error
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
+
+        // Trim pegs overlay the block edges; the duration chip floats above.
+        // Only when the clip is selected — the CapCut interaction contract.
+        if (selected) {
+            val pegShape = RoundedCornerShape(3.dp)
+            // Left peg: drags the clip START.
             Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+                    .align(Alignment.CenterStart)
+                    .width(22.dp)
+                    .height(54.dp)
+                    .pointerInput(clip.id, clip.trimStartMs, clip.trimEndMs) {
+                        detectDragGestures(
+                            onDragStart = { _ ->
+                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                            },
+                            onDragEnd = {
+                                view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                                commitLiveTrim()
+                            },
+                            onDragCancel = {
+                                liveTrimStart = null
+                                liveTrimEnd = null
+                            },
+                        ) { change, dragAmount ->
+                            change.consume()
+                            val deltaSource = scale.pxToTime(dragAmount.x) * clip.speed
+                            val currentStart = liveTrimStart ?: clip.trimStartMs
+                            val maxStart = (clip.trimEndMs - minClipMs).coerceAtLeast(0L)
+                            val newStart = (currentStart + deltaSource).roundToLong()
+                                .coerceIn(0L, maxStart)
+                            if (newStart == currentStart) {
+                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                            }
+                            liveTrimStart = newStart
+                            liveTrimEnd = clip.trimEndMs
+                            seekPreviewToSourceMs(newStart)
+                        }
+                    },
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    stringResource(R.string.clip_label, index + 1),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                Box(
+                    modifier = Modifier
+                        .width(4.dp)
+                        .height(46.dp)
+                        .clip(pegShape)
+                        .background(MaterialTheme.colorScheme.primary),
                 )
             }
-        } else {
-            LazyRow(modifier = Modifier.height(48.dp)) {
-                itemsIndexed(thumbFiles) { _, file ->
-                    ThumbImage(path = file.absolutePath, viewModel = viewModel)
+            // Right peg: drags the clip END.
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .width(22.dp)
+                    .height(54.dp)
+                    .pointerInput(clip.id, clip.trimStartMs, clip.trimEndMs) {
+                        detectDragGestures(
+                            onDragStart = { _ ->
+                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                            },
+                            onDragEnd = {
+                                view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                                commitLiveTrim()
+                            },
+                            onDragCancel = {
+                                liveTrimStart = null
+                                liveTrimEnd = null
+                            },
+                        ) { change, dragAmount ->
+                            change.consume()
+                            val deltaSource = scale.pxToTime(dragAmount.x) * clip.speed
+                            val currentEnd = liveTrimEnd ?: clip.trimEndMs
+                            val minEnd = (clip.trimStartMs + minClipMs)
+                                .coerceAtMost(clip.sourceDurationMs)
+                            val newEnd = (currentEnd + deltaSource).roundToLong()
+                                .coerceIn(minEnd, clip.sourceDurationMs)
+                            if (newEnd == currentEnd) {
+                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                            }
+                            liveTrimStart = clip.trimStartMs
+                            liveTrimEnd = newEnd
+                            seekPreviewToSourceMs(newEnd - 1)
+                        }
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(4.dp)
+                        .height(46.dp)
+                        .clip(pegShape)
+                        .background(MaterialTheme.colorScheme.primary),
+                )
+            }
+            // Live duration chip (floats above the block while dragging).
+            if (dragging) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .offset(y = (-22).dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.9f))
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                ) {
+                    Text(
+                        formatDuration(
+                            SpeedRampPlanner
+                                .outputDurationMs(clip.withTrim(trimStartMs, trimEndMs)),
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = com.onevideog.editor.ui.theme.OnOrange,
+                    )
                 }
             }
         }
-        Text(
-            (if (missing) stringResource(R.string.editor_clip_missing) + " · " else "") +
-                formatDuration(clip.trimStartMs) + "–" + formatDuration(clip.trimEndMs) +
-                " · " + formatDuration(clip.effectiveDurationMs) +
-                (if (clip.speed != 1f) " · " + String.format("%.2fx", clip.speed) else ""),
-            style = MaterialTheme.typography.labelSmall,
-            color = if (missing) MaterialTheme.colorScheme.error
-            else MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-        )
     }
 }
 

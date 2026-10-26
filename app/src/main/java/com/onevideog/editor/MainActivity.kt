@@ -9,10 +9,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.core.os.LocaleListCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -43,27 +40,16 @@ class MainActivity : AppCompatActivity() {
         applyLocale(settings.language.value)
 
         setContent {
-            val themeMode by settings.theme.collectAsState()
-            val dark = when (themeMode) {
-                com.onevideog.editor.data.ThemeMode.DARK -> true
-                com.onevideog.editor.data.ThemeMode.LIGHT -> false
-                com.onevideog.editor.data.ThemeMode.SYSTEM -> isSystemInDarkTheme()
+            // v0.9.3: the identity is DARK — the scheme no longer follows the
+            // system light mode (light onSurface text over the hard-coded
+            // deep-black home canvas was the device report's unreadable
+            // "textos escuros sobre fundo escuro"). The AppCompat delegate
+            // stays in night mode so XML-level surfaces (window background,
+            // dialogs) match the Compose scheme.
+            androidx.compose.runtime.LaunchedEffect(Unit) {
+                AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
             }
-            // Keep the AppCompat day/night delegate in sync so XML-level
-            // surfaces (window background, dialogs) match the Compose scheme.
-            androidx.compose.runtime.LaunchedEffect(themeMode) {
-                AppCompatDelegate.setDefaultNightMode(
-                    when (themeMode) {
-                        com.onevideog.editor.data.ThemeMode.DARK ->
-                            AppCompatDelegate.MODE_NIGHT_YES
-                        com.onevideog.editor.data.ThemeMode.LIGHT ->
-                            AppCompatDelegate.MODE_NIGHT_NO
-                        com.onevideog.editor.data.ThemeMode.SYSTEM ->
-                            AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
-                    },
-                )
-            }
-            OvgTheme(darkTheme = dark) {
+            OvgTheme {
                 OvgNavHost(
                     settings = settings,
                     applyLocale = { mode -> applyLocale(mode) },

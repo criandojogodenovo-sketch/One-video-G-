@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -42,7 +44,6 @@ import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.ViewInAr
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.VolumeUp
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -63,6 +64,9 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import com.onevideog.editor.R
+import com.onevideog.editor.ui.common.OvgAlertDialog
+import com.onevideog.editor.ui.theme.GlazedOrangeButton
+import com.onevideog.editor.ui.theme.OnOrange
 import com.onevideog.editor.editor.EditorViewModel
 import com.onevideog.editor.editor.PlaybackErrorPolicy
 import com.onevideog.editor.ui.home.formatDuration
@@ -356,15 +360,12 @@ fun EditorScreen(
     }
 
     errorText?.let { message ->
-        androidx.compose.material3.AlertDialog(
+        OvgAlertDialog(
             onDismissRequest = { errorText = null },
-            title = { Text(stringResource(R.string.error_generic)) },
-            text = { Text(message) },
-            confirmButton = {
-                androidx.compose.material3.TextButton(onClick = { errorText = null }) {
-                    Text(stringResource(R.string.ok))
-                }
-            },
+            title = stringResource(R.string.error_generic),
+            body = message,
+            confirmLabel = stringResource(R.string.ok),
+            onConfirm = { errorText = null },
         )
     }
 
@@ -372,26 +373,19 @@ fun EditorScreen(
     // generic one claimed a missing/undecodable FILE) plus the reload
     // action that re-prepares the player at the current playhead and
     // re-arms the recovery budget (PreviewStage collects the request).
+    // v0.9.3: themed through OvgAlertDialog (graphite + orange).
     if (showEffectProcessingError) {
-        androidx.compose.material3.AlertDialog(
+        OvgAlertDialog(
             onDismissRequest = { showEffectProcessingError = false },
-            title = { Text(stringResource(R.string.error_effect_processing_title)) },
-            text = { Text(stringResource(R.string.error_effect_processing)) },
-            confirmButton = {
-                androidx.compose.material3.TextButton(onClick = {
-                    showEffectProcessingError = false
-                    viewModel.requestPreviewReload()
-                }) {
-                    Text(stringResource(R.string.reload_preview))
-                }
+            title = stringResource(R.string.error_effect_processing_title),
+            body = stringResource(R.string.error_effect_processing),
+            confirmLabel = stringResource(R.string.reload_preview),
+            onConfirm = {
+                showEffectProcessingError = false
+                viewModel.requestPreviewReload()
             },
-            dismissButton = {
-                androidx.compose.material3.TextButton(onClick = {
-                    showEffectProcessingError = false
-                }) {
-                    Text(stringResource(R.string.ok))
-                }
-            },
+            dismissLabel = stringResource(R.string.ok),
+            onDismiss = { showEffectProcessingError = false },
         )
     }
 }
@@ -435,14 +429,26 @@ private fun EditorTopBar(
                 else MaterialTheme.colorScheme.outline,
             )
         }
-        FilledTonalButton(onClick = onExport) {
+        // v0.9.3: glazed-orange Export action (was FilledTonalButton — the
+        // unset secondaryContainer slot rendered it grey-purple).
+        GlazedOrangeButton(
+            onClick = onExport,
+            shape = RoundedCornerShape(14.dp),
+            elevation = 8.dp,
+            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 9.dp),
+        ) {
             Icon(
                 Icons.Filled.IosShare,
                 contentDescription = null,
+                tint = OnOrange,
                 modifier = Modifier.size(18.dp),
             )
             Spacer(Modifier.width(6.dp))
-            Text(stringResource(R.string.export_title))
+            Text(
+                stringResource(R.string.export_title),
+                color = OnOrange,
+                style = MaterialTheme.typography.labelLarge,
+            )
         }
     }
 }

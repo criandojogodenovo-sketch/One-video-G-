@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- v0.9.3: SurfaceView surface (was TextureView). Device evidence
+     (realme RMX3624 / Android 13): the TextureView detach path blocked and
+     produced "ERROR_CODE_TIMEOUT: Detaching surface timed out" whenever the
+     GL effects pipeline was re-initialised. SurfaceView detaches through the
+     compositor without blocking the playback thread, so the timeout family
+     disappears; overlays stay correct — the Compose layer draws ABOVE the
+     video surface exactly as before. The colour-adjustment hardware-layer
+     Paint this file once served was replaced by the shared GL effect
+     pipeline in v0.3.0 (setVideoEffects), so nothing depends on TextureView.
+-->
+<androidx.media3.ui.PlayerView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/preview_player"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    app:surface_type="surface_view"
+    app:resize_mode="fit"
+    app:use_controller="false" />

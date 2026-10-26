@@ -46,6 +46,7 @@ import com.onevideog.editor.editor.OverlayLayout
 import com.onevideog.editor.editor.PlaybackErrorInfo
 import com.onevideog.editor.editor.PlaybackErrorPolicy
 import com.onevideog.editor.editor.PlayheadGate
+import com.onevideog.editor.editor.PreviewProcessingPolicy
 import com.onevideog.editor.editor.PreviewRecoveryBudget
 import com.onevideog.editor.editor.ProjectMath
 import com.onevideog.editor.editor.SpeedRampPlanner
@@ -238,6 +239,20 @@ fun PreviewStage(viewModel: EditorViewModel) {
         mutableStateOf<List<androidx.media3.common.Effect>?>(null)
     }
     val recoveryBudget = remember { PreviewRecoveryBudget() }
+    // v0.9.3: the processing-fault policy — the SAME poisoned effect chain
+    // must never be re-prepared three times (the v0.9.2 report: 3x
+    // VIDEO_FRAME_PROCESSING_FAILED, then the recovery churn itself threw
+    // "Detaching surface timed out", a GENERIC code that skipped the degrade
+    // path and left the player dead in IDLE). One quick retry, then the
+    // repeat suspends the preview GL effects (banner + working player).
+    val processingPolicy = remember { PreviewProcessingPolicy() }
+    // v0.9.3: the list instance CURRENTLY registered with the player —
+    // a redundant setVideoEffects of the SAME instance is skipped (the
+    // re-prepare alone forces the new input stream; less GL churn on the
+    // affected device class).
+    var attachedEffects by remember {
+        mutableStateOf<List<androidx.media3.common.Effect>?>(null)
+    }
     // v0.9.1 (BUG A — graceful degradation): true once this device proved it
     // cannot PROCESS the full effect chain (VIDEO_FRAME_PROCESSING_FAILED
     // persisting past the bounded recovery). The preview falls back to the
@@ -257,7 +272,12 @@ fun PreviewStage(viewModel: EditorViewModel) {
                 if (playbackState == Player.STATE_ENDED) viewModel.setPlaying(false)
                 // v0.5.7 (ponto 4): a READY pipeline proves the current
                 // effect list + media item work — refund the recovery budget.
-                if (playbackState == Player.STATE_READY) recoveryBudget.onReady()
+                // v0.9.3: READY also proves the processing fault stretch is
+                // over (the processing-fault counter resets).
+                if (playbackState == Player.STATE_READY) {
+                    recoveryBudget.onReady()
+                    processingPolicy.onPipelineProven()
+                }
             }
 
             override fun onVideoSizeChanged(size: VideoSize) {
@@ -302,14 +322,6 @@ fun PreviewStage(viewModel: EditorViewModel) {
 
             override fun onPlayerError(error: PlaybackException) {
                 viewModel.setPlaying(false)
-                // v0.9.1 (BUG B): structured error → the UI maps BY CODE. The
-                // GL/video-frame-processing family (7000/7001) gets its own
-                // dialog with a reload action; everything else keeps the
-                // generic message.
-                viewModel.playbackError.value = PlaybackErrorInfo(
-                    code = error.errorCode,
-                    codeName = error.errorCodeName,
-                )
                 DiagnosticsLogger.e(
                     "playback", "PLAYER_ERROR", previewOpId,
                     "preview player error",
@@ -322,6 +334,9 @@ fun PreviewStage(viewModel: EditorViewModel) {
 
                 // The re-prepare sequence shared by the automatic recovery and
                 // the manual reload (v0.9.1) — ONE implementation, no drift.
+                // v0.9.3: setVideoEffects only when the registered instance
+                // actually differs — a re-prepare alone forces the new input
+                // stream, so re-attaching the SAME list is pure GL churn.
                 fun reprepareAtPlayhead(
                     clips: List<com.onevideog.editor.data.Clip>,
                     clip: com.onevideog.editor.data.Clip,
@@ -329,7 +344,11 @@ fun PreviewStage(viewModel: EditorViewModel) {
                     playheadMs: Long,
                 ) {
                     player.playWhenReady = false
-                    lastEffects?.let { player.setVideoEffects(it) }
+                    val toAttach = lastEffects
+                    if (toAttach != null && toAttach !== attachedEffects) {
+                        player.setVideoEffects(toAttach)
+                        attachedEffects = toAttach
+                    }
                     val clipStartMs = TimelineLogic.clipStartMs(clips, index)
                     val localMs = ProjectMath.projectToItemLocalMs(
                         clip,
@@ -343,16 +362,33 @@ fun PreviewStage(viewModel: EditorViewModel) {
                     player.prepare()
                 }
 
-                // v0.9.1 (BUG A — graceful degradation): a device that keeps
-                // failing to PROCESS the effect chain gets an honest fallback
-                // instead of a dead editor. After the bounded recovery, drop
-                // the heavy GL effects from the PREVIEW list (speed +
-                // Presentation stay: timing + geometry), revive the player
-                // with it and show the banner. The export keeps the full
-                // effects — the banner says exactly that (PARITY.md).
-                if (isProcessingError && !glEffectsSuspended &&
-                    !recoveryBudget.canAttempt()
-                ) {
+                // v0.9.3 policy decision (BEFORE surfacing any dialog):
+                //  - processing family: the 1st failure gets ONE quick retry;
+                //    the REPEAT suspends the preview GL effects immediately;
+                //  - a TIMEOUT while a processing fault is suspected (the
+                //    recovery churn of the poisoned pipeline — the device
+                //    report's "Detaching surface timed out") suspends too;
+                //  - every other code follows the bounded budget path.
+                val isTimeout =
+                    error.errorCode == PlaybackException.ERROR_CODE_TIMEOUT
+                val suspendNow = when {
+                    glEffectsSuspended -> false
+                    isProcessingError -> processingPolicy.onProcessingError()
+                    isTimeout && processingPolicy.hasProcessingFault ->
+                        processingPolicy.onTimeoutDuringProcessingFault()
+                    else -> false
+                }
+
+                // v0.9.1/v0.9.3 (BUG A — graceful degradation): a device that
+                // keeps failing to PROCESS the effect chain gets an honest
+                // fallback instead of a dead editor. On the REPEAT failure
+                // (no more same-config retries — the v0.9.2 report burned the
+                // whole budget on a poisoned chain) drop the heavy GL effects
+                // from the PREVIEW list (speed + Presentation stay: timing +
+                // geometry), revive the player with it and show the banner.
+                // The export keeps the full effects — the banner says exactly
+                // that (PARITY.md).
+                if (suspendNow) {
                     val ui = viewModel.ui.value
                     val proj = ui.project
                     val index = proj?.let { TimelineLogic.clipIndexAt(it.clips, ui.playheadMs) } ?: -1
@@ -363,13 +399,15 @@ fun PreviewStage(viewModel: EditorViewModel) {
                             ClipEffectsFactory.degradedPreviewEffects(proj, clip)
                         }
                         lastEffects = degraded
+                        attachedEffects = null
                         runCatching {
                             reprepareAtPlayhead(proj.clips, clip, index, ui.playheadMs)
                         }.onSuccess {
+                            processingPolicy.onPipelineProven()
                             DiagnosticsLogger.w(
                                 "playback", "PREVIEW_GL_SUSPENDED", previewOpId,
-                                "device cannot process the preview effects; " +
-                                    "preview degraded (speed+geometry only), export intact",
+                                "preview effects suspended after a repeated processing " +
+                                    "failure; preview continues without them, export intact",
                                 meta = listOf(
                                     "code" to error.errorCodeName,
                                     "playheadMs" to ui.playheadMs.toString(),
@@ -388,6 +426,19 @@ fun PreviewStage(viewModel: EditorViewModel) {
                     }
                 }
 
+                // v0.9.1 (BUG B): structured error → the UI maps BY CODE. The
+                // GL/video-frame-processing family (7000/7001) gets its own
+                // dialog with a reload action; everything else keeps the
+                // generic message. v0.9.3: the auto-suspended path stays
+                // DIALOG-FREE — the honest banner ("Pré-visualização sem
+                // efeitos...") is the user-facing response and the player
+                // keeps working; the dialog only appears when the degradation
+                // itself failed (the reload action is then genuinely needed).
+                viewModel.playbackError.value = PlaybackErrorInfo(
+                    code = error.errorCode,
+                    codeName = error.errorCodeName,
+                )
+
                 // v0.5.7 (ponto 4): recover instead of stalling. The GL
                 // pipeline occasionally dies with GlException 0x3006
                 // (EGL_BAD_CONTEXT) reported as
@@ -397,6 +448,9 @@ fun PreviewStage(viewModel: EditorViewModel) {
                 // re-prepare the loaded clip AT THE PLAYHEAD and leave
                 // playing to the user. Bounded attempts (no error loop);
                 // fresh state comes from the ViewModel, never stale captures.
+                // v0.9.3: processing faults no longer reach this path until
+                // the policy has already suspended them (one retry + repeat
+                // rule) — the budget is reserved for the other families.
                 if (!recoveryBudget.canAttempt()) {
                     DiagnosticsLogger.w(
                         "playback", "PLAYER_RECOVERY_SKIPPED", previewOpId,
@@ -448,13 +502,21 @@ fun PreviewStage(viewModel: EditorViewModel) {
     LaunchedEffect(Unit) {
         viewModel.previewReloadRequests.collect {
             recoveryBudget.onManualReload()
+            // v0.9.3: a manual reload is an explicit fresh start — the
+            // processing-fault stretch resets with the budget.
+            processingPolicy.onPipelineProven()
             val ui = viewModel.ui.value
             val proj = ui.project ?: return@collect
             val index = TimelineLogic.clipIndexAt(proj.clips, ui.playheadMs)
             val clip = proj.clips.getOrNull(index) ?: return@collect
             runCatching {
                 player.playWhenReady = false
-                lastEffects?.let { player.setVideoEffects(it) }
+                // v0.9.3: skip the redundant re-attach of the SAME instance.
+                val toAttach = lastEffects
+                if (toAttach != null && toAttach !== attachedEffects) {
+                    player.setVideoEffects(toAttach)
+                    attachedEffects = toAttach
+                }
                 val clipStartMs = TimelineLogic.clipStartMs(proj.clips, index)
                 val localMs = ProjectMath.projectToItemLocalMs(
                     clip,
@@ -527,8 +589,14 @@ fun PreviewStage(viewModel: EditorViewModel) {
     //  3. the debounce is a suspension point: a newer revision cancels this
     //     coroutine (LaunchedEffect key change) and applies instead — two
     //     rebuilds can never run in parallel, the last one wins.
-    // First attach / clip change stays immediate (no debounce) so the fresh
-    // list is always set BEFORE the media-load effect prepares the item.
+    //  4. v0.9.3 (READY gate): a same-clip rebuild NEVER re-attaches while
+    //     the player is still BUFFERING (the v0.9.2 report: every
+    //     PREVIEW_RENDER showed video=none — the effect list was re-attached
+    //     against a pipeline without video geometry). The rebuild waits for
+    //     READY (bounded 2.5 s); a newer revision cancels the wait and takes
+    //     over. First attach / clip change stays immediate (no debounce) so
+    //     the fresh list is always set BEFORE the media-load effect prepares
+    //     the item (the Media3 contract).
     LaunchedEffect(effectsRevision) {
         val clip = currentClip ?: return@LaunchedEffect
         if (lastAppliedRevision == effectsRevision) return@LaunchedEffect
@@ -549,6 +617,31 @@ fun PreviewStage(viewModel: EditorViewModel) {
         if (sameClipRebuild) {
             delay(300)
             if (!isActive) return@LaunchedEffect
+            // v0.9.3 (READY gate): never re-attach against a still-loading
+            // pipeline. setVideoEffects + setMediaItem while the decoder is
+            // BUFFERING is exactly the churn sequence pinned on the
+            // processing failures. Bounded wait — a wedged prepare must not
+            // eat the revision forever (the error path recovers it).
+            if (player.playbackState == Player.STATE_BUFFERING) {
+                val waitStartMs = android.os.SystemClock.elapsedRealtime()
+                while (
+                    player.playbackState == Player.STATE_BUFFERING &&
+                    android.os.SystemClock.elapsedRealtime() - waitStartMs < 2_500L
+                ) {
+                    delay(50)
+                    if (!isActive) return@LaunchedEffect
+                }
+                DiagnosticsLogger.d(
+                    "preview", "PREVIEW_REBUILD_READY_GATE", previewOpId,
+                    "same-clip rebuild waited for the pipeline (BUFFERING gate)",
+                    meta = listOf(
+                        "playerState" to playbackStateName(player.playbackState),
+                        "waitedMs" to
+                            (android.os.SystemClock.elapsedRealtime() - waitStartMs)
+                                .toString(),
+                    ),
+                )
+            }
         }
         val effects = DiagContext.withOp(previewOpId) {
             if (glEffectsSuspended) {
@@ -573,6 +666,7 @@ fun PreviewStage(viewModel: EditorViewModel) {
             player.playWhenReady = false
         }
         player.setVideoEffects(effects)
+        attachedEffects = effects
         // v0.5.7 (ponto 4): keep the list for the error-recovery re-attach.
         lastEffects = effects
         DiagnosticsLogger.i(
@@ -826,10 +920,10 @@ fun PreviewStage(viewModel: EditorViewModel) {
             AndroidView(
                 factory = { ctx ->
                     (android.view.LayoutInflater.from(ctx)
-                        .inflate(R.layout.view_player_texture, null, false) as
+                        .inflate(R.layout.view_player, null, false) as
                         androidx.media3.ui.PlayerView).apply {
                         // v0.2.5: surface target dimensions (the view that
-                        // hosts the TextureView) tracked for the geometry
+                        // hosts the video surface) tracked for the geometry
                         // evidence event.
                         addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
                             surfaceSize = v.width to v.height

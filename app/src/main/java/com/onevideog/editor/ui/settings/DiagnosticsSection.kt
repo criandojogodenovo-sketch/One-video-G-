@@ -11,13 +11,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -25,7 +20,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -33,6 +27,10 @@ import androidx.compose.ui.unit.dp
 import com.onevideog.editor.R
 import com.onevideog.editor.data.SettingsRepository
 import com.onevideog.editor.diag.DiagnosticsLogger
+import com.onevideog.editor.ui.common.OvgAlertDialog
+import com.onevideog.editor.ui.common.OvgSectionCard
+import com.onevideog.editor.ui.common.OvgSwitchRow
+import com.onevideog.editor.ui.theme.GraphiteButton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -47,6 +45,10 @@ import kotlinx.coroutines.withContext
  *  - Clear Logs (with confirmation);
  *  - Export Diagnostic Report (Storage Access Framework, user-chosen file);
  *  - a visible privacy notice. No telemetry, no automatic upload.
+ *
+ * v0.9.3: restyled with the shared kit — graphite section card, orange
+ * switch row, graphite buttons and the one themed alert dialog (no generic
+ * Material 3 default look).
  */
 @Composable
 fun DiagnosticsSection(settings: SettingsRepository) {
@@ -92,36 +94,29 @@ fun DiagnosticsSection(settings: SettingsRepository) {
             color = MaterialTheme.colorScheme.onBackground,
         )
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                stringResource(R.string.diag_toggle_label),
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.weight(1f),
-            )
-            Switch(
+        OvgSectionCard {
+            OvgSwitchRow(
+                label = stringResource(R.string.diag_toggle_label),
                 checked = enabled,
                 onCheckedChange = { settings.setDiagnosticsEnabled(it) },
             )
+            Column(modifier = Modifier.padding(bottom = 8.dp)) {
+                Text(
+                    stringResource(
+                        if (enabled) R.string.diag_status_on else R.string.diag_status_off,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    stringResource(R.string.diag_stats_line, stats.events, stats.approxKb),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
 
-        Text(
-            stringResource(
-                if (enabled) R.string.diag_status_on else R.string.diag_status_off,
-            ),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            stringResource(R.string.diag_stats_line, stats.events, stats.approxKb),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-
-        Button(onClick = {
+        GraphiteButton(onClick = {
             val ok = runCatching {
                 val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 cm.setPrimaryClip(
@@ -138,10 +133,10 @@ fun DiagnosticsSection(settings: SettingsRepository) {
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { showClearConfirm = true }) {
+            GraphiteButton(onClick = { showClearConfirm = true }) {
                 Text(stringResource(R.string.diag_clear_logs))
             }
-            OutlinedButton(onClick = {
+            GraphiteButton(onClick = {
                 exportLauncher.launch("one-video-g-diagnostic-report.txt")
             }) {
                 Text(stringResource(R.string.diag_export_report))
@@ -156,21 +151,18 @@ fun DiagnosticsSection(settings: SettingsRepository) {
     }
 
     if (showClearConfirm) {
-        AlertDialog(
+        OvgAlertDialog(
             onDismissRequest = { showClearConfirm = false },
-            title = { Text(stringResource(R.string.diag_clear_confirm_title)) },
-            text = { Text(stringResource(R.string.diag_clear_confirm_body)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    DiagnosticsLogger.clearAll()
-                    showClearConfirm = false
-                }) { Text(stringResource(R.string.diag_clear_confirm_yes)) }
+            title = stringResource(R.string.diag_clear_confirm_title),
+            body = stringResource(R.string.diag_clear_confirm_body),
+            confirmLabel = stringResource(R.string.diag_clear_confirm_yes),
+            onConfirm = {
+                DiagnosticsLogger.clearAll()
+                showClearConfirm = false
             },
-            dismissButton = {
-                TextButton(onClick = { showClearConfirm = false }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            },
+            dismissLabel = stringResource(R.string.cancel),
+            onDismiss = { showClearConfirm = false },
+            destructiveConfirm = true,
         )
     }
 }
