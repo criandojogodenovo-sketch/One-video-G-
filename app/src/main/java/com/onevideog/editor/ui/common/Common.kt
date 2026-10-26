@@ -288,9 +288,9 @@ fun OvgSectionCard(
 fun OvgRadioRow(
     label: String,
     selected: Boolean,
-    onSelect: () -> Unit,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
+    onSelect: () -> Unit,
 ) {
     Row(
         modifier = modifier
@@ -323,9 +323,9 @@ fun OvgRadioRow(
 fun OvgSwitchRow(
     label: String,
     checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
+    onCheckedChange: (Boolean) -> Unit,
 ) {
     Row(
         modifier = modifier
